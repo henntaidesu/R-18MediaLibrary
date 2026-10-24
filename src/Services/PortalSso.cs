@@ -163,7 +163,7 @@ public static class PortalSso
 
         if ((Str(c, "iss") ?? "").TrimEnd('/') != AppConfig.SsoPortalUrl)
             throw new SsoException($"id_token 的 iss（{Str(c, "iss")}）与这里填的门户地址（{AppConfig.SsoPortalUrl}）对不上：" +
-                                   "两边必须一字不差，门户那边是 conf.json 的 idp.issuer");
+                                   "两边必须一字不差，门户那边是右上角菜单 → 单点登录 里的门户地址");
         if (Str(c, "aud") != AppConfig.SsoClientId)
             throw new SsoException("id_token 不是发给本程序的（aud 对不上）");
         if (!c.TryGetProperty("exp", out var exp) || exp.GetInt64() < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
