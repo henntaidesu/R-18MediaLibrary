@@ -222,6 +222,20 @@ public static class Db
                         "add_time" text,
                         PRIMARY KEY ("artist_id")
                     );
+
+                    -- 外部访问（Web 端）的登录用户，由门户单点登录首次登录时建出来（Services/PortalSso）。
+                    -- 认人只认 portal_sub（门户的用户 id）：用户名在门户里能改，跟着它走会把改过名的人
+                    -- 认成另一个人。用户名只在首次绑定时用来匹配同名的已有用户。
+                    -- 媒体库数据不分用户，这张表只管「谁登进来了」。
+                    CREATE TABLE IF NOT EXISTS "web_users" (
+                        "id" integer PRIMARY KEY AUTOINCREMENT,
+                        "username" text NOT NULL UNIQUE COLLATE NOCASE,
+                        "display_name" text,
+                        "portal_sub" text UNIQUE,
+                        "is_admin" text,
+                        "created_at" text,
+                        "last_login" text
+                    );
                     """;
                 cmd.ExecuteNonQuery();
             }

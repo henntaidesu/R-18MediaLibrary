@@ -57,6 +57,8 @@ public partial class SettingsPage : UserControl
         WebEnableCombo.Items.Add(I18n.Tr("关闭"));
         ImageHostEnableCombo.Items.Add(I18n.Tr("开启"));
         ImageHostEnableCombo.Items.Add(I18n.Tr("关闭"));
+        SsoEnableCombo.Items.Add(I18n.Tr("开启"));
+        SsoEnableCombo.Items.Add(I18n.Tr("关闭"));
         TransEnableCombo.Items.Add(I18n.Tr("开启"));
         TransEnableCombo.Items.Add(I18n.Tr("关闭"));
         // 档位来自依赖清单（用户可换清单），故按 id 记住顺序而不是写死索引语义
@@ -243,6 +245,15 @@ public partial class SettingsPage : UserControl
         WebEnableCombo.Items[1] = I18n.Tr("关闭");
         ImageHostEnableCombo.Items[0] = I18n.Tr("开启");
         ImageHostEnableCombo.Items[1] = I18n.Tr("关闭");
+        SsoEnableCombo.Items[0] = I18n.Tr("开启");
+        SsoEnableCombo.Items[1] = I18n.Tr("关闭");
+        SsoGroup.Header = I18n.Tr("门户单点登录");
+        SsoEnableLabel.Text = I18n.Tr("启用");
+        SsoPortalUrlLabel.Text = I18n.Tr("门户地址");
+        SsoInternalUrlLabel.Text = I18n.Tr("内网地址");
+        SsoUsersLabel.Text = I18n.Tr("用户");
+        SsoPortalUrlBox.ToolTip = I18n.Tr("浏览器访问门户的地址，须与门户 conf.json 的 idp.issuer 一致");
+        SsoInternalUrlBox.ToolTip = I18n.Tr("本机访问门户的地址（换 token 用），留空则同门户地址");
         TransEnableCombo.Items[0] = I18n.Tr("开启");
         TransEnableCombo.Items[1] = I18n.Tr("关闭");
         CloseActionCombo.Items[0] = I18n.Tr("每次询问");
@@ -371,8 +382,15 @@ public partial class SettingsPage : UserControl
         WebEnableCombo.SelectedIndex = AppConfig.WebEnabled ? 0 : 1;
         WebPortBox.Text = AppConfig.WebPort.ToString();
         WebPasswordBox.Text = AppConfig.WebPassword;
+
+        SsoEnableCombo.SelectedIndex = AppConfig.SsoEnabled ? 0 : 1;
+        SsoPortalUrlBox.Text = AppConfig.SsoPortalUrl;
+        SsoInternalUrlBox.Text = AppConfig.SsoInternalUrl;
+        SsoClientIdBox.Text = AppConfig.SsoClientId;
+        SsoSecretBox.Text = AppConfig.SsoClientSecret;
         _loading = false;
         UpdateWebStatus();
+        UpdateSsoStatus();
         UpdateImageHostStatus();
         UpdateTranslateStatus();
     }
@@ -905,6 +923,83 @@ public partial class SettingsPage : UserControl
         UpdateWebStatus();
     }
 
+    // ---------- 门户单点登录 ----------
+
+    private void SsoEnableCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.Write("sso", "enabled", SsoEnableCombo.SelectedIndex == 0 ? "True" : "False");
+        UpdateSsoStatus();
+        UpdateWebStatus();
+    }
+
+    /// <summary>四个文本框共用：Tag 即 sso 段的键名。失焦即存（同其它分区，无保存按钮）。</summary>
+    private void SsoBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not TextBox box || box.Tag is not string key)
+            return;
+        AppConfig.Write("sso", key, box.Text.Trim());
+        UpdateSsoStatus();
+        UpdateWebStatus();
+    }
+
+    private void UpdateSsoStatus()
+    {
+        if (SsoStatusLabel == null)
+            return;
+        if (!AppConfig.SsoEnabled)
+            SsoStatusLabel.Text = I18n.Tr("单点登录已关闭：Web 端只认访问密码");
+        else if (!AppConfig.SsoConfigured)
+            SsoStatusLabel.Text = I18n.Tr("未生效：门户地址 / Client ID / Client Secret 需填齐");
+        else
+        {
+            // 门户那边要登记的回调地址：局域网直连一个；经门户代理打开的话再加代理底下那个
+            var callback = $"http://{WebServer.LocalIPv4()}:{AppConfig.WebPort}/api/sso/callback";
+            SsoStatusLabel.Text = I18n.Format(
+                I18n.Tr("已生效 · 请在门户 conf.json 的 idp.clients 里登记 redirect_uris：{url}（经门户代理访问时，另加 <门户地址>/api/proxy/<卡片ID>/api/sso/callback）"),
+                ("url", callback));
+        }
+        RefreshSsoUsers();
+    }
+
+    /// <summary>用户列表：门户单点登录首次登录时自动建出来的本地用户。删掉即让其会话失效，下次登录会重新建。</summary>
+    private void RefreshSsoUsers()
+    {
+        SsoUsersPanel.Children.Clear();
+        var users = PortalSso.ListUsers();
+        if (users.Count == 0)
+        {
+            SsoUsersPanel.Children.Add(new TextBlock
+            {
+                Text = I18n.Tr("还没有用户：从门户首次登录时自动创建"),
+                Foreground = (System.Windows.Media.Brush)FindResource("CaptionBrush"),
+            });
+            return;
+        }
+        foreach (var u in users)
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
+            var del = new Button { Content = I18n.Tr("删除"), Margin = new Thickness(8, 0, 0, 0) };
+            var id = u.Id;
+            var name = u.Username;
+            del.Click += (_, _) =>
+            {
+                PortalSso.DeleteUser(id);
+                Logger.Info($"门户单点登录：已删除本地用户 {name}");
+                RefreshSsoUsers();
+            };
+            DockPanel.SetDock(del, Dock.Right);
+            row.Children.Add(del);
+            var text = u.DisplayName == u.Username ? u.Username : $"{u.DisplayName}（{u.Username}）";
+            if (u.IsAdmin)
+                text += " · " + I18n.Tr("门户管理员");
+            text += " · " + I18n.Tr("最近登录") + " " + u.LastLogin;
+            row.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+            SsoUsersPanel.Children.Add(row);
+        }
+    }
+
     // ---------- 图床存储 ----------
 
     private void ImageHostEnableCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1226,6 +1321,8 @@ public partial class SettingsPage : UserControl
             var text = I18n.Format(I18n.Tr("已开启 · 在手机/电脑浏览器打开 {url}"), ("url", url));
             if (AppConfig.WebPassword.Length > 0)
                 text += I18n.Tr("（需输入访问密码）");
+            if (PortalSso.Active)
+                text += I18n.Tr("（可用门户单点登录）");
             WebStatusLabel.Text = text;
         }
         else

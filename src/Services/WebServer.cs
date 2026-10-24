@@ -299,12 +299,40 @@ public static class WebServer
         }
         if (path == "/api/state")
         {
-            WriteJson(stream, 200, new { needLogin = _authRequired && !Authed(req) });
+            var user = SessionUser(req);
+            WriteJson(stream, 200, new
+            {
+                needLogin = AuthRequired && !Authed(req),
+                password = _authRequired,                 // 登录页据此决定画不画密码框
+                sso = PortalSso.Active,                   // 程序这边开了单点登录才画「门户登录」按钮
+                user = user == null ? null : new { username = user.Username, display = user.DisplayName },
+            });
             return;
         }
         if (path == "/api/login")
         {
             HandleLogin(stream, req);
+            return;
+        }
+        if (path == "/api/logout")
+        {
+            WriteJson(stream, 200, new { ok = true },
+                ("Set-Cookie", "dasd_auth=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"),
+                ("Set-Cookie", $"{PortalSso.SessionCookie}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"));
+            return;
+        }
+        if (path is "/api/sso/login" or "/api/sso/callback")
+        {
+            // 程序这边没开单点登录（或没配齐）时这两条路就当不存在
+            if (!PortalSso.Active)
+            {
+                WriteJson(stream, 404, new { error = "sso disabled" });
+                return;
+            }
+            if (path == "/api/sso/login")
+                SsoLogin(stream, req);
+            else
+                await SsoCallbackAsync(stream, req);
             return;
         }
 
@@ -415,20 +443,84 @@ public static class WebServer
         }
     }
 
+    /// <summary>要不要登录：设了访问密码，或开了门户单点登录（开着单点登录却放任匿名访问就没意义了）。</summary>
+    private static bool AuthRequired => _authRequired || PortalSso.Active;
+
     private static bool Authed(Request req)
     {
-        if (!_authRequired)
+        if (!AuthRequired)
             return true;
+        if (_authRequired && GetCookie(req, "dasd_auth") is { } token && TokensEqual(token, _expectedToken))
+            return true;
+        return SessionUser(req) != null;
+    }
+
+    /// <summary>单点登录进来的用户；没开单点登录时一律不认，关掉开关即让这类会话全部失效。</summary>
+    private static PortalSso.WebUser? SessionUser(Request req) =>
+        PortalSso.Active && GetCookie(req, PortalSso.SessionCookie) is { Length: > 0 } s ? PortalSso.UserFromSession(s) : null;
+
+    private static string? GetCookie(Request req, string name)
+    {
         if (!req.Headers.TryGetValue("Cookie", out var cookie))
-            return false;
+            return null;
         foreach (var part in cookie.Split(';'))
         {
             var kv = part.Trim();
-            if (kv.StartsWith("dasd_auth=", StringComparison.Ordinal))
-                return TokensEqual(kv[10..], _expectedToken);
+            if (kv.Length > name.Length && kv[name.Length] == '=' && kv.StartsWith(name, StringComparison.Ordinal))
+                return kv[(name.Length + 1)..];
         }
-        return false;
+        return null;
     }
+
+    // ---------- 门户单点登录（逻辑在 PortalSso） ----------
+
+    /// <summary>
+    /// 浏览器整页跳过来；base 是页面所在目录（经门户代理时是代理底下那个地址）。
+    /// 回 303 去门户授权端点，同时种下 state/nonce/PKCE 的临时 Cookie。
+    /// </summary>
+    private static void SsoLogin(NetworkStream stream, Request req)
+    {
+        var baseUrl = PortalSso.NormalizeBase(req.Query.GetValueOrDefault("base"))
+                      ?? $"http://{req.Headers.GetValueOrDefault("Host")}/";
+        var (url, state) = PortalSso.Begin(baseUrl);
+        WriteRedirect(stream, url,
+            ("Set-Cookie", $"{PortalSso.StateCookie}={state}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax"));
+    }
+
+    /// <summary>
+    /// 门户跳回来。成功种会话 Cookie，失败把原因带在 sso_error 里交给登录页显示。
+    /// 跳回首页用相对地址 <c>../../</c>：直连时落到 /，经门户代理时落到 /api/proxy/&lt;卡片&gt;/，两种都对。
+    /// </summary>
+    private static async Task SsoCallbackAsync(NetworkStream stream, Request req)
+    {
+        const string home = "../../";
+        var clearState = ("Set-Cookie", $"{PortalSso.StateCookie}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+        var error = req.Query.GetValueOrDefault("error");
+        if (!string.IsNullOrEmpty(error))
+        {
+            var desc = req.Query.GetValueOrDefault("error_description") ?? "";
+            WriteRedirect(stream, home + "?sso_error=" + Uri.EscapeDataString($"{error} {desc}".Trim()), clearState);
+            return;
+        }
+        try
+        {
+            var user = await PortalSso.CompleteAsync(req.Query.GetValueOrDefault("code") ?? "",
+                req.Query.GetValueOrDefault("state") ?? "", GetCookie(req, PortalSso.StateCookie) ?? "");
+            Logger.Info($"门户单点登录：{user.Username} 登录外部访问");
+            WriteRedirect(stream, home, clearState,
+                ("Set-Cookie", $"{PortalSso.SessionCookie}={PortalSso.MakeSession(user)}; Path=/; " +
+                               $"Max-Age={PortalSso.SessionMaxAge}; HttpOnly; SameSite=Lax"));
+        }
+        catch (PortalSso.SsoException e)
+        {
+            Logger.Warning($"门户单点登录失败：{e.Message}");
+            WriteRedirect(stream, home + "?sso_error=" + Uri.EscapeDataString(e.Message), clearState);
+        }
+    }
+
+    private static void WriteRedirect(NetworkStream stream, string location, params (string Key, string Value)[] extra) =>
+        WriteBytes(stream, 303, "See Other", "text/plain; charset=utf-8", [],
+            [("Location", location), ("Cache-Control", "no-store"), .. extra]);
 
     // 登录暴力破解限流：全局共享一个密码，故失败次数按整体计。达到阈值即锁定一个窗口。
     private const int MaxLoginFails = 10;
@@ -456,6 +548,12 @@ public static class WebServer
         catch (Exception)
         {
             password = "";
+        }
+        if (!_authRequired && PortalSso.Active)
+        {
+            // 没设访问密码、只开了单点登录：密码这条路是关着的
+            WriteJson(stream, 401, new { ok = false });
+            return;
         }
         if (!_authRequired || TokensEqual(Sha256Hex(password), _expectedToken))
         {

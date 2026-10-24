@@ -315,6 +315,40 @@
                                Foreground="{StaticResource CaptionBrush}" TextWrapping="Wrap" />
                 </StackPanel>
             </GroupBox>
+
+            <!-- 门户单点登录（桌面独有配置，Web 设置页不暴露；排版随图床存储分区）。
+                 本程序这边开了才生效：关着时 /api/sso/* 一律 404，Web 登录页也不画「门户登录」 -->
+            <GroupBox x:Name="SsoGroup" Header="门户单点登录">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock x:Name="SsoEnableLabel" Text="启用" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="SsoEnableCombo" Width="120"
+                                  SelectionChanged="SsoEnableCombo_SelectionChanged" />
+                        <TextBlock x:Name="SsoClientIdLabel" Text="Client ID" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <TextBox x:Name="SsoClientIdBox" Width="180" LostFocus="SsoBox_LostFocus" Tag="client_id" />
+                    </StackPanel>
+                    <DockPanel Margin="0,8,0,4">
+                        <TextBlock x:Name="SsoPortalUrlLabel" Text="门户地址" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <TextBox x:Name="SsoPortalUrlBox" LostFocus="SsoBox_LostFocus" Tag="portal_url" />
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock x:Name="SsoInternalUrlLabel" Text="内网地址" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <TextBox x:Name="SsoInternalUrlBox" LostFocus="SsoBox_LostFocus" Tag="internal_url" />
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock x:Name="SsoSecretLabel" Text="Client Secret" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <TextBox x:Name="SsoSecretBox" LostFocus="SsoBox_LostFocus" Tag="client_secret" />
+                    </DockPanel>
+                    <TextBlock x:Name="SsoStatusLabel" Margin="0,6,0,0"
+                               Foreground="{StaticResource CaptionBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="SsoUsersLabel" Text="用户" Margin="0,12,0,4" />
+                    <StackPanel x:Name="SsoUsersPanel" />
+                </StackPanel>
+            </GroupBox>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

@@ -445,6 +445,15 @@
   .login button { width: 100%; background: var(--accent-dim); border: none; color: #fff;
                   padding: 10px; border-radius: 8px; cursor: pointer; font-size: 15px; }
   .login .err { color: #ff7a7a; font-size: 13px; min-height: 18px; margin-bottom: 6px; }
+  .login .or { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: var(--muted); font-size: 12px; }
+  .login .or::before, .login .or::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+  .login .or[hidden], .login button[hidden], .login #pwPart[hidden] { display: none; }
+  .login button.sso { background: var(--surface2); border: 1px solid var(--line); color: var(--text); }
+  .nav .navuser { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px 2px;
+                  border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .nav .navuser span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav .navuser a { color: var(--muted); cursor: pointer; }
+  .nav .navuser a:hover { color: var(--text); }
   .empty { color: var(--muted); text-align: center; padding: 50px 0; }
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--line);
           border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -3px; }

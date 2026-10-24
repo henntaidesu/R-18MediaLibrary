@@ -101,7 +101,37 @@ async function apiPost(path, body) {
 }
 
 // ---------- 登录 ----------
-function showLogin(initial) { $('login').classList.add('show'); if (!initial) $('loginErr').textContent = '会话已失效，请重新登录'; $('pw').focus(); }
+// 登录方式由 /api/state 决定：设了访问密码才画密码框，程序开了门户单点登录才画「门户登录」
+let loginState = { password: true, sso: false };
+let currentUser = null;   // 单点登录进来的用户 { username, display }；密码登录为 null
+function showLogin(initial) {
+  const st = loginState;
+  $('pwPart').hidden = !st.password;
+  $('ssoBtn').hidden = !st.sso;
+  $('ssoOr').hidden = !(st.password && st.sso);
+  $('loginTitle').textContent = st.password ? '需要访问密码' : '请登录';
+  $('login').classList.add('show');
+  if (!initial) $('loginErr').textContent = '会话已失效，请重新登录';
+  // 门户那一路出错时后端 303 回 ?sso_error=...；显示后从地址栏抹掉，免得刷新又弹一次
+  const q = new URLSearchParams(location.search);
+  if (q.get('sso_error')) {
+    $('loginErr').textContent = '门户登录失败：' + q.get('sso_error');
+    q.delete('sso_error');
+    const rest = q.toString();
+    history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  }
+  if (st.password) $('pw').focus();
+}
+// 整页跳转而非 fetch：授权要浏览器自己走完门户那一趟。地址用相对路径、base 取页面所在目录，
+// 经门户代理打开时（页面在 /api/proxy/<卡片>/ 底下）回调才会落回代理底下
+function ssoLogin() {
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  location.href = 'api/sso/login?base=' + encodeURIComponent(base);
+}
+async function doLogout() {
+  try { await fetch('api/logout', { method: 'POST' }); } catch (e) {}
+  location.reload();
+}
 async function doLogin() {
   $('loginErr').textContent = '';
   const r = await apiPost('/api/login', { password: $('pw').value });
@@ -120,6 +150,15 @@ function buildTabs() {
     b.onclick = () => selectSection(s.key);
     box.appendChild(b);
   });
+  if (currentUser) {
+    const u = el('div', 'navuser');
+    const name = el('span', null, '👤 ' + (currentUser.display || currentUser.username));
+    name.title = currentUser.username;
+    const out = el('a', null, '退出');
+    out.onclick = doLogout;
+    u.appendChild(name); u.appendChild(out);
+    box.appendChild(u);
+  }
 }
 // 移动端抽屉开关
 function toggleDrawer() {

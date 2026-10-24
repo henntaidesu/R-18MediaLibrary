@@ -272,6 +272,56 @@ public static class AppConfig
     /// <summary>外部访问密码；为空表示不鉴权。</summary>
     public static string WebPassword => Read("web_server", "password", "") ?? "";
 
+    // ---------- 门户单点登录（Portal 当 OIDC 提供方，Services/PortalSso）----------
+
+    /// <summary>外部访问是否接入门户单点登录。开着时 Web 端一律要登录（不论访问密码是否为空）。</summary>
+    public static bool SsoEnabled => Read("sso", "enabled") == "True";
+
+    /// <summary>
+    /// 浏览器看到的门户地址（如 https://portal.example.com）。授权跳转去这里，
+    /// 也是 id_token 的 iss——必须与门户 conf.json 的 idp.issuer 一字不差。
+    /// </summary>
+    public static string SsoPortalUrl => NormalizeUrl(Read("sso", "portal_url", "") ?? "");
+
+    /// <summary>
+    /// 本机访问门户用的地址（如 http://10.0.10.5:9921），用于换 token。留空则同门户地址。
+    /// 门户挂在 Cloudflare 之类后面时，从本机直连内网地址更快也更稳。
+    /// </summary>
+    public static string SsoInternalUrl => NormalizeUrl(Read("sso", "internal_url", "") ?? "");
+
+    public static string SsoClientId => (Read("sso", "client_id", "") ?? "").Trim();
+    public static string SsoClientSecret => (Read("sso", "client_secret", "") ?? "").Trim();
+
+    /// <summary>四项必填齐了没有（内网地址可选）。没齐时即使开着也不生效。</summary>
+    public static bool SsoConfigured =>
+        SsoPortalUrl.Length > 0 && SsoClientId.Length > 0 && SsoClientSecret.Length > 0;
+
+    /// <summary>
+    /// Web 端登录会话的签名密钥，首次用到时随机生成并落库。不做成设置项：让人填多半会被填成弱口令；
+    /// 换掉它等于让所有已登录的浏览器下线。
+    /// </summary>
+    public static string SsoSessionSecret
+    {
+        get
+        {
+            var key = Read("sso", "session_secret", "") ?? "";
+            if (key.Length >= 32)
+                return key;
+            key = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            Write("sso", "session_secret", key);
+            return key;
+        }
+    }
+
+    private static string NormalizeUrl(string raw)
+    {
+        var url = raw.Trim().TrimEnd('/');
+        if (url.Length > 0 && !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                           && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            url = "http://" + url;
+        return url;
+    }
+
     /// <summary>媒体库列表（media_lib.libs，JSON）。</summary>
     public static List<MediaLib> ReadMediaLibs()
     {
