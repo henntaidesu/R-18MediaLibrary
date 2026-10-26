@@ -64,7 +64,7 @@ public static class AppConfig
         ["ehentai"] = new()
         {
             ["host"] = "e-hentai.org", ["member_id"] = "", ["pass_hash"] = "", ["igneous"] = "",
-            ["username"] = "",
+            ["username"] = "", ["password"] = "",
             ["original"] = "True",
         },
         // pixiv 数据源：匿名也能搜，但结果里不含 R-18，要看 R-18 就得填浏览器里的 PHPSESSID。
@@ -454,6 +454,9 @@ public static class AppConfig
     /// 密码有意不存：cookie 本身就是长期凭据，留一份明文口令没有额外用处。
     /// </summary>
     public static string EhentaiUsername => (Read("ehentai", "username", "") ?? "").Trim();
+
+    /// <summary>站点账号密码（「账号访问」页按用户要求保存，cookie 失效时可直接再登一次）。</summary>
+    public static string EhentaiPassword => Read("ehentai", "password", "") ?? "";
 
     /// <summary>登录 cookie 的 ipb_member_id（浏览器登录后从 Cookie 里复制）。</summary>
     public static string EhentaiMemberId => (Read("ehentai", "member_id", "") ?? "").Trim();

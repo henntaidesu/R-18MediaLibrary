@@ -390,7 +390,6 @@
   .acct-st { font-size: 13px; font-weight: 400; color: var(--muted); padding: 1px 10px;
              border: 1px solid var(--line); border-radius: 999px; }
   .acct-st.on { color: #4ade80; border-color: #2f6b45; }
-  .acct > .note:first-of-type { margin: -4px 0 12px; }
   .acct-tip { margin-top: 12px; }
   /* 媒体库管理卡片 */
   .libcard { background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }

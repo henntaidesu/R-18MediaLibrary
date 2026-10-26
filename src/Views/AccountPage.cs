@@ -14,7 +14,8 @@ namespace R18MediaLibrary.Views;
 /// <summary>
 /// 账号访问（一级导航「🔑 账号访问」，对齐 Web accounts.js 的 renderAccountsPage）：
 /// FANBOX / pixiv / E-Hentai 三个站点各一张分区卡——标题右边是登录状态「已登录（账号名）/ 未登录」，
-/// 其下是 cookie 输入、「保存并检测 / 检测 / 退出登录」与获取 cookie 的说明；E-Hentai 另有账号密码登录。
+/// 其下是 cookie 输入与「保存并检测 / 检测 / 退出登录」；E-Hentai 另有账号密码登录（账号密码存库，进页即回填）。
+/// 页面不放说明文字，只有 FANBOX / pixiv 留一行 cookie 的获取方法（用户指定）。
 ///
 /// cookie 输入框只写不读（同 Web：服务端从不把 cookie 回给网页，桌面端保持同一交互），已登录时留空即保持不变。
 /// 数据与校验都在 <see cref="AccountService"/>；登录 FANBOX 后作品搜索的来源下拉多出「FANBOX（账号名）」。
@@ -33,12 +34,11 @@ public class AccountPage : UserControl
         [AccountService.Ehentai] = [("member_id", "ipb_member_id"), ("pass_hash", "ipb_pass_hash"), ("igneous", "igneous")],
     };
 
-    // 去哪个网站登录、从哪个域的 cookie 里复制
+    // 获取方法：去哪个网站登录、从哪个域的 cookie 里复制（只有 FANBOX / pixiv 显示）
     private static readonly Dictionary<string, (string Url, string Domain)> Where = new()
     {
         [AccountService.Fanbox] = ("https://www.fanbox.cc/", "fanbox.cc"),
         [AccountService.Pixiv] = ("https://www.pixiv.net/", "pixiv.net"),
-        [AccountService.Ehentai] = ("https://e-hentai.org/", "e-hentai.org / exhentai.org"),
     };
 
     public AccountPage()
@@ -66,11 +66,6 @@ public class AccountPage : UserControl
     private GroupBox BuildCard(AccountInfo a)
     {
         var body = new StackPanel();
-        body.Children.Add(new TextBlock
-        {
-            Text = I18n.Tr(a.Note), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10),
-            Style = Res<Style>("CaptionText"),
-        });
 
         var result = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0),
             TextWrapping = TextWrapping.Wrap, FontSize = 13 };
@@ -80,13 +75,17 @@ public class AccountPage : UserControl
             result.Foreground = new SolidColorBrush(ok ? Color.FromRgb(0x4A, 0xDE, 0x80) : Color.FromRgb(0xF8, 0x71, 0x71));
         }
 
-        // E-Hentai：账号密码登录（成功即写好下面三个 cookie，密码只用这一次不保存）
+        // E-Hentai：账号密码登录（成功即写好下面三个 cookie）。账号密码都存库，进页即回填
         if (a.Site == AccountService.Ehentai)
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
-            row.Children.Add(Label(I18n.Tr("账号密码")));
+            row.Children.Add(Label(I18n.Tr("账号")));
             var user = new TextBox { Width = 180, Text = AppConfig.EhentaiUsername, VerticalContentAlignment = VerticalAlignment.Center };
-            var pass = new PasswordBox { Width = 200, Margin = new Thickness(8, 0, 0, 0), VerticalContentAlignment = VerticalAlignment.Center };
+            var passLabel = Label(I18n.Tr("密码"));
+            passLabel.MinWidth = 0;
+            passLabel.Margin = new Thickness(24, 0, 12, 0);
+            var pass = new PasswordBox { Width = 200, Password = AppConfig.EhentaiPassword,
+                VerticalContentAlignment = VerticalAlignment.Center };
             var login = new Button { Content = I18n.Tr("登录并获取 Cookie"), Margin = new Thickness(8, 0, 0, 0),
                 Style = Res<Style>("AccentButton") };
             login.Click += async (_, _) =>
@@ -108,7 +107,6 @@ public class AccountPage : UserControl
                     login.IsEnabled = true;
                     login.Content = I18n.Tr("登录并获取 Cookie");
                 }
-                pass.Clear();   // 密码不留在界面上，也不写进配置
                 if (!r.Ok)
                 {
                     Say(false, r.Message);
@@ -118,6 +116,7 @@ public class AccountPage : UserControl
                 Refresh();
             };
             row.Children.Add(user);
+            row.Children.Add(passLabel);
             row.Children.Add(pass);
             row.Children.Add(login);
             body.Children.Add(row);
@@ -136,14 +135,6 @@ public class AccountPage : UserControl
             inputs[key] = box;
             body.Children.Add(row);
         }
-        body.Children.Add(new TextBlock
-        {
-            Text = a.LoggedIn
-                ? I18n.Tr("已保存的值不回显：留空即保持不变，填写则覆盖。")
-                : I18n.Tr("粘贴浏览器 Cookie 里对应名称的值。"),
-            Margin = new Thickness(132, 0, 0, 4), Style = Res<Style>("CaptionText"),
-        });
-
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(132, 6, 0, 0) };
         var save = new Button { Content = I18n.Tr("保存并检测"), Style = Res<Style>("AccentButton") };
         save.Click += async (_, _) =>
@@ -214,21 +205,24 @@ public class AccountPage : UserControl
         actions.Children.Add(result);
         body.Children.Add(actions);
 
-        // 获取方法：浏览器登录 → F12 → Cookie
-        var (url, domain) = Where[a.Site];
-        var tip = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0),
-            Style = Res<Style>("CaptionText") };
-        tip.Inlines.Add(new Run(I18n.Tr("获取方法：在浏览器登录 ")));
-        var link = new Hyperlink(new Run(url))
+        // 获取方法：浏览器登录 → F12 → Cookie（只有 FANBOX / pixiv 有）
+        if (Where.TryGetValue(a.Site, out var where))
         {
-            Foreground = Res<Brush>("AccentLightBrush") ?? Brushes.DodgerBlue, TextDecorations = null,
-        };
-        link.Click += (_, _) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        tip.Inlines.Add(link);
-        tip.Inlines.Add(new Run(I18n.Format(
-            I18n.Tr(" 后按 F12 →「应用 / Application」→ Cookie → {domain}，复制对应名称的「值」粘到上面。"),
-            ("domain", domain))));
-        body.Children.Add(tip);
+            var (url, domain) = where;
+            var tip = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0),
+                Style = Res<Style>("CaptionText") };
+            tip.Inlines.Add(new Run(I18n.Tr("获取方法：在浏览器登录 ")));
+            var link = new Hyperlink(new Run(url))
+            {
+                Foreground = Res<Brush>("AccentLightBrush") ?? Brushes.DodgerBlue, TextDecorations = null,
+            };
+            link.Click += (_, _) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            tip.Inlines.Add(link);
+            tip.Inlines.Add(new Run(I18n.Format(
+                I18n.Tr(" 后按 F12 →「应用 / Application」→ Cookie → {domain}，复制对应名称的「值」粘到上面。"),
+                ("domain", domain))));
+            body.Children.Add(tip);
+        }
 
         // 标题：站点名 + 登录状态胶囊（对齐 Web 的 .acct-st）
         var header = new StackPanel { Orientation = Orientation.Horizontal };

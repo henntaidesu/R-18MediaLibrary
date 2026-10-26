@@ -6,7 +6,7 @@ using R18MediaLibrary.Core;
 namespace R18MediaLibrary.Services;
 
 /// <summary>「账号访问」页上的一个站点：登录与否 + 显示用的账号名。</summary>
-public sealed record AccountInfo(string Site, string Title, bool LoggedIn, string Account, string Note);
+public sealed record AccountInfo(string Site, string Title, bool LoggedIn, string Account);
 
 /// <summary>
 /// 各站点的登录状态（一级导航「🔑 账号访问」，Web 与桌面共用）：FANBOX / pixiv / E-Hentai。
@@ -15,7 +15,8 @@ public sealed record AccountInfo(string Site, string Title, bool LoggedIn, strin
 ///   FANBOX   —— FANBOXSESSID（填了之后作品搜索多一个「FANBOX（账号名）」来源，直连 fanbox.cc 官方站）；
 ///   pixiv    —— PHPSESSID（不填也能搜，但站点会把 R-18 从结果里滤掉）；
 ///   E-Hentai —— ipb_member_id / ipb_pass_hash / igneous（可用账号密码登录换取，见 EhentaiApi.LoginAsync）。
-/// pixiv 与 FANBOX 的登录都带人机验证，程序里走不通，只能从浏览器复制 cookie；E-Hentai 两种都行。
+/// pixiv 与 FANBOX 的登录都带人机验证，程序里走不通，只能从浏览器复制 cookie；E-Hentai 两种都行，
+/// 且账号密码按用户要求存库（ehentai.username / password），cookie 失效时可直接再点一次登录。
 ///
 /// 账号名（username）只是「检测」时顺手记下的显示名，鉴权从不看它；cookie 一换就清掉，等下一次检测重新取，
 /// 免得显示的是上一个账号的名字。
@@ -69,15 +70,11 @@ public static class AccountService
 
     public static AccountInfo Info(string site) => site switch
     {
-        Fanbox => new AccountInfo(Fanbox, "FANBOX", IsLoggedIn(Fanbox), IsLoggedIn(Fanbox) ? DisplayName(Fanbox) : "",
-            "登录后作品搜索多出「FANBOX（账号名）」来源：直连 fanbox.cc 官方站，可下载你赞助档位内的作品（原图）。" +
-            "未登录的「FANBOX」来源仍走 pawchive 归档。"),
-        Pixiv => new AccountInfo(Pixiv, "pixiv", IsLoggedIn(Pixiv), IsLoggedIn(Pixiv) ? DisplayName(Pixiv) : "",
-            "未登录也能搜索，但站点会把 R-18 作品从结果里滤掉，单独打开也会被拒。"),
+        Fanbox => new AccountInfo(Fanbox, "FANBOX", IsLoggedIn(Fanbox), IsLoggedIn(Fanbox) ? DisplayName(Fanbox) : ""),
+        Pixiv => new AccountInfo(Pixiv, "pixiv", IsLoggedIn(Pixiv), IsLoggedIn(Pixiv) ? DisplayName(Pixiv) : ""),
         Ehentai => new AccountInfo(Ehentai, "E-Hentai", IsLoggedIn(Ehentai),
-            IsLoggedIn(Ehentai) ? DisplayName(Ehentai) : "",
-            "未登录可浏览表站（e-hentai.org）；里站（exhentai.org）与下载原图都要登录。"),
-        _ => new AccountInfo(site, site, false, "", ""),
+            IsLoggedIn(Ehentai) ? DisplayName(Ehentai) : ""),
+        _ => new AccountInfo(site, site, false, ""),
     };
 
     public static List<AccountInfo> All()
@@ -199,16 +196,23 @@ public static class AccountService
         }
     }
 
-    /// <summary>E-Hentai 账号密码登录（站点里只有它能这样登）；成功即写好三个 cookie。</summary>
+    /// <summary>
+    /// E-Hentai 账号密码登录（站点里只有它能这样登）；成功即写好三个 cookie。
+    /// 账号密码都存库；password 为空时用已保存的那个（网页端不回显密码，留空即沿用）。
+    /// </summary>
     public static async Task<EhentaiApi.EhLoginResult> LoginEhentaiAsync(string username, string password)
     {
         AppConfig.Write("ehentai", "username", username.Trim());
+        if (password.Length == 0)
+            password = AppConfig.EhentaiPassword;
+        else
+            AppConfig.Write("ehentai", "password", password);
         var result = await EhentaiApi.LoginAsync(username, password);
         Changed?.Invoke();
         return result;
     }
 
-    /// <summary>退出登录：清掉该站的 cookie 与显示名（E-Hentai 的账号名留着，方便下次再登）。</summary>
+    /// <summary>退出登录：清掉该站的 cookie 与显示名（E-Hentai 的账号密码留着，方便下次再登）。</summary>
     public static void Logout(string site)
     {
         switch (site)

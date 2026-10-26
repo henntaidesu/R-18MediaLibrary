@@ -3003,9 +3003,11 @@ public static class WebServer
         {
             accounts = AccountService.All().Select(a => new
             {
-                site = a.Site, title = a.Title, loggedIn = a.LoggedIn, account = a.Account, note = a.Note,
+                site = a.Site, title = a.Title, loggedIn = a.LoggedIn, account = a.Account,
             }),
             ehUsername = AppConfig.EhentaiUsername,
+            // 密码本身不回给网页，只告诉它「存过了」：输入框留空即沿用已保存的
+            ehHasPassword = AppConfig.EhentaiPassword.Length > 0,
         });
     }
 
@@ -3035,7 +3037,7 @@ public static class WebServer
         WriteJson(stream, 200, new { ok, message });
     }
 
-    /// <summary>E-Hentai 账号密码登录（密码只用这一次，不落库）。</summary>
+    /// <summary>E-Hentai 账号密码登录（账号密码存库；password 留空即用已保存的）。</summary>
     private static async Task ApiAccountLoginAsync(NetworkStream stream, Request req)
     {
         if (ReadStringField(req.Body, "site") != AccountService.Ehentai)
