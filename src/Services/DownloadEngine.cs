@@ -667,22 +667,29 @@ public static class DownloadEngine
         }
     }
 
-    /// <summary>从队列原子地领取一条待下载任务并立即标记为下载中；无任务返回 null。</summary>
-    private static (string Key, string WorkId, string Url, string Source, string SubPath)? ClaimNext()
+    /// <summary>从队列原子地领取一条属于该车道的待下载任务并立即标记为下载中；无任务返回 null。</summary>
+    private static (string Key, string WorkId, string Url, string Source, string SubPath, string Account)? ClaimNext(
+        string lane)
     {
         lock (ClaimLock)
         {
+            // fanbox 来源的三条车道（pawchive / 官方站 / 谷歌网盘）SQL 只能筛到来源，余下按 url 在这里细分；
+            // 其它车道一个来源就是一条车道，取第一行即可
+            var split = lane is DownloadLanes.Pawchive or DownloadLanes.Fanbox or DownloadLanes.Drive;
             var rows = Db.Select(
-                "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\" FROM \"download_list\" WHERE \"status\" = '0' LIMIT 1");
-            if (rows is not { Count: > 0 })
+                "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\", \"account\" FROM \"download_list\" " +
+                $"WHERE \"status\" = '0' AND {DownloadLanes.SourceFilter(lane)} ORDER BY rowid" + (split ? "" : " LIMIT 1"));
+            var row = rows?.FirstOrDefault(r =>
+                !split || DownloadLanes.LaneOf(r[3] as string, r[2] as string ?? "") == lane);
+            if (row is null)
                 return null;
-            var key = rows[0][0] as string ?? "";
+            var key = row[0] as string ?? "";
             // 立即占位，其它线程不会重复领取；同时清除上次解析失败原因
             Db.Execute(
                 "UPDATE \"download_list\" SET \"status\" = '3', \"long\" = '0', \"error\" = NULL WHERE \"UUID\" = @k",
                 ("@k", key));
-            return (key, rows[0][1] as string ?? "", rows[0][2] as string ?? "",
-                rows[0][3] as string ?? "", rows[0][4] as string ?? "");
+            return (key, row[1] as string ?? "", row[2] as string ?? "",
+                row[3] as string ?? "", row[4] as string ?? "", row[5] as string ?? "");
         }
     }
 
@@ -695,7 +702,8 @@ public static class DownloadEngine
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
             ApplyRequestHeaders(request, userAgent, cookie, referer);
-            using var response = client.Send(request, HttpCompletionOption.ResponseHeadersRead);
+            using var cts = new CancellationTokenSource(ResponseTimeout);
+            using var response = client.Send(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (response.StatusCode == HttpStatusCode.PartialContent)
             {
                 var len = response.Content.Headers.ContentRange?.Length;
@@ -705,7 +713,7 @@ public static class DownloadEngine
             if (response.StatusCode == HttpStatusCode.OK)
                 return (response.Content.Headers.ContentLength ?? 0, false);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { }
         return (0, false);
     }
 
@@ -725,15 +733,24 @@ public static class DownloadEngine
             request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(downloaded, null);
         }
 
+        // 下载线程的 client 不设整体超时（大文件一下就是几十分钟），超时改成两段各自计：
+        // 等响应头最多 ResponseTimeout，之后每次读取最多空等 ReadIdleTimeout。
+        // 不设的话对端不回包时 Send/Read 会永远挂着，那一行就一直停在「下载中」不动。
+        // 失败后的重排/放弃由 WorkerLoop 的 RequeueOrGiveUp 决定（最多自动重试 MaxRetries 次）。
+        using var cts = new CancellationTokenSource(ResponseTimeout);
         HttpResponseMessage response;
         try
         {
-            response = client.Send(request, HttpCompletionOption.ResponseHeadersRead);
+            response = client.Send(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        catch (OperationCanceledException)
+        {
+            Logger.Error($"{filename} 下载请求超时（{ResponseTimeout.TotalSeconds:F0} 秒无响应）");
+            return "failed";
+        }
+        catch (HttpRequestException e)
         {
             Logger.Error($"{filename} 下载请求失败: {e.Message}");
-            SetStatus(key, "0");
             return "failed";
         }
         using (response)
@@ -748,11 +765,15 @@ public static class DownloadEngine
                 // 交由上层按来源决定跳过还是重新解析（见 WorkerLoop 的 missing 分支）
                 if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
                     return "missing";
-                SetStatus(key, "0");
                 // 403/429/503 多为站点限流（如 pawchive 前置的 DDoS-Guard）：5 秒一轮的热重试
                 // 只会让封锁一直续期，交由上层改用长冷却再试
-                return response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
-                    or HttpStatusCode.ServiceUnavailable ? "throttled" : "failed";
+                if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
+                    or HttpStatusCode.ServiceUnavailable)
+                {
+                    SetStatus(key, "0");
+                    return "throttled";
+                }
+                return "failed";
             }
             // E-Hentai 会把「需要登录」当正常页面回（HTTP 200 + text/html 的登录页），
             // 不认出来就会把登录页当图片存下并标记完成，整本画廊看着成功、实则全是 1.3KB 的 HTML。
@@ -800,12 +821,18 @@ public static class DownloadEngine
                 int read;
                 try
                 {
-                    read = stream.Read(buffer, 0, buffer.Length);
+                    // 每次读取前重新计时：只算对端不给数据的空等，限速的 Sleep 不计在内
+                    cts.CancelAfter(ReadIdleTimeout);
+                    read = stream.ReadAsync(buffer.AsMemory(), cts.Token).AsTask().GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    Logger.Error($"{filename} 下载超时（{ReadIdleTimeout.TotalSeconds:F0} 秒没有收到数据）");
+                    return "failed";
                 }
                 catch (IOException e)
                 {
                     Logger.Error($"{filename} 下载中断: {e.Message}");
-                    SetStatus(key, "0");
                     return "failed";
                 }
                 if (read <= 0)
@@ -906,8 +933,44 @@ public static class DownloadEngine
     /// <summary>被站点限流后的冷却时长：期间该线程不再发起请求，让封锁自然解除。</summary>
     private static readonly TimeSpan ThrottleCooldown = TimeSpan.FromSeconds(60);
 
-    /// <summary>单个下载线程：不断领取队列任务，通过 debrid-link 中转下载（支持断点续传）。</summary>
-    private static void WorkerLoop()
+    /// <summary>发出下载请求后等响应头的上限。</summary>
+    private static readonly TimeSpan ResponseTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>下载过程中单次读取的空等上限：这么久一个字节都没收到即判超时。</summary>
+    private static readonly TimeSpan ReadIdleTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>单个文件在没有人工干预前最多自动重试的次数（超时、连接中断、HTTP 错误都算一次）。</summary>
+    internal const int MaxRetries = 3;
+
+    /// <summary>
+    /// 各分卷已自动重试的次数（按 UUID）。只放内存，放弃时与下载成功时清掉：
+    /// 用户点「全部重新解析」把行放回队列后又能重试 MaxRetries 次；重启程序同样清零。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, int> RetryCounts = new();
+
+    /// <summary>
+    /// 下载失败后的去向：重试次数没用完就放回队列（'0'，断点续传），用完则标记失败（'2' + retryFailed）停下，
+    /// 等用户「全部重新解析」。不设上限的话，一个永远下不动的文件会让线程 5 秒一轮地一直空转。
+    /// </summary>
+    private static void RequeueOrGiveUp(string key, string filename)
+    {
+        var n = RetryCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
+        if (n > MaxRetries)
+        {
+            RetryCounts.TryRemove(key, out _);
+            Logger.Error($"{filename} 已重试 {MaxRetries} 次仍失败，停止自动重试（「全部重新解析」可再试）");
+            SetParseFailed(key, RetryFailedError);
+            return;
+        }
+        Logger.Warning($"{filename} 下载失败，5 秒后第 {n}/{MaxRetries} 次重试");
+        SetStatus(key, "0");
+    }
+
+    /// <summary>
+    /// 单个下载线程：不断领取本车道（一个下载源）的队列任务并下载（支持断点续传）。
+    /// 只领本车道的任务，所以本站的冷却/限流等待不会占住其它站的线程。
+    /// </summary>
+    private static void WorkerLoop(string lane)
     {
         using var client = Http.CreateClient(Timeout.InfiniteTimeSpan);
         while (true)
@@ -919,7 +982,7 @@ public static class DownloadEngine
                 if (_stopRequested)
                     return;
 
-                var claimed = ClaimNext();
+                var claimed = ClaimNext(lane);
                 if (claimed is null)
                 {
                     // 队列空，等待新任务；期间收到暂停信号立即退出
@@ -932,8 +995,12 @@ public static class DownloadEngine
                     continue;
                 }
 
-                var (k, workId, url, source, subPath) = claimed.Value;
+                var (k, workId, url, source, subPath, account) = claimed.Value;
                 key = k;
+                // pixiv / FANBOX 多账号：用入队时那个账号的 cookie（官方站附件只对赞助到档位的账号开放）。
+                // 这里是线程的同步循环，设进去的上下文一直有效到下一条覆盖；旧记录没有 account，用默认账号
+                if (source is FanboxService.SourceName or PixivApi.SourceName)
+                    SiteAccounts.Use(source, account.Length > 0 ? account : null);
                 // asmr.one / fanbox / pixiv 都是直链源：url 即可直接下载，且 sub_path 保留作品内目录结构
                 // （pixiv 的图片地址不绑 IP 也不过期，只是取图必须带 Referer，见下面的 referer）
                 var isDirect = source is "asmr" or FanboxService.SourceName or PixivApi.SourceName;
@@ -1106,15 +1173,22 @@ public static class DownloadEngine
                     }
                     // 论坛源的直链是 debrid-link 现场解析出来的，404 多为解析结果过期；
                     // 重新领取会重新解析，因此仍按普通失败重试
-                    SetStatus(key, "0");
+                    RequeueOrGiveUp(key, filename);
                     Thread.Sleep(5000);
                     continue;
                 }
-                if (result is "slow" or "failed")
+                if (result == "failed")
+                {
+                    RequeueOrGiveUp(key, filename);
+                    Thread.Sleep(5000);
+                    continue;
+                }
+                if (result == "slow")
                 {
                     Thread.Sleep(5000);
                     continue;
                 }
+                RetryCounts.TryRemove(key, out _);
 
                 // E-Hentai：站点投递的格式与它登记的原始文件名常常对不上（.png 原图被转成
                 // WebP 等），扩展名以刚下下来的内容为准再核一次
@@ -1137,7 +1211,7 @@ public static class DownloadEngine
                 if (key != null)
                 {
                     DownloadProgress.TryRemove(key, out _);
-                    SetStatus(key, "0");  // 重新排队，下次从断点继续
+                    RequeueOrGiveUp(key, key);  // 重新排队，下次从断点继续（同样计入重试次数）
                 }
                 Thread.Sleep(5000);
             }
@@ -1178,13 +1252,16 @@ public static class DownloadEngine
         // 流量重置监控线程：网盘流量用尽暂停后，到重置时间自动把暂停分卷重新排队续传
         new Thread(TrafficResetLoop) { IsBackground = true, Name = "traffic-reset-monitor" }.Start();
 
+        // 每个下载源一组线程，各领各的队列：不同站点之间并行下载，互不排队。
+        // 线程数设置是「每个下载源」的并发数；总带宽仍受全局限速约束
         var workers = new List<Thread>();
-        for (var i = 0; i < AppConfig.DownloadProcesses; i++)
-        {
-            var thread = new Thread(WorkerLoop) { IsBackground = true, Name = $"download-{i}" };
-            thread.Start();
-            workers.Add(thread);
-        }
+        foreach (var (lane, _) in DownloadLanes.All)
+            for (var i = 0; i < AppConfig.DownloadProcesses; i++)
+            {
+                var thread = new Thread(() => WorkerLoop(lane)) { IsBackground = true, Name = $"download-{lane}-{i}" };
+                thread.Start();
+                workers.Add(thread);
+            }
         foreach (var thread in workers)
             thread.Join();
     }
@@ -1204,6 +1281,9 @@ public static class DownloadEngine
     /// 补上 cookie 或改用站点显示图后，「全部重新解析」即可重来。
     /// </summary>
     internal const string NotImageError = "notimage";
+
+    /// <summary>分卷"自动重试用尽"标记：超时 / 连接中断等失败已重试 MaxRetries 次，停下等用户「全部重新解析」。</summary>
+    internal const string RetryFailedError = "retryFailed";
 
     /// <summary>
     /// 分卷"存的是预览图"标记：源站没有原图，改存了 800px 预览图（见 WorkerLoop 的 missing 分支）。

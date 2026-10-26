@@ -25,7 +25,9 @@ namespace R18MediaLibrary.Services;
 /// - 服务端 → 浏览器，二进制帧首字节区分类型：1 = 一帧 JPEG 画面，2 = 一段 16 位交错 PCM 声音；
 ///   文本帧为 JSON 状态：{t:"status",text} / {t:"audio",rate,ch} / {t:"exit"}。
 /// - 浏览器 → 服务端，文本帧 JSON：{t:"m",a:"move|down|up",b,x,y}（x/y 是 0~1 的画面相对坐标）、
-///   {t:"w",d}（滚轮）、{t:"k",a:"down|up",code}（KeyboardEvent.code）、{t:"audio",on}、{t:"quit"}（关闭程序窗口）。
+///   {t:"w",d}（滚轮）、{t:"k",a:"down|up",code}（KeyboardEvent.code）、{t:"text",s}（整段文字按 Unicode 注入，
+///   手机软键盘发不出 KeyboardEvent.code，靠它输入文字）、{t:"audio",on}、{t:"quit"}（关闭程序窗口）。
+///   exit 可带 text（账号访问的登录浏览器串流 <see cref="LoginStream"/> 用同一协议，用它带回登录结果）。
 ///
 /// 只保留一路串流：屏幕、鼠标、键盘都只有一套，两路同时操作只会互相打架，新连接进来就把旧的踢掉。
 /// 断开串流不结束游戏（可以重新连上继续玩），结束要走 quit。
@@ -412,6 +414,17 @@ public static class GameStream
                 case "k":
                     KeyInput(hwnd, Str(r, "a"), Str(r, "code"));
                     break;
+                case "text":
+                    var text = Str(r, "s");
+                    if (text.Length is > 0 and <= 500)
+                    {
+                        if (Native.GetForegroundWindow() != hwnd)
+                            Native.BringToFront(hwnd);
+                        foreach (var ch in text)
+                            if (!char.IsControl(ch))
+                                Native.SendChar(ch);
+                    }
+                    break;
             }
         }
 
@@ -648,7 +661,7 @@ public static class GameStream
         public const uint MouseMove = 0x0001, MouseLeftDown = 0x0002, MouseLeftUp = 0x0004,
             MouseRightDown = 0x0008, MouseRightUp = 0x0010, MouseMiddleDown = 0x0020, MouseMiddleUp = 0x0040,
             MouseWheel = 0x0800, MouseVirtualDesk = 0x4000, MouseAbsolute = 0x8000;
-        private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008;
+        private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008, KeyUnicode = 0x0004;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct Rect { public int Left, Top, Right, Bottom; }
@@ -770,6 +783,17 @@ public static class GameStream
                 U = new InputUnion { Mouse = new MouseInputData { Dx = dx, Dy = dy, MouseData = data, Flags = flags } },
             };
             SendInput(1, [input], Marshal.SizeOf<Input>());
+        }
+
+        /// <summary>按 Unicode 注入一个字符（KEYEVENTF_UNICODE），与键盘布局、输入法无关。</summary>
+        public static void SendChar(char ch)
+        {
+            Input Make(bool up) => new()
+            {
+                Type = 1,
+                U = new InputUnion { Key = new KeyInputData { Scan = ch, Flags = KeyUnicode | (up ? KeyUp : 0) } },
+            };
+            SendInput(2, [Make(false), Make(true)], Marshal.SizeOf<Input>());
         }
 
         /// <summary>按扫描码注入：DirectInput/RawInput 读的是扫描码，只发虚拟键码的话不少游戏收不到。</summary>

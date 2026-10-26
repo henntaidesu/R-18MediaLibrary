@@ -1,6 +1,6 @@
 // fanbox.js ——「作品搜索」分区里的 FANBOX 数据源：搜作家 → 作家主页选作品 → 批量/单篇下载。
 // 两个来源共用本模块：「FANBOX」走 pawchive 归档（匿名），「FANBOX（账号名）」直连 fanbox.cc 官方站
-// （「账号访问」里登录了才有）。两者面板、卡片、详情、下载完全相同，只是请求带不带 site=cc（fbSite）；
+// （「账号访问」里登录的每个账号一项）。两者面板、卡片、详情、下载完全相同，只是请求带不带 site=cc:<用户号>（fbSite）；
 // 官方站的作家键是 creatorId（字符串），pawchive 是纯数字作家号，前端一律当不透明字符串传。
 // 只做搜索与下载，不含媒体库浏览：已下载的 fanbox 作品落在磁盘的媒体库目录里，程序内不再单独建卡片视图。
 // 工具栏（来源下拉 + 输入框 + 查询）由 search.js 统一提供，本模块只负责两个结果面板：
@@ -22,10 +22,11 @@ let fbDetailGen = 0;
 let fbGridScroll = 0;       // 进详情前作品网格的滚动位置，返回时恢复
 let fbPageIo = null;        // 详情页图流的懒加载观察器（滚到跟前才给图贴 src）
 let fbDetail = null;        // 当前详情页的作品 { id, state, locked }，工具栏「下载」据此定文案
-let fbSite = '';            // '' = pawchive，'cc' = fanbox.cc 官方站（由 search.js 切来源时经 fbSetSite 设定）
+let fbSite = '';            // '' = pawchive，'cc:<用户号>' = 用该账号访问 fanbox.cc 官方站（由 search.js 切来源时经 fbSetSite 设定）
 
-const fbImg = (url) => '/api/fanbox/image?url=' + enc(url);
-const fbCc = () => fbSite === 'cc';
+// 官方站的预览图只对有权限的账号开放：带上来源账号
+const fbImg = (url) => '/api/fanbox/image?url=' + enc(url) + (fbCc() ? '&site=' + enc(fbSite) : '');
+const fbCc = () => fbSite.startsWith('cc');
 
 // 切换 pawchive / 官方站：两边的作家键与结果互不通用，换站即清空面板与状态
 function fbSetSite(site) {
@@ -153,7 +154,7 @@ async function fbSearchArtists(kw) {
     : '<div class="empty"><span class="spin"></span> 正在搜索作家…（首次搜索需下载站点作家索引，约 15MB）</div>';
   $('count').textContent = '';
   let d;
-  try { d = await api('/api/fanbox/artists?q=' + enc(kw) + (fbCc() ? '&site=cc' : '')); } catch (e) { return; }
+  try { d = await api('/api/fanbox/artists?q=' + enc(kw) + (fbCc() ? '&site=' + enc(fbSite) : '')); } catch (e) { return; }
   if (gen !== fbGen) return;
   const artists = d.artists || [];
   // 只有一个结果 → 直接进入该作家主页（免去多余一次点击）；「我赞助/关注的」列表例外，那是要挑的
@@ -223,7 +224,7 @@ async function fbOpenArtist(artist, fromArtists) {
 async function fbFetchPosts(gen, offset) {
   const q = new URLSearchParams();
   q.set('id', fbArtist ? fbArtist.id : ''); q.set('service', 'fanbox'); q.set('o', offset);
-  if (fbCc()) q.set('site', 'cc');
+  if (fbCc()) q.set('site', fbSite);
   let d;
   try { d = await api('/api/fanbox/posts?' + q); } catch (e) { return null; }
   if (gen !== fbGen) return null;
@@ -391,7 +392,7 @@ async function fbOpenPost(post) {
 
   const q = new URLSearchParams();
   q.set('id', fbArtist ? fbArtist.id : ''); q.set('post', post.id); q.set('service', 'fanbox');
-  if (fbCc()) q.set('site', 'cc');
+  if (fbCc()) q.set('site', fbSite);
   let d;
   try { d = await api('/api/fanbox/post?' + q); } catch (e) { return; }
   // 期间已返回列表或换了作家就丢弃本次结果

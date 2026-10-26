@@ -73,10 +73,84 @@ public class DownloadFolderItem : ObservableBase
     public Visibility ChildrenVisibility => IsExpanded ? Visibility.Visible : Visibility.Collapsed;
 }
 
-/// <summary>下载页父行：番号分组。</summary>
+/// <summary>
+/// 下载页一级：下载源分区（对齐 Web .dlsec）。各源并行下载（见 DownloadLanes），分区默认折叠，
+/// 标题行显示该源的汇总：下载中/等待/失败的文件数、已完成数、作品数与合计速度。
+/// </summary>
+public class DownloadSectionItem : ObservableBase
+{
+    public string Key { get; init; } = "";
+    public string Label { get; init; } = "";
+
+    private bool _isExpanded;
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (Set(ref _isExpanded, value))
+                Raise(nameof(Arrow));
+        }
+    }
+
+    public string Arrow => IsExpanded ? "▾" : "▸";
+
+    private string _downloadingText = "";
+    public string DownloadingText
+    {
+        get => _downloadingText;
+        set
+        {
+            if (Set(ref _downloadingText, value))
+                Raise(nameof(DownloadingVisibility));
+        }
+    }
+
+    public Visibility DownloadingVisibility => DownloadingText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private string _waitingText = "";
+    public string WaitingText
+    {
+        get => _waitingText;
+        set
+        {
+            if (Set(ref _waitingText, value))
+                Raise(nameof(WaitingVisibility));
+        }
+    }
+
+    public Visibility WaitingVisibility => WaitingText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private string _failedText = "";
+    public string FailedText
+    {
+        get => _failedText;
+        set
+        {
+            if (Set(ref _failedText, value))
+                Raise(nameof(FailedVisibility));
+        }
+    }
+
+    public Visibility FailedVisibility => FailedText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private string _doneText = "";
+    public string DoneText { get => _doneText; set => Set(ref _doneText, value); }
+
+    private string _worksText = "";
+    public string WorksText { get => _worksText; set => Set(ref _worksText, value); }
+
+    private string _speedText = "";
+    public string SpeedText { get => _speedText; set => Set(ref _speedText, value); }
+}
+
+/// <summary>下载页二级：番号分组（作品卡）。</summary>
 public class DownloadGroupItem : ObservableBase
 {
     public string WorkId { get; init; } = "";
+
+    /// <summary>所属下载源分区（DownloadLanes 的车道键）。</summary>
+    public string Section { get; set; } = "";
 
     /// <summary>
     /// 列表上显示的名称：DLsite 作品直接用番号；fanbox 作品的 work_id 是内部键（fb_+作品号），
@@ -173,7 +247,11 @@ public partial class DownloadPage : UserControl
         ["6"] = ("无可用下载连接", "#f87171"),
     };
 
-    private readonly ObservableCollection<DownloadGroupItem> _groups = [];
+    private readonly List<DownloadGroupItem> _groups = [];
+    // 下载源分区（键 = 车道键）；折叠状态挂在分区对象上，刷新时保留
+    private readonly Dictionary<string, DownloadSectionItem> _sections = new();
+    // 实际绑定到列表的摊平序列：分区标题，展开的分区后面跟着它的作品卡（见 SyncItems）
+    private readonly ObservableCollection<object> _items = [];
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _usageTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private bool _usageLoading;
@@ -185,7 +263,8 @@ public partial class DownloadPage : UserControl
     public DownloadPage()
     {
         InitializeComponent();
-        GroupList.ItemsSource = _groups;
+        HelpSlot.Content = HelpPanel.Button("11");
+        GroupList.ItemsSource = _items;
         _refreshTimer.Tick += (_, _) => Refresh();
         _usageTimer.Tick += (_, _) => _ = FetchUsageAsync();
         RetranslateUi();
@@ -450,7 +529,7 @@ public partial class DownloadPage : UserControl
             // 全表读放到后台线程，避免每秒在 UI 线程阻塞（连接池 + WAL 下并发安全）
             var (rows, works) = await Task.Run(() => (
                 Db.Select(
-                    "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\" FROM \"download_list\" ORDER BY rowid"),
+                    "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid"),
                 // 「跳转作品」只给 works 里已有记录的番号（同 Web 的 canOpen：论坛源刚入队的占位番号可能还没有）
                 Db.Select(
                     "SELECT \"work_id\" FROM \"works\" WHERE \"work_id\" IN (SELECT DISTINCT \"work_id\" FROM \"download_list\")")));
@@ -468,6 +547,7 @@ public partial class DownloadPage : UserControl
         // 按番号分组，同一番号合并为一个父条目
         var groups = new Dictionary<string, List<(string Uuid, string Url, string Status, string Long, string? Error, string? SubPath)>>();
         var order = new List<string>();
+        var sourceOf = new Dictionary<string, string?>();   // 作品 → 下载源（同一作品的文件来源一致，取首行）
         foreach (var row in rows)
         {
             var workId = row[1] as string ?? "";
@@ -475,6 +555,7 @@ public partial class DownloadPage : UserControl
             {
                 groups[workId] = list = [];
                 order.Add(workId);
+                sourceOf[workId] = row[7] as string;
             }
             list.Add((row[0] as string ?? "", row[2] as string ?? "",
                 row[3] as string ?? "", row[4]?.ToString() ?? "", row[5] as string, row[6] as string));
@@ -501,6 +582,7 @@ public partial class DownloadPage : UserControl
                 };
                 _groups.Add(group);
             }
+            group.Section = DownloadLanes.SectionOf(sourceOf[workId], items.Select(it => it.Url));
 
             var statuses = items.Select(it => it.Status).ToList();
             var (aggText, aggColor) = AggregateStatus(
@@ -591,10 +673,78 @@ public partial class DownloadPage : UserControl
             }
         }
 
+        // 下载源分区汇总（同 Web /api/downloads 的 sections）
+        var bySection = _groups.GroupBy(g => g.Section).ToDictionary(x => x.Key, x => x.ToList());
+        foreach (var key in _sections.Keys.Where(k => !bySection.ContainsKey(k)).ToList())
+            _sections.Remove(key);
+        foreach (var (key, label) in DownloadLanes.All)
+        {
+            if (!bySection.TryGetValue(key, out var works))
+                continue;
+            if (!_sections.TryGetValue(key, out var section))
+                _sections[key] = section = new DownloadSectionItem { Key = key, Label = I18n.Tr(label) };
+            var files = works.SelectMany(g => groups[g.WorkId]).ToList();
+            var downloading = files.Count(f => f.Status == "3");
+            var waiting = files.Count(f => f.Status == "0");
+            var failed = files.Count(f => f.Status == "2" && !DownloadEngine.IsSkipped(f.Error));
+            section.DownloadingText = downloading > 0 ? $"{I18n.Tr("下载中")} {downloading}" : "";
+            section.WaitingText = waiting > 0 ? $"{I18n.Tr("等待")} {waiting}" : "";
+            section.FailedText = failed > 0 ? $"{I18n.Tr("失败")} {failed}" : "";
+            section.DoneText = $"{I18n.Tr("已完成")} {files.Count(f => f.Status == "1")}/{files.Count}";
+            section.WorksText = I18n.Format(I18n.Tr("{count} 个作品"), ("count", works.Count.ToString()));
+            var speed = files.Sum(f => FileProgress(f.Uuid, f.Status, f.Long).Speed ?? 0);
+            section.SpeedText = speed > 0 ? FormatSpeed(speed) : "";
+        }
+        SyncItems();
+
         // 有活动任务时每秒刷新（进度平滑）；全部完成/失败/空闲时降到 3 秒，减少空转开销
         var wanted = TimeSpan.FromSeconds(anyActive ? 1 : 3);
         if (_refreshTimer.Interval != wanted)
             _refreshTimer.Interval = wanted;
+    }
+
+    /// <summary>
+    /// 把「分区标题 + 展开分区下的作品卡」摊平同步进绑定列表。逐位比对、只移动/插入/删除有变化的项，
+    /// 未变的行不重建（保留作品卡展开状态与滚动位置，同原先按番号就地更新的做法）。
+    /// </summary>
+    private void SyncItems()
+    {
+        var wanted = new List<object>();
+        foreach (var (key, _) in DownloadLanes.All)
+        {
+            if (!_sections.TryGetValue(key, out var section))
+                continue;
+            wanted.Add(section);
+            if (section.IsExpanded)
+                wanted.AddRange(_groups.Where(g => g.Section == key));
+        }
+        for (var i = 0; i < wanted.Count; i++)
+        {
+            if (i < _items.Count && ReferenceEquals(_items[i], wanted[i]))
+                continue;
+            var at = -1;
+            for (var j = i + 1; j < _items.Count; j++)
+                if (ReferenceEquals(_items[j], wanted[i]))
+                {
+                    at = j;
+                    break;
+                }
+            if (at >= 0)
+                _items.Move(at, i);
+            else
+                _items.Insert(i, wanted[i]);
+        }
+        while (_items.Count > wanted.Count)
+            _items.RemoveAt(_items.Count - 1);
+    }
+
+    /// <summary>点分区标题：展开/收起该下载源（默认折叠）。</summary>
+    private void Section_Click(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not DownloadSectionItem section)
+            return;
+        section.IsExpanded = !section.IsExpanded;
+        SyncItems();
     }
 
     /// <summary>按各分卷的相对路径（含子目录）把扁平文件列表重建为文件夹/文件目录树。</summary>
@@ -674,6 +824,7 @@ public partial class DownloadPage : UserControl
             GoogleDriveClient.QuotaError => I18n.Tr("该文件的谷歌网盘下载配额已用尽，通常 24 小时后恢复"),
             GoogleDriveClient.GoneError => I18n.Tr("谷歌网盘文件已失效、被删除或未公开分享"),
             GoogleDriveClient.FetchError => I18n.Tr("连不上谷歌网盘（检查代理设置）"),
+            DownloadEngine.RetryFailedError => I18n.Tr("下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）"),
             "floodDetected" => I18n.Tr("请求过于频繁，请稍后再试"),
             "badFileType" => I18n.Tr("不支持的文件类型"),
             _ => I18n.Format(I18n.Tr("解析失败（{code}）"), ("code", raw)),
@@ -695,6 +846,7 @@ public partial class DownloadPage : UserControl
         "hostUnsupported" or "notDebrid" or "hostNotValid" or "noServer" => I18n.Tr("网盘不支持"),
         "notFreeHost" or "hostNotFree" or "disabledHost" or "disabledServerHost" => I18n.Tr("需会员"),
         "badToken" => I18n.Tr("Key 无效"),
+        DownloadEngine.RetryFailedError => I18n.Tr("重试失败"),
         "floodDetected" => I18n.Tr("请求频繁"),
         "badFileType" => I18n.Tr("类型不支持"),
         "maxLink" or "maxLinkHost" => I18n.Tr("超链接数"),

@@ -125,6 +125,11 @@ public partial class PixivSearchView : UserControl
     private bool _hasMore;
     private bool _loadingMore;
     private bool _anonymous;        // 未登录：站点会把 R-18 从结果里滤掉，计数行要说明
+    // 用哪个 pixiv 账号访问（pixiv 用户号；"" = 匿名）：来源下拉里每个账号一项「pixiv（账号名）」，宿主经 SetAccount 设定。
+    // 下面每个访问站点的 async 方法开头都把它设进 SiteAccounts 的上下文
+    private string _account = "";
+    private bool _fav;   // 本轮是收藏列表：输入框留空直接查询 = 列出该账号的收藏（翻页沿用）
+    private string _heading = "";   // 结果标题（「我的收藏（共 N 件）」「作者 xxx 的作品」），写在计数行前面
 
     // 作品详情
     private readonly ObservableCollection<PixivImageItem> _detailImages = [];
@@ -140,6 +145,12 @@ public partial class PixivSearchView : UserControl
 
     /// <summary>结果计数/提示文案变化（宿主显示在搜索框下方）。</summary>
     public event Action<string>? StatusChanged;
+
+    /// <summary>
+    /// 详情页里点了作者 / 标签：请宿主把这段文字填进搜索框并查询（作者是主页链接，PixivApi.QueryAsync 认得它，
+    /// 列出该作者的作品；标签即按标签搜）。对齐 Web pixiv.js 的 pxGotoQuery。
+    /// </summary>
+    public event Action<string>? QueryRequested;
 
     /// <summary>「返回」按钮是否应该显示。</summary>
     public event Action<bool>? BackAvailabilityChanged;
@@ -204,7 +215,7 @@ public partial class PixivSearchView : UserControl
 
     /// <summary>输入框的占位提示（宿主切到本来源时取用）。</summary>
     public static string InputHint =>
-        I18n.Tr("关键字 / 标签，或粘贴 pixiv 作品链接 / 作品号");
+        I18n.Tr("关键字 / 标签，或粘贴 Pixiv 作品链接 / 作品号；留空直接查询 = 我的收藏");
 
     /// <summary>当前结果计数/提示文案；宿主切回本来源时用它恢复计数行。</summary>
     public string CurrentStatus { get; private set; } = "";
@@ -234,14 +245,34 @@ public partial class PixivSearchView : UserControl
     // ---------- 搜索 ----------
 
     /// <summary>
+    /// 切换账号（宿主切来源时调用）：不同账号看到的结果不同（R-18 设置、收藏），换了即作废在途请求、清空结果。
+    /// </summary>
+    public void SetAccount(string account)
+    {
+        if (account == _account)
+            return;
+        _account = account;
+        ++_generation;
+        ++_detailGen;
+        _cards.Clear();
+        _artworks.Clear();
+        LoadingOverlay.Visibility = Visibility.Collapsed;
+        ShowLevel("results");
+        UpdateSelectInfo();
+        SetStatus("");
+    }
+
+    /// <summary>
     /// 由宿主的「查询」触发。输入可以是关键字/标签，也可以直接粘贴作品链接或作品号
-    /// （粘链接时跳过搜索，径直把那一件列出来）。
+    /// （粘链接时跳过搜索，径直把那一件列出来）；留空直接查询 = 列出该账号的收藏（<see cref="PixivApi.GetBookmarksAsync"/>，
+    /// 搜索与收藏合并在同一个来源里，用户指定）。
     /// </summary>
     public async Task RunSearchAsync(string raw)
     {
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         raw = (raw ?? "").Trim();
-        if (raw.Length == 0)
-            return;
+        _fav = raw.Length == 0;
+        _heading = "";
 
         var generation = ++_generation;
         _keyword = raw;
@@ -254,7 +285,7 @@ public partial class PixivSearchView : UserControl
         ShowLevel("results");
         UpdateSelectInfo();
         SetStatus("");
-        LoadingText.Text = I18n.Tr("正在搜索作品…");
+        LoadingText.Text = _fav ? I18n.Tr("正在读取收藏…") : I18n.Tr("正在搜索作品…");
         LoadingOverlay.Visibility = Visibility.Visible;
 
         PixivSearchResult result;
@@ -270,7 +301,8 @@ public partial class PixivSearchView : UserControl
             }
             else
             {
-                result = await PixivApi.SearchAsync(raw, 1);
+                // 留空 = 我的收藏，作者主页链接 = 该作者的作品，其余按关键字/标签搜
+                result = await PixivApi.QueryAsync(raw, 1);
             }
         }
         finally
@@ -288,13 +320,15 @@ public partial class PixivSearchView : UserControl
         }
         if (result.Items.Count == 0)
         {
-            SetStatus(_anonymous
-                ? I18n.Tr("没有匹配的作品（未登录，R-18 作品不会出现在结果里）")
+            SetStatus(_fav ? I18n.Tr("这个账号还没有收藏作品")
+                : PixivApi.ParseUserInput(raw) != null ? I18n.Tr("这个作者没有可见的作品")
+                : _anonymous ? I18n.Tr("没有匹配的作品（未登录，R-18 作品不会出现在结果里）")
                 : I18n.Tr("没有匹配的作品"));
             return;
         }
         _page = result.Page;
         _hasMore = result.HasMore;
+        _heading = result.Heading;
         AppendArtworks(result.Items);
         SetStatus(CountText());
         _ = LoadThumbnailsAsync(generation);
@@ -303,12 +337,13 @@ public partial class PixivSearchView : UserControl
     /// <summary>取下一页并追加到网格。</summary>
     private async Task LoadMoreAsync(int generation)
     {
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         if (_loadingMore || !_hasMore)
             return;
         _loadingMore = true;
         try
         {
-            var result = await PixivApi.SearchAsync(_keyword, _page + 1);
+            var result = await PixivApi.QueryAsync(_fav ? "" : _keyword, _page + 1);
             if (generation != _generation)
                 return;
             if (result.Error is { Length: > 0 } || result.Items.Count == 0)
@@ -364,7 +399,8 @@ public partial class PixivSearchView : UserControl
 
     /// <summary>网格的计数行文案（加载完与从详情返回时共用同一处）。</summary>
     private string CountText() =>
-        I18n.Format(I18n.Tr("已加载 {n} 件作品"), ("n", _cards.Count)) +
+        (_heading.Length > 0 ? _heading + "　" : "") +
+        I18n.Format(I18n.Tr("已加载 {n} 件"), ("n", _cards.Count)) +
         (_hasMore ? I18n.Tr("（下拉加载更多）") : "") +
         (_anonymous ? I18n.Tr("　未登录：结果中不含 R-18") : "");
 
@@ -394,6 +430,7 @@ public partial class PixivSearchView : UserControl
     /// </summary>
     private async Task OpenArtworkAsync(PixivCardItem card)
     {
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         var generation = ++_detailGen;
         _detailState = card.State;
         _detailArtwork = _artworks.FirstOrDefault(a => a.Id == card.Id);
@@ -440,7 +477,12 @@ public partial class PixivSearchView : UserControl
         var done = _detailState == "已品悦";
 
         DetailTitle.Text = a.Title.Length > 0 ? a.Title : a.Id;
-        AddDetailField(I18n.Tr("作者"), PixivService.MakerNameOf(a));
+        // 作者 / 标签可点：请宿主把作者主页链接或标签填进搜索框再查一次（对齐 Web 的 pxGotoQuery）
+        if (a.UserId.Length > 0)
+            AddDetailField(I18n.Tr("作者"), LinkBlock(PixivService.MakerNameOf(a), PixivApi.UserLink(a.UserId),
+                I18n.Tr("查看该作者的作品")));
+        else
+            AddDetailField(I18n.Tr("作者"), PixivService.MakerNameOf(a));
         AddDetailField(I18n.Tr("投稿"), a.Created is { } t ? t.ToString("yyyy-MM-dd HH:mm") : "");
         AddDetailField(I18n.Tr("形式"), TagTextOf(a));
         AddDetailField(I18n.Tr("张数"),
@@ -448,10 +490,19 @@ public partial class PixivSearchView : UserControl
         AddDetailField(I18n.Tr("尺寸"), a.Width > 0 && a.Height > 0 ? $"{a.Width} × {a.Height}" : "");
         AddDetailField(I18n.Tr("收藏"), a.BookmarkCount > 0 ? a.BookmarkCount.ToString() : "");
         if (a.Tags.Count > 0)
-            AddDetailField(I18n.Tr("标签"), string.Join(" / ", a.Tags));
+        {
+            var tags = new WrapPanel();
+            foreach (var tag in a.Tags)
+            {
+                var block = LinkBlock(tag, tag, I18n.Tr("搜索这个标签"));
+                block.Margin = new Thickness(0, 0, 10, 2);
+                tags.Children.Add(block);
+            }
+            AddDetailField(I18n.Tr("标签"), tags);
+        }
         AddDetailField(I18n.Tr("状态"), done ? I18n.Tr("已下载")
             : _detailState.Length > 0 ? _detailState : I18n.Tr("未下载"));
-        var site = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(I18n.Tr("在 pixiv 打开")))
+        var site = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(I18n.Tr("在 Pixiv 打开")))
         {
             Foreground = TryFindResource("AccentLightBrush") as Brush,
             TextDecorations = null,
@@ -489,6 +540,21 @@ public partial class PixivSearchView : UserControl
             DetailNoImage.Text = I18n.Tr("取不到预览图");
             DetailNoImage.Visibility = Visibility.Visible;
         }
+    }
+
+    /// <summary>一段可点的强调色文字：点了即请宿主用 query 查一次（QueryRequested）。</summary>
+    private TextBlock LinkBlock(string text, string query, string tip)
+    {
+        var link = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(text))
+        {
+            Foreground = TryFindResource("AccentLightBrush") as Brush,
+            TextDecorations = null,
+            ToolTip = tip,
+        };
+        link.Click += (_, _) => QueryRequested?.Invoke(query);
+        var block = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        block.Inlines.Add(link);
+        return block;
     }
 
     private void AddDetailField(string key, string value)
@@ -597,6 +663,7 @@ public partial class PixivSearchView : UserControl
     /// <summary>串行下载队列里的图：并发拉几十张只会互相抢带宽，看的人始终只等最上面那张。</summary>
     private async Task PumpDetailImagesAsync(int generation)
     {
+        SiteAccounts.Use(AccountService.Pixiv, "");   // 取图只认 Referer，不必带登录 cookie
         _detailPumping = true;
         try
         {
@@ -693,6 +760,8 @@ public partial class PixivSearchView : UserControl
     /// </summary>
     private async Task EnqueueAsync(IReadOnlyList<string> ids)
     {
+        // 入队时记下账号（download_list.account），收尾补取动图帧延迟时要用
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         var wanted = ids.ToHashSet();
         if (wanted.Count == 0)
             return;
@@ -760,6 +829,7 @@ public partial class PixivSearchView : UserControl
     /// <summary>后台下载卡片封面，新一轮请求即作废旧加载。</summary>
     private async Task LoadThumbnailsAsync(int generation)
     {
+        SiteAccounts.Use(AccountService.Pixiv, "");   // 取图只认 Referer，不必带登录 cookie
         using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
         foreach (var card in _cards.ToList())
         {

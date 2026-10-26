@@ -25,6 +25,13 @@
     <EmbeddedResource Include="Web\favicon.ico" />
     <!-- 图片翻译的依赖清单（内置默认值；模型目录下放同名文件即可覆盖，便于换镜像源） -->
     <EmbeddedResource Include="Services\Translate\translate-models.json" />
+    <!-- 程序内「使用帮助」（? 按钮）：直接打包 docs/ 下的使用手册与截图，由 HelpManual 按章节拆分，
+         .ja.md / .en.md 要标 WithCulture="false"，否则 MSBuild 把后缀当成区域性、编进卫星程序集，主程序集里就没有了；
+         程序里不另存副本——改手册即改帮助 -->
+    <EmbeddedResource Include="..\docs\使用手册.md" LogicalName="R18MediaLibrary.Help.manual.zh.md" />
+    <EmbeddedResource Include="..\docs\使用手册.ja.md" LogicalName="R18MediaLibrary.Help.manual.ja.md" WithCulture="false" />
+    <EmbeddedResource Include="..\docs\使用手册.en.md" LogicalName="R18MediaLibrary.Help.manual.en.md" WithCulture="false" />
+    <EmbeddedResource Include="..\docs\assets\manual\*.png" LogicalName="R18MediaLibrary.Help.img.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
@@ -38,6 +45,8 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="LibVLCSharp" Version="3.8.2" />
     <PackageReference Include="LibVLCSharp.WPF" Version="3.8.2" />
+    <!-- 账号访问的「在服务器上登录」：本机开一个内嵌浏览器过 pixiv/FANBOX 的人机验证，登录后自动取 cookie（LoginBrowser） -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <!-- Microsoft.Data.Sqlite 10.0.9 传递引入的 SQLitePCLRaw 2.1.11 存在高危漏洞 GHSA-2m69-gcr7-jv3q（捆绑的 SQLite < 3.50.2），显式升级覆盖 -->

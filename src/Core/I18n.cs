@@ -73,6 +73,12 @@ public static class I18n
     // 简体中文原文 -> {语言代码: 译文}
     private static readonly Dictionary<string, Dictionary<string, string>> Translations = new()
     {
+        // ---------- 使用帮助（各页面的 ? 按钮 / HelpPanel）----------
+        ["使用帮助"] = new() { ["zh_TW"] = "使用說明", ["ja"] = "ヘルプ", ["en"] = "Help" },
+        ["关闭帮助"] = new() { ["zh_TW"] = "關閉說明", ["ja"] = "ヘルプを閉じる", ["en"] = "Close help" },
+        ["‹ 上一章"] = new() { ["zh_TW"] = "‹ 上一章", ["ja"] = "‹ 前の章", ["en"] = "‹ Previous" },
+        ["下一章 ›"] = new() { ["zh_TW"] = "下一章 ›", ["ja"] = "次の章 ›", ["en"] = "Next ›" },
+        ["帮助加载失败"] = new() { ["zh_TW"] = "說明載入失敗", ["ja"] = "ヘルプを読み込めませんでした", ["en"] = "Failed to load help" },
         // ---------- E-Hentai 数据源 ----------
         ["站点未提供逐页缩略图（登录后可在站点把画廊版式设为大缩略图），此处只显示封面。"] = new()
         {
@@ -352,6 +358,10 @@ public static class I18n
         ["等待下载"] = new() { ["zh_TW"] = "等待下載", ["ja"] = "待機中", ["en"] = "Waiting" },
         ["下载中"] = new() { ["zh_TW"] = "下載中", ["ja"] = "ダウンロード中", ["en"] = "Downloading" },
         ["已完成"] = new() { ["zh_TW"] = "已完成", ["ja"] = "完了", ["en"] = "Completed" },
+        // 下载列表的下载源分区标题（DownloadSectionItem）
+        ["等待"] = new() { ["zh_TW"] = "等待", ["ja"] = "待機", ["en"] = "Waiting" },
+        ["失败"] = new() { ["zh_TW"] = "失敗", ["ja"] = "失敗", ["en"] = "Failed" },
+        ["谷歌网盘"] = new() { ["zh_TW"] = "Google 雲端硬碟", ["ja"] = "Google ドライブ", ["en"] = "Google Drive" },
         ["待解压"] = new() { ["zh_TW"] = "待解壓", ["ja"] = "解凍待ち", ["en"] = "Pending extract" },
         ["等待移动"] = new() { ["zh_TW"] = "等待移動", ["ja"] = "移動待ち", ["en"] = "Pending move" },
         ["解压中 {pct}%"] = new() { ["zh_TW"] = "解壓中 {pct}%", ["ja"] = "解凍中 {pct}%", ["en"] = "Extracting {pct}%" },
@@ -368,6 +378,14 @@ public static class I18n
         ["{n} 个解析失败"] = new() { ["zh_TW"] = "{n} 個解析失敗", ["ja"] = "{n} 件解析失敗", ["en"] = "{n} parse failed" },
         ["流量用尽"] = new() { ["zh_TW"] = "流量用盡", ["ja"] = "通信量超過", ["en"] = "Data limit reached" },
         ["文件失效"] = new() { ["zh_TW"] = "檔案失效", ["ja"] = "ファイル失効", ["en"] = "File dead" },
+        // 超时 / 连接中断自动重试 3 次仍失败（DownloadEngine.RetryFailedError）
+        ["重试失败"] = new() { ["zh_TW"] = "重試失敗", ["ja"] = "再試行失敗", ["en"] = "Retries failed" },
+        ["下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）"] = new()
+        {
+            ["zh_TW"] = "下載逾時或連線中斷，已自動重試 3 次仍失敗（可點「全部重新解析」再試）",
+            ["ja"] = "タイムアウトまたは接続切断。自動で 3 回再試行しましたが失敗しました（「すべて再解析」で再試行できます）",
+            ["en"] = "Timed out or connection dropped; failed after 3 automatic retries (use \"Re-parse all\" to try again)",
+        },
         // 直链源（asmr / fanbox）源站 404：文件不存在，跳过后继续下别的文件
         ["已完成（预览图）"] = new()
         {

@@ -10,9 +10,10 @@ namespace R18MediaLibrary.Services;
 /// <summary>
 /// FANBOX 的两个数据源合在一处：pawchive 归档（匿名，<c>official=false</c>）与 fanbox.cc 官方站（要登录，<c>official=true</c>）。
 ///
-/// 作品搜索的来源下拉里两者是并列的两项——「FANBOX」与「FANBOX（账号名）」，后者只在「账号访问」里
-/// 填了 FANBOXSESSID 时出现。两者结果面板、卡片、详情、下载流程完全相同，只是取数的地方不同，
-/// 故 Web 路由与桌面视图都只调这里，按 official 分流，不各自写两套。
+/// 作品搜索的来源下拉里两者并列——「FANBOX」与每个已登录账号各一项「FANBOX（账号名）」（多账号并行使用）。
+/// 两者结果面板、卡片、详情、下载流程完全相同，只是取数的地方不同，故 Web 路由与桌面视图都只调这里，
+/// 按 <c>account</c> 分流：null = pawchive，否则 = 官方站上用该账号（pixiv 用户号）访问，不各自写两套。
+/// 每个方法开头把账号设进 <see cref="SiteAccounts"/> 的上下文，往下的 FanboxOfficialApi 取 cookie 都认它。
 ///
 /// 两边寻址作家的键不同：pawchive 是 pixiv 用户号（纯数字），官方站是 creatorId（字符串）。
 /// 界面上一律把「当前来源下的作家键」当不透明字符串传来传去；入库时落 works.maker_id 的统一是
@@ -20,8 +21,18 @@ namespace R18MediaLibrary.Services;
 /// </summary>
 public static class FanboxSource
 {
-    /// <summary>官方站来源是否可用（填了登录 cookie）。</summary>
-    public static bool OfficialAvailable => FanboxOfficialApi.HasCookie;
+    /// <summary>已登录的 FANBOX 账号（每个在来源下拉里各占一项）。</summary>
+    public static List<SiteAccount> OfficialAccounts => SiteAccounts.List(AccountService.Fanbox);
+
+    /// <summary>官方站来源在下拉里的名字：「FANBOX（账号名）」。</summary>
+    public static string OfficialLabel(SiteAccount a) => $"FANBOX（{a.DisplayName}）";
+
+    /// <summary>把这次调用的账号设进上下文（只在调用方的 async 方法里生效）。</summary>
+    private static void Use(string? account)
+    {
+        if (account != null)
+            SiteAccounts.Use(AccountService.Fanbox, account);
+    }
 
     /// <summary>作家键在当前来源下是否合法（用作 URL / SQL 参数前先校验）。</summary>
     public static bool IsArtistKey(bool official, string id) =>
@@ -29,23 +40,28 @@ public static class FanboxSource
 
     /// <summary>搜作家。官方站关键字为空时列出「我赞助的 + 我关注的」作家。</summary>
     public static async Task<(List<PawchiveArtist> Artists, string? Error)> SearchArtistsAsync(
-        bool official, string keyword)
+        string? account, string keyword)
     {
-        if (official)
+        Use(account);
+        if (account != null)
             return await FanboxOfficialApi.SearchCreatorsAsync(keyword);
         return (await PawchiveApi.SearchArtistsAsync(keyword), null);
     }
 
-    public static Task<PawchiveArtist?> GetArtistAsync(bool official, string artistKey) =>
-        official
-            ? FanboxOfficialApi.GetCreatorAsync(artistKey)
-            : PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistKey);
+    public static async Task<PawchiveArtist?> GetArtistAsync(string? account, string artistKey)
+    {
+        Use(account);
+        return account != null
+            ? await FanboxOfficialApi.GetCreatorAsync(artistKey)
+            : await PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistKey);
+    }
 
     /// <summary>作家主页的一批作品（offset = 已加载篇数）。</summary>
     public static async Task<(List<PawchivePost>? Posts, bool HasMore, string? Error)> GetPostsAsync(
-        bool official, string artistKey, int offset)
+        string? account, string artistKey, int offset)
     {
-        if (official)
+        Use(account);
+        if (account != null)
             return await FanboxOfficialApi.GetPostsAsync(artistKey, offset);
         var posts = await PawchiveApi.GetPostsAsync(PawchiveApi.FanboxService, artistKey, offset);
         return posts is null
@@ -54,9 +70,10 @@ public static class FanboxSource
     }
 
     public static async Task<(PawchivePost? Post, string? Error)> GetPostAsync(
-        bool official, string artistKey, string postId)
+        string? account, string artistKey, string postId)
     {
-        if (official)
+        Use(account);
+        if (account != null)
             return await FanboxOfficialApi.GetPostAsync(postId);
         var post = await PawchiveApi.GetPostAsync(PawchiveApi.FanboxService, artistKey, postId);
         return post is null ? (null, "获取作品详情失败") : (post, null);
@@ -69,11 +86,12 @@ public static class FanboxSource
     /// 官方站的列表只是摘要，必须逐篇取详情（未赞助的档位取回来是 Locked、没有文件，入队时会被跳过）。
     /// </summary>
     public static async Task<List<PawchivePost>> ResolveForEnqueueAsync(
-        bool official, string artistKey, IReadOnlyCollection<string> ids, IEnumerable<PawchivePost>? known = null)
+        string? account, string artistKey, IReadOnlyCollection<string> ids, IEnumerable<PawchivePost>? known = null)
     {
+        Use(account);
         var wanted = new HashSet<string>(ids);
         var picked = new List<PawchivePost>();
-        if (official)
+        if (account != null)
         {
             foreach (var id in ids)
                 if ((await FanboxOfficialApi.GetPostAsync(id)).Post is { } post)
@@ -103,10 +121,11 @@ public static class FanboxSource
     /// 作家名下已入库/下载中的作品状态（作品号 → state）。
     /// 状态按 works.maker_id（pixiv 用户号）查，官方站要先由 creatorId 换出用户号。
     /// </summary>
-    public static async Task<Dictionary<string, string>> PostStatesAsync(bool official, string artistKey)
+    public static async Task<Dictionary<string, string>> PostStatesAsync(string? account, string artistKey)
     {
+        Use(account);
         var makerId = artistKey;
-        if (official)
+        if (account != null)
             makerId = (await FanboxOfficialApi.GetCreatorAsync(artistKey))?.MakerId ?? "";
         return makerId.Length == 0 ? [] : await Task.Run(() => FanboxService.PostStates(makerId));
     }
@@ -135,8 +154,9 @@ public static class FanboxSource
     /// 取站上图片（头像 / 封面 / 预览）。两个来源要的请求头正好相反：pawchive 必须用中性 UA
     /// （见 <see cref="PawchiveApi.UserAgent"/>），官方站要浏览器 UA + 登录 cookie + fanbox 的 Referer。
     /// </summary>
-    public static async Task<(byte[] Bytes, string ContentType)> GetImageAsync(string url)
+    public static async Task<(byte[] Bytes, string ContentType)> GetImageAsync(string url, string? account = null)
     {
+        Use(account);
         if (FanboxOfficialApi.IsOfficialUrl(url) || FanboxOfficialApi.IsPximgUrl(url))
             return await FanboxOfficialApi.GetImageAsync(url);
         using var client = Http.CreateClient(TimeSpan.FromSeconds(20), PawchiveApi.UserAgent);
@@ -144,8 +164,4 @@ public static class FanboxSource
         resp.EnsureSuccessStatusCode();
         return (await resp.Content.ReadAsByteArrayAsync(), resp.Content.Headers.ContentType?.MediaType ?? "");
     }
-
-    /// <summary>官方站来源在下拉里的名字：「FANBOX（账号名）」。</summary>
-    public static string OfficialLabel =>
-        $"FANBOX（{AccountService.DisplayName(AccountService.Fanbox)}）";
 }

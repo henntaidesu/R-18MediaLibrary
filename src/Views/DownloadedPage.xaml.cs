@@ -78,6 +78,7 @@ public partial class DownloadedPage : UserControl
     public DownloadedPage()
     {
         InitializeComponent();
+        HelpSlot.Content = HelpPanel.Button("11.5");
         WorksList.ItemsSource = _items;
         _headers =
         [

@@ -20,7 +20,11 @@
     </Grid.RowDefinitions>
     <!-- 页顶标题横条（Web 顶栏 #title =「系统设置」），常驻在滚动区之外 -->
     <Border Style="{StaticResource ToolbarCard}">
-        <TextBlock x:Name="PageTitle" Text="系统设置" FontSize="16" FontWeight="SemiBold" />
+        <DockPanel>
+            <!-- ? 使用帮助（Web 顶栏 #helpBtn），按钮由代码挂上（HelpPanel.Button） -->
+            <ContentControl x:Name="HelpSlot" DockPanel.Dock="Right" Margin="8,0,0,0" />
+            <TextBlock x:Name="PageTitle" Text="系统设置" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </DockPanel>
     </Border>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
         <StackPanel HorizontalAlignment="Stretch" MaxWidth="1100" Margin="0,0,8,0">
@@ -157,7 +161,7 @@
             </GroupBox>
 
             <!-- pixiv（桌面独有配置，Web 设置页不暴露；排版随 E-Hentai 分区）。PHPSESSID 已挪到「账号访问」 -->
-            <GroupBox x:Name="PixivGroup" Header="pixiv">
+            <GroupBox x:Name="PixivGroup" Header="Pixiv">
                 <StackPanel>
                     <!-- 画质 + 分级 + 匹配方式 同一行 -->
                     <StackPanel Orientation="Horizontal" Margin="0,5">
@@ -177,7 +181,7 @@
                     </StackPanel>
                     <TextBlock x:Name="PxHint" TextWrapping="Wrap" Margin="120,6,0,0"
                                Style="{StaticResource CaptionText}"
-                               Text="未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 pixiv。" />
+                               Text="未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 Pixiv。" />
                 </StackPanel>
             </GroupBox>
 

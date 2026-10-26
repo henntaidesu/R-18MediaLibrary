@@ -404,11 +404,12 @@ public static class WebServer
                 case "/api/fanbox/post": await ApiFanboxPostAsync(stream, req); break;
                 case "/api/fanbox/enqueue": await ApiFanboxEnqueueAsync(stream, req); break;
                 case "/api/fanbox/image": await ApiFanboxImageAsync(stream, req); break;
+                // 使用帮助（各页面的 ? 按钮）：按章节拆好的使用手册 + 其中的截图
+                case "/api/help": ApiHelp(stream, req); break;
+                case "/api/help/img": ApiHelpImage(stream, req); break;
                 // 账号访问（FANBOX / pixiv / E-Hentai 的登录 cookie）
                 case "/api/accounts": ApiAccounts(stream); break;
-                case "/api/account/save": ApiAccountSave(stream, req); break;
                 case "/api/account/check": await ApiAccountCheckAsync(stream, req); break;
-                case "/api/account/login": await ApiAccountLoginAsync(stream, req); break;
                 case "/api/account/logout": ApiAccountLogout(stream, req); break;
                 // FANBOX 作家监控（有新投稿就自动下载）
                 case "/api/fanbox/watches": ApiFanboxWatches(stream); break;
@@ -1325,6 +1326,13 @@ public static class WebServer
             WriteJson(stream, 403, new { error = "forbidden origin" });
             return;
         }
+        // ?login=<站点>：账号访问的「在服务器上登录」，在本机开登录浏览器并串流过去（LoginBrowser）
+        var login = req.Query.GetValueOrDefault("login") ?? "";
+        if (login.Length > 0)
+        {
+            await StreamLoginBrowserAsync(stream, key, login);
+            return;
+        }
         var id = req.Query.GetValueOrDefault("id") ?? "";
         var rel = req.Query.GetValueOrDefault("path") ?? "";
         if (ResolveWorkExe(id, rel) is not { Full: var full, Root: var root })
@@ -1338,6 +1346,44 @@ public static class WebServer
         Logger.Info($"Web 端远程串流：{id} / {rel}");
         // 串流要跑很久，单独起一条线程，不占线程池
         await Task.Factory.StartNew(() => GameStream.Run(stream, full, root), TaskCreationOptions.LongRunning);
+    }
+
+    /// <summary>
+    /// 网页端登录：在运行本程序的电脑上打开登录浏览器（窗口要在 UI 线程上建），再交给 <see cref="LoginStream"/>
+    /// 把画面推过去、把操作送回来。登录成功后窗口自己关掉，串流随之结束，结束提示取 <see cref="LoginBrowser.ResultOf"/>。
+    ///
+    /// <b>先完成 WebSocket 握手再开窗口</b>：开不了（没装 WebView2 运行时、以服务方式运行…）时把原因当消息发过去，
+    /// 而不是回一个 HTTP 错误——握手阶段的错误码浏览器拿不到（经门户代理更是只剩一个「连接已断开」），用户无从知道为什么。
+    /// </summary>
+    private static async Task StreamLoginBrowserAsync(NetworkStream stream, string key, string site)
+    {
+        var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                   $"Sec-WebSocket-Accept: {GameStream.WebSocket.AcceptKey(key)}\r\n\r\n";
+        stream.Write(Encoding.ASCII.GetBytes(head));
+        void Fail(string message)
+        {
+            Logger.Warning($"Web 端登录浏览器打不开（{site}）：{message}");
+            var json = JsonSerializer.Serialize(new { t = "exit", text = message });
+            GameStream.WebSocket.WriteFrame(stream, GameStream.WebSocket.OpText, Encoding.UTF8.GetBytes(json));
+            GameStream.WebSocket.WriteFrame(stream, GameStream.WebSocket.OpClose, []);
+        }
+        var app = System.Windows.Application.Current;
+        if (!LoginBrowser.Supports(site) || app == null)
+        {
+            Fail("不支持的站点");
+            return;
+        }
+        try
+        {
+            await app.Dispatcher.InvokeAsync(() => LoginBrowser.Open(site));
+        }
+        catch (Exception e)
+        {
+            Fail(e.Message);
+            return;
+        }
+        Logger.Info($"Web 端串流登录浏览器：{site}");
+        await Task.Factory.StartNew(() => LoginStream.Run(stream, site), TaskCreationOptions.LongRunning);
     }
 
     /// <summary>按 Range 头流式写出文件（206 Partial Content）或整文件（200），分块拷贝不占内存。</summary>
@@ -1922,9 +1968,10 @@ public static class WebServer
     private static void ApiDownloads(NetworkStream stream)
     {
         var rows = Db.Select(
-            "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\" FROM \"download_list\" ORDER BY rowid");
+            "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid");
         var order = new List<string>();
         var grouped = new Dictionary<string, List<(string Uuid, string Url, string Status, string Long, string? Error, string? SubPath)>>();
+        var sourceOf = new Dictionary<string, string?>();   // 作品 → 下载源（同一作品的文件来源一致，取首行）
         foreach (var row in rows ?? [])
         {
             var workId = row[1] as string ?? "";
@@ -1932,6 +1979,7 @@ public static class WebServer
             {
                 grouped[workId] = list = [];
                 order.Add(workId);
+                sourceOf[workId] = row[7] as string;
             }
             list.Add((row[0] as string ?? "", row[2] as string ?? "",
                 row[3] as string ?? "", row[4]?.ToString() ?? "", row[5] as string, row[6] as string));
@@ -1992,7 +2040,10 @@ public static class WebServer
             return new
             {
                 id = workId, name = nameMap.GetValueOrDefault(workId, ""),
+                // 一级折叠分区（按下载源，见 DownloadLanes.SectionOf）
+                section = DownloadLanes.SectionOf(sourceOf[workId], items.Select(it => it.Url)),
                 pct = (int)groupPct, statusText = aggText, color = aggColor,
+                totalSpeed,
                 speed = totalSpeed > 0 ? FormatSpeed(totalSpeed) : "",
                 canReparse = statuses.Contains("2") && workId.Length > 0,
                 // 有下载中/等待分卷可"停止"；有已暂停分卷可"下载"（继续）；非空番号始终可"删除"
@@ -2003,7 +2054,26 @@ public static class WebServer
                 canOpen = nameMap.ContainsKey(workId),
                 children,
             };
-        });
+        }).ToList();
+        // 下载源分区的汇总（分区默认折叠，标题行上就要看出这个源正在下几个、等几个、速度多少）
+        var sections = DownloadLanes.All
+            .Select(lane => (lane, works: groups.Where(g => g.section == lane.Key).ToList()))
+            .Where(x => x.works.Count > 0)
+            .Select(x =>
+            {
+                var statuses = x.works.SelectMany(g => grouped[g.id]).ToList();
+                var speed = x.works.Sum(g => g.totalSpeed);
+                return new
+                {
+                    key = x.lane.Key, label = x.lane.Label, works = x.works.Count,
+                    downloading = statuses.Count(it => it.Status == "3"),
+                    waiting = statuses.Count(it => it.Status == "0"),
+                    failed = statuses.Count(it => it.Status == "2" && !DownloadEngine.IsSkipped(it.Error)),
+                    done = statuses.Count(it => it.Status == "1"),
+                    files = statuses.Count,
+                    speed = speed > 0 ? FormatSpeed(speed) : "",
+                };
+            });
         // 工具栏按钮的可用性：与桌面端同源（DownloadListActions.FlagsOf），避免两端灰显规则漂移
         var flags = DownloadListActions.FlagsOf(
             grouped.Values.SelectMany(v => v).Select(it => (it.Status, it.Error)));
@@ -2017,6 +2087,7 @@ public static class WebServer
                 canClearAll = flags.HasRows,
                 canReparseAll = flags.CanReparse,
             },
+            sections,
             groups,
         });
     }
@@ -2305,6 +2376,7 @@ public static class WebServer
             GoogleDriveClient.QuotaError => "该文件的谷歌网盘下载配额已用尽，通常 24 小时后恢复",
             GoogleDriveClient.GoneError => "谷歌网盘文件已失效、被删除或未公开分享",
             GoogleDriveClient.FetchError => "连不上谷歌网盘（检查代理设置）",
+            DownloadEngine.RetryFailedError => "下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）",
             "floodDetected" => "请求过于频繁，请稍后再试",
             "badFileType" => "不支持的文件类型",
             _ => $"解析失败（{raw}）",
@@ -2326,6 +2398,7 @@ public static class WebServer
         "hostUnsupported" or "notDebrid" or "hostNotValid" or "noServer" => "网盘不支持",
         "notFreeHost" or "hostNotFree" or "disabledHost" or "disabledServerHost" => "需会员",
         "badToken" => "Key 无效",
+        DownloadEngine.RetryFailedError => "重试失败",
         "floodDetected" => "请求频繁",
         "badFileType" => "类型不支持",
         "maxLink" or "maxLinkHost" => "超链接数",
@@ -2806,13 +2879,21 @@ public static class WebServer
     // ---------- API：FANBOX（pawchive）----------
 
     /// <summary>
-    /// 请求是否针对 fanbox.cc 官方站（作品搜索里的「FANBOX（账号名）」来源）：查询串或请求体里 site=cc。
-    /// 没登录时一律当 pawchive 处理——来源下拉里本来也不会出现官方站这一项。
+    /// 请求针对 fanbox.cc 官方站的哪个账号（作品搜索里的「FANBOX（账号名）」来源）：查询串或请求体里
+    /// site=cc:&lt;pixiv 用户号&gt;（只写 cc 即第一个账号）。返回该账号的用户号；null = pawchive。
+    /// 账号不存在（已退出登录）时一律当 pawchive 处理——来源下拉里本来也不会再有这一项。
     /// </summary>
-    private static bool FanboxOfficial(Request req) =>
-        ((req.Query.GetValueOrDefault("site") ?? "") == "cc" ||
-         (req.Body.Length > 0 && ReadStringField(req.Body, "site") == "cc")) &&
-        FanboxSource.OfficialAvailable;
+    private static string? FanboxAccount(Request req)
+    {
+        var site = req.Query.GetValueOrDefault("site") ?? "";
+        if (site.Length == 0 && req.Body.Length > 0)
+            site = ReadStringField(req.Body, "site");
+        if (site != "cc" && !site.StartsWith("cc:", StringComparison.Ordinal))
+            return null;
+        var accounts = FanboxSource.OfficialAccounts;
+        var uid = site.Length > 3 ? site[3..] : accounts.FirstOrDefault()?.UserId;
+        return uid != null && accounts.Any(a => a.UserId == uid) ? uid : null;
+    }
 
     /// <summary>
     /// 搜索作家。pawchive 站点无服务端搜索接口，由 PawchiveApi 在本地缓存的作家表上过滤；
@@ -2820,14 +2901,15 @@ public static class WebServer
     /// </summary>
     private static async Task ApiFanboxArtistsAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
         if (keyword.Length == 0 && !official)
         {
             WriteJson(stream, 200, new { artists = Array.Empty<object>() });
             return;
         }
-        var (list, error) = await FanboxSource.SearchArtistsAsync(official, keyword);
+        var (list, error) = await FanboxSource.SearchArtistsAsync(account, keyword);
         WriteJson(stream, 200, new
         {
             artists = list.Select(a => new
@@ -2845,7 +2927,8 @@ public static class WebServer
     /// <summary>作家主页的一批作品（pawchive 每页 50 条，官方站一次拼几页），附带本地已下载/下载中状态。</summary>
     private static async Task ApiFanboxPostsAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         if (!FanboxSource.IsArtistKey(official, artistId))
         {
@@ -2853,7 +2936,7 @@ public static class WebServer
             return;
         }
         var offset = GetInt(req, "o");
-        var (posts, hasMore, error) = await FanboxSource.GetPostsAsync(official, artistId, offset);
+        var (posts, hasMore, error) = await FanboxSource.GetPostsAsync(account, artistId, offset);
         if (posts is null)
         {
             WriteJson(stream, 502, new { error = error ?? "获取作品列表失败" });
@@ -2861,10 +2944,10 @@ public static class WebServer
         }
         // 首页顺带带上作家信息，供标题与入队时落库使用
         object? artist = null;
-        if (offset == 0 && await FanboxSource.GetArtistAsync(official, artistId) is { } a)
+        if (offset == 0 && await FanboxSource.GetArtistAsync(account, artistId) is { } a)
             artist = new { id = a.Id, service = a.Service, name = a.Name, publicId = a.PublicId };
 
-        var states = await FanboxSource.PostStatesAsync(official, artistId);
+        var states = await FanboxSource.PostStatesAsync(account, artistId);
         WriteJson(stream, 200, new
         {
             artist,
@@ -2893,7 +2976,8 @@ public static class WebServer
     /// </summary>
     private static async Task ApiFanboxPostAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         var postId = (req.Query.GetValueOrDefault("post") ?? "").Trim();
         if (!FanboxSource.IsArtistKey(official, artistId) || !IsPlainId(postId))
@@ -2901,14 +2985,14 @@ public static class WebServer
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
-        var (post, error) = await FanboxSource.GetPostAsync(official, artistId, postId);
+        var (post, error) = await FanboxSource.GetPostAsync(account, artistId, postId);
         if (post is null)
         {
             WriteJson(stream, 502, new { error = error ?? "获取作品详情失败" });
             return;
         }
         var images = post.Files.Where(f => PawchiveApi.IsImageName(f.Name)).ToList();
-        var states = await FanboxSource.PostStatesAsync(official, artistId);
+        var states = await FanboxSource.PostStatesAsync(account, artistId);
         WriteJson(stream, 200, new
         {
             id = post.Id, title = post.Title, published = post.Published,
@@ -2932,7 +3016,8 @@ public static class WebServer
     /// </summary>
     private static async Task ApiFanboxEnqueueAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var artistId = ReadStringField(req.Body, "id").Trim();
         var wanted = ReadStringArray(req.Body, "posts").Where(IsPlainId).Distinct().ToList();
         var lib = ReadStringField(req.Body, "lib");
@@ -2943,15 +3028,17 @@ public static class WebServer
             return;
         }
 
-        var artist = await FanboxSource.GetArtistAsync(official, artistId)
+        var artist = await FanboxSource.GetArtistAsync(account, artistId)
                      ?? new PawchiveArtist { Id = artistId, Service = PawchiveApi.FanboxService };
-        var picked = await FanboxSource.ResolveForEnqueueAsync(official, artistId, wanted);
+        var picked = await FanboxSource.ResolveForEnqueueAsync(account, artistId, wanted);
         if (picked.Count == 0)
         {
             WriteJson(stream, 404, new { error = "未找到选中的作品" });
             return;
         }
 
+        // 记下是哪个账号入的队：下载官方站附件时用它的 cookie（pawchive 为匿名）
+        SiteAccounts.Use(AccountService.Fanbox, account ?? "");
         var result = await FanboxService.EnqueuePostsAsync(
             artist, picked, folder.Length > 0 ? folder : null, lib.Length > 0 ? lib : null);
         if (!result.Ok)
@@ -2979,7 +3066,8 @@ public static class WebServer
         }
         try
         {
-            var (bytes, type) = await FanboxSource.GetImageAsync(url);
+            // 官方站的预览图同样只对有权限的账号开放：带上来源账号（site=cc:用户号）
+            var (bytes, type) = await FanboxSource.GetImageAsync(url, FanboxAccount(req));
             // 站点的头像/横幅不带扩展名且常返回 application/octet-stream，按图片交付浏览器才会渲染
             if (!type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 type = ContentType(url);
@@ -2991,68 +3079,69 @@ public static class WebServer
         }
     }
 
+    // ---------- API：使用帮助 ----------
+
+    /// <summary>
+    /// 整本手册按章节回给前端（lang 缺省时跟随程序界面语言）。正文已在服务端转成 HTML（文字均已转义），
+    /// 与桌面端共用 HelpManual 的同一个解析器；整本几十 KB，前端每种语言只取一次。
+    /// </summary>
+    private static void ApiHelp(NetworkStream stream, Request req)
+    {
+        var lang = HelpManual.NormalizeLang(req.Query.GetValueOrDefault("lang"));
+        WriteJson(stream, 200, new
+        {
+            lang,
+            languages = HelpManual.Languages.Select(l => new { code = l.Code, name = l.Name }),
+            chapters = HelpManual.Chapters(lang).Select(c => new { no = c.No, title = c.Title, html = HelpManual.RenderHtml(c) }),
+        });
+    }
+
+    private static void ApiHelpImage(NetworkStream stream, Request req)
+    {
+        var bytes = HelpManual.Image(req.Query.GetValueOrDefault("name") ?? "");
+        if (bytes == null)
+        {
+            WriteJson(stream, 404, new { error = "not found" });
+            return;
+        }
+        WriteBytes(stream, 200, "OK", "image/png", bytes, ("Cache-Control", "max-age=86400"));
+    }
+
     // ---------- API：账号访问 ----------
 
     /// <summary>
-    /// 各站点的登录状态。只回「登没登、账号名」，cookie 本身一律不回给浏览器——
-    /// 外部访问可能没设密码，凭据不该经网页再流出去。
+    /// 各站点已登录的账号。只回用户号、账号名与自动维护结果，cookie 本身一律不回给浏览器——
+    /// 外部访问可能没设密码，凭据不该经网页再流出去。账号只能经「在服务器上登录」（/api/stream?login=）加入。
     /// </summary>
     private static void ApiAccounts(NetworkStream stream)
     {
         WriteJson(stream, 200, new
         {
-            accounts = AccountService.All().Select(a => new
+            sites = AccountService.Sites.Select(site => new
             {
-                site = a.Site, title = a.Title, loggedIn = a.LoggedIn, account = a.Account,
+                site, title = AccountService.Title(site), multi = AccountService.AllowsMultiple(site),
+                accounts = AccountService.List(site).Select(a => new
+                {
+                    uid = a.UserId, name = a.Name, canKeep = a.CanKeep,
+                    // 最近一次 cookie 自动维护的结果（AccountKeeper），没维护过为 null
+                    keep = a.Keep is { } k
+                        ? new { at = k.At.ToString("MM-dd HH:mm"), ok = k.Ok, message = k.Message }
+                        : null,
+                }),
             }),
-            ehUsername = AppConfig.EhentaiUsername,
-            // 密码本身不回给网页，只告诉它「存过了」：输入框留空即沿用已保存的
-            ehHasPassword = AppConfig.EhentaiPassword.Length > 0,
         });
-    }
-
-    /// <summary>保存手工填写的 cookie（只写不读）。</summary>
-    private static void ApiAccountSave(NetworkStream stream, Request req)
-    {
-        var site = ReadStringField(req.Body, "site");
-        if (Array.IndexOf(AccountService.Sites, site) < 0)
-        {
-            WriteJson(stream, 400, new { ok = false, message = "未知站点" });
-            return;
-        }
-        var values = new Dictionary<string, string>();
-        foreach (var key in new[] { "sessid", "php_sessid", "member_id", "pass_hash", "igneous" })
-        {
-            var v = ReadStringField(req.Body, key).Trim();
-            if (v.Length > 0)
-                values[key] = v;
-        }
-        AccountService.SaveCookies(site, values);
-        WriteJson(stream, 200, new { ok = true });
     }
 
     private static async Task ApiAccountCheckAsync(NetworkStream stream, Request req)
     {
-        var (ok, message) = await AccountService.CheckAsync(ReadStringField(req.Body, "site"));
+        var (ok, message) = await AccountService.CheckAsync(
+            ReadStringField(req.Body, "site"), ReadStringField(req.Body, "uid"));
         WriteJson(stream, 200, new { ok, message });
-    }
-
-    /// <summary>E-Hentai 账号密码登录（账号密码存库；password 留空即用已保存的）。</summary>
-    private static async Task ApiAccountLoginAsync(NetworkStream stream, Request req)
-    {
-        if (ReadStringField(req.Body, "site") != AccountService.Ehentai)
-        {
-            WriteJson(stream, 400, new { ok = false, message = "该站点只能填写 Cookie 登录" });
-            return;
-        }
-        var result = await AccountService.LoginEhentaiAsync(
-            ReadStringField(req.Body, "username"), ReadStringField(req.Body, "password"));
-        WriteJson(stream, 200, new { ok = result.Ok, message = result.Message, captcha = result.Captcha });
     }
 
     private static void ApiAccountLogout(NetworkStream stream, Request req)
     {
-        AccountService.Logout(ReadStringField(req.Body, "site"));
+        AccountService.Remove(ReadStringField(req.Body, "site"), ReadStringField(req.Body, "uid"));
         WriteJson(stream, 200, new { ok = true });
     }
 
@@ -3415,16 +3504,24 @@ public static class WebServer
     /// 搜索作品。贴作品链接/作品号时直接认出那一件并只返回它（等价于站内直达），
     /// 否则按关键字搜；p 为页号（站点按页翻页，每页 60 件）。
     /// </summary>
+    /// <summary>
+    /// 这次 pixiv 请求用哪个账号：查询串或请求体里 account=&lt;pixiv 用户号&gt;（来源下拉「pixiv（账号名）」），
+    /// 空或已不存在 = 匿名。设进 <see cref="SiteAccounts"/> 上下文后只对调用它的路由方法有效。
+    /// </summary>
+    private static void UsePixivAccount(Request req)
+    {
+        var uid = req.Query.GetValueOrDefault("account") ?? "";
+        if (uid.Length == 0 && req.Body.Length > 0)
+            uid = ReadStringField(req.Body, "account");
+        SiteAccounts.Use(AccountService.Pixiv,
+            uid.Length > 0 && SiteAccounts.Find(AccountService.Pixiv, uid) != null ? uid : "");
+    }
+
     private static async Task ApiPixivSearchAsync(NetworkStream stream, Request req)
     {
+        UsePixivAccount(req);
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
-        if (keyword.Length == 0)
-        {
-            WriteJson(stream, 400, new { error = "bad request" });
-            return;
-        }
         var page = Math.Max(1, GetInt(req, "p"));
-
         // 贴的是作品链接/作品号：跳过搜索，直接取这一件的详情
         if (page == 1 && PixivApi.ParseArtworkInput(keyword) is { } direct)
         {
@@ -3441,7 +3538,8 @@ public static class WebServer
             return;
         }
 
-        var result = await PixivApi.SearchAsync(keyword, page);
+        // 留空 = 我的收藏，作者主页链接 = 该作者的作品（详情页点作者即填这个），其余按关键字/标签搜（PixivApi.QueryAsync）
+        var result = await PixivApi.QueryAsync(keyword, page);
         WriteJson(stream, 200, new
         {
             items = result.Items.Select(PixivArtworkJson),
@@ -3449,6 +3547,7 @@ public static class WebServer
             page = result.Page,
             hasMore = result.HasMore,
             error = result.Error,
+            heading = result.Heading,
             // 未登录时站点会把 R-18 从结果里滤掉，前端据此提示一句，免得用户以为是搜索坏了
             anonymous = !PixivApi.HasCookie,
         });
@@ -3462,6 +3561,7 @@ public static class WebServer
     /// </summary>
     private static async Task ApiPixivArtworkAsync(NetworkStream stream, Request req)
     {
+        UsePixivAccount(req);
         var id = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         if (id.Length == 0 || !id.All(char.IsAsciiDigit))
         {
@@ -3489,6 +3589,7 @@ public static class WebServer
     /// </summary>
     private static async Task ApiPixivEnqueueAsync(NetworkStream stream, Request req)
     {
+        UsePixivAccount(req);
         var ids = ReadStringArray(req.Body, "items")
             .Where(x => x.Length > 0 && x.All(char.IsAsciiDigit))
             .Distinct()
@@ -3531,6 +3632,7 @@ public static class WebServer
         {
             using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            SiteAccounts.Use(AccountService.Pixiv, "");   // 取图只认 Referer，不必把登录 cookie 交给图床
             PixivApi.ApplyHeaders(request);
             using var resp = await client.SendAsync(request);
             resp.EnsureSuccessStatusCode();

@@ -295,7 +295,8 @@ public static class Db
             }
             // download_list 补加来源与作品内子目录列：
             // source="asmr" 时 url 即直链（跳过 debrid 解析）；sub_path 为该文件在作品内的相对子目录（保留 asmr 目录树）
-            foreach (var dlCol in new[] { "source", "sub_path" })
+            // account：pixiv / FANBOX 多账号时，该条是从哪个账号入队的（用户号；SiteAccounts），下载时用它的 cookie
+            foreach (var dlCol in new[] { "source", "sub_path", "account" })
             {
                 if (!dlColumns.Contains(dlCol))
                 {

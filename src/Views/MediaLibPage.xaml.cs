@@ -209,9 +209,19 @@ public partial class MediaLibPage : UserControl
             _searchDebounce.Stop();
             ApplyCardFilter();
         };
+        HelpSlot.Content = HelpPanel.Button(HelpTopic);
         RetranslateUi();
         I18n.LanguageChanged += RetranslateUi;
     }
+
+    /// <summary>当前层级对应的使用手册章节（同 Web help.js 的 helpTopic）；作品文件画在详情页里，故详情即第 5 章。</summary>
+    private string HelpTopic() => _level switch
+    {
+        "detail" => "5",
+        "libs" when _root == MediaLibRoot.Library => "4",
+        _ when _root == MediaLibRoot.Library => "4.1",
+        _ => "4.3",
+    };
 
     private void RetranslateUi()
     {

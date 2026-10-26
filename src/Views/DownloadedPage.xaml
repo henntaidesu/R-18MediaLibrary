@@ -64,6 +64,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button x:Name="BackButton" Click="BackButton_Click" Content="← 下载" />
                 <Button x:Name="RefreshButton" Grid.Column="1" Margin="8,0,0,0" Click="RefreshButton_Click" Content="刷新" />
@@ -71,6 +72,8 @@
                          VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" />
                 <ComboBox x:Name="StateFilter" Grid.Column="3" Margin="8,0,0,0" MinWidth="110"
                           SelectionChanged="StateFilter_SelectionChanged" />
+                <!-- ? 使用帮助（Web 工具栏末尾的 helpButton），按钮由代码挂上 -->
+                <ContentControl x:Name="HelpSlot" Grid.Column="4" Margin="8,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
 

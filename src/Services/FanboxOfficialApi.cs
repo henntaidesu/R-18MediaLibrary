@@ -42,9 +42,10 @@ public static class FanboxOfficialApi
     /// <summary>作家主页一次给前端的页数：站点每页只有 10 篇，一次拼 5 页，下拉翻页的节奏才与 pawchive 的 50 篇相当。</summary>
     private const int PagesPerBatch = 5;
 
-    public static bool HasCookie => AppConfig.FanboxSessionId.Length > 0;
+    /// <summary>当前上下文的 FANBOX 账号（<see cref="SiteAccounts.Active"/>：来源下拉选中的那个，或下载记录上记的那个）。</summary>
+    public static bool HasCookie => SiteAccounts.Active(AccountService.Fanbox) != null;
 
-    public static string CookieHeader => HasCookie ? $"FANBOXSESSID={AppConfig.FanboxSessionId}" : "";
+    public static string CookieHeader => SiteAccounts.Active(AccountService.Fanbox)?.Cookie ?? "";
 
     /// <summary>作家主页地址（供外链）。</summary>
     public static string CreatorPageUrl(string creatorId) => $"https://{creatorId}.fanbox.cc/";
@@ -65,7 +66,8 @@ public static class FanboxOfficialApi
 
     // ---------- HTTP ----------
 
-    // 同 PixivApi：一篇几十张图、详情页要逐张取预览，客户端必须复用；cookie / 代理变了才重建
+    // 同 PixivApi：一篇几十张图、详情页要逐张取预览，客户端必须复用；代理变了才重建。
+    // 这里的客户端不带 cookie 罐、cookie 逐请求手写（见 Build），多个账号共用一个也不会串号
     private static readonly object ClientLock = new();
     private static HttpClient? _client;
     private static string _clientKey = "";
@@ -74,7 +76,7 @@ public static class FanboxOfficialApi
 
     private static HttpClient Client()
     {
-        var key = $"{CookieHeader}|{ProxyKey()}";
+        var key = ProxyKey();
         lock (ClientLock)
         {
             if (_client != null && _clientKey == key)
@@ -192,7 +194,7 @@ public static class FanboxOfficialApi
                 return (null, status switch
                 {
                     400 => "站点拒绝了请求：FANBOXSESSID 无效或已过期，或者作家 / 作品不存在",
-                    401 or 403 => "FANBOX 未登录或 FANBOXSESSID 已失效（请到「账号访问」重新填写）",
+                    401 or 403 => "FANBOX 未登录或登录已失效（请到「账号访问」重新登录）",
                     404 => "站点上没有这个作家或作品",
                     _ => $"站点返回 HTTP {status}",
                 }, status);
@@ -224,13 +226,13 @@ public static class FanboxOfficialApi
     public static async Task<(bool Ok, string Name, string Message)> CheckLoginAsync()
     {
         if (!HasCookie)
-            return (false, "", "未填写 FANBOXSESSID");
+            return (false, "", "未登录");
         var (body, error, status) = await GetBodyAsync($"{ApiBase}/plan.listSupporting");
         if (body is null)
             return (false, "", status is 400 or 401 or 403
-                ? "FANBOXSESSID 无效或已过期（请重新从浏览器复制）"
+                ? "登录已失效（请在「账号访问」重新登录）"
                 : error ?? "检测失败");
-        var userId = PixivApi.UserIdFromSession(AppConfig.FanboxSessionId);
+        var userId = PixivApi.UserIdFromSession(SiteAccounts.CookieValue(CookieHeader, "FANBOXSESSID"));
         var name = await PixivApi.GetUserNameAsync(userId) ?? userId;
         var supporting = body.Value.ValueKind == JsonValueKind.Array ? body.Value.GetArrayLength() : 0;
         return (true, name, $"登录有效（赞助中的作家 {supporting} 位）");
