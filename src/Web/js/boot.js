@@ -22,8 +22,14 @@ $('search').addEventListener('input', () => {
 // ---------- 启动 ----------
 async function boot() {
   applyLayout();
+  syncStickyBars();
   buildTabs();
-  try { const s = await fetch('/api/state').then(r => r.json()); if (s.needLogin) { showLogin(true); return; } } catch (e) {}
+  try {
+    const s = await fetch('/api/state').then(r => r.json());
+    loginState = { password: s.password !== false, sso: !!s.sso };
+    if (s.user) { currentUser = s.user; buildTabs(); }
+    if (s.needLogin) { showLogin(true); return; }
+  } catch (e) {}
   restoreFromHash();
 }
 // 按地址栏哈希恢复：叶子分区直接进入；卡片分区可深链接到具体层级（刷新/分享）

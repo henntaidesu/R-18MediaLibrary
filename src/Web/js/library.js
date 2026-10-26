@@ -108,13 +108,25 @@ async function scopedWorkSearch(st, kw, gen) {
   lazyCards($('content'), works, makeWorkCard, '没有匹配的作品');
 }
 
-async function renderDetail(id) {
+// 作品详情：标题 → 可折叠的「作品详情」（封面/字段/正文，默认收起）→ 作品文件（原「查看作品」页并入此处）。
+// ctx 即导航栈上本层的 ctx：折叠状态与文件树缓存都记在它上面，从子文件夹/看图返回时原样恢复。
+async function renderDetail(ctx) {
+  const id = ctx.id;
   $('title').textContent = ''; $('sort').hidden = true;
   $('topbar').classList.add('detail-mode');   // 顶栏不显示作品名，仅留按钮
   const d = await api('/api/detail?id=' + enc(id));
   if (d.error) { $('content').appendChild(el('div', 'empty', '作品不存在')); return; }
   const root = el('div', 'detail');
   root.appendChild(el('h1', null, d.name || d.id));
+  // 折叠头：默认收起；没有作品文件可看时详情就是全部内容，直接展开
+  if (ctx.open == null) ctx.open = !d.hasFiles;
+  const fold = el('div', 'dfold' + (ctx.open ? ' open' : ''));
+  const head = el('div', 'dfold-head');
+  const arrow = el('span', 'arrow', ctx.open ? '▾' : '▸');
+  head.append(arrow, el('span', null, '作品详情'), el('span', 'dfold-sub', [d.id, d.maker].filter(Boolean).join(' · ')));
+  head.onclick = () => { ctx.open = !ctx.open; fold.classList.toggle('open', ctx.open); arrow.textContent = ctx.open ? '▾' : '▸'; };
+  const inner = el('div', 'dfold-body');
+  fold.append(head, inner); root.appendChild(fold);
   const top = el('div', 'dtop');
   const gallery = el('div', 'gallery');
   const imgs = d.slider.length ? d.slider.map(n => `/api/asset?id=${enc(d.id)}&name=${enc(n)}`) : (d.hasCover ? [`/api/cover?id=${enc(d.id)}`] : []);
@@ -147,7 +159,7 @@ async function renderDetail(id) {
   if (d.tags && d.tags.length) { const box = el('span'); d.tags.forEach(t => { const a = el('a', 'tag', t); a.onclick = () => pushView('genreworks', { genre: t, label: t }); box.appendChild(a); }); addF('类型', box); }
   if (d.fileSize) addF('文件容量', d.fileSize);
   if (d.intro) addF('简介', d.intro);
-  top.appendChild(fields); root.appendChild(top);
+  top.appendChild(fields); inner.appendChild(top);
 
   const actions = $('detailActions'); actions.hidden = false;
   const rb = el('button', 'toggle' + (d.read ? ' on' : ''), (d.read ? '★ ' : '☆ ') + '已读');
@@ -156,7 +168,6 @@ async function renderDetail(id) {
   fb.onclick = async () => { const r = await apiPost('/api/toggle', { id: d.id, field: 'favorite', value: !d.favorite }); d.favorite = r.value; fb.className = 'toggle' + (d.favorite ? ' on' : ''); fb.textContent = (d.favorite ? '♥ ' : '♡ ') + '收藏'; };
   actions.appendChild(rb); actions.appendChild(fb);
   if (d.hasFiles) {
-    const vb = el('button', 'toggle', '📂 查看作品'); vb.onclick = () => pushView('files', { id: d.id, name: d.name || d.id }); actions.appendChild(vb);
     // 移动媒体库：选择目标库/文件夹 → 移动文件夹并改库（对齐 WPF 详情"移动媒体库"）
     const mb = el('button', 'toggle', '📦 移动媒体库');
     mb.onclick = async () => {
@@ -172,6 +183,20 @@ async function renderDetail(id) {
     };
     actions.appendChild(mb);
   }
+  // 删除作品：磁盘上的作品文件夹连同数据库记录一并清除，不可恢复，故二次确认
+  // （文件夹不在了也要能删——正是清理这种孤儿记录的入口，所以不放进 hasFiles 分支）
+  const delb = el('button', 'toggle danger', '🗑 删除作品');
+  delb.onclick = async () => {
+    if (!await uiConfirm(
+      `确定删除《${d.name || d.id}》吗？\n作品文件夹内的全部文件与数据库记录都会被删除，且无法恢复。`,
+      { title: '删除作品', okText: '删除', danger: true })) return;
+    delb.disabled = true; delb.textContent = '删除中…';
+    const r = await apiPost('/api/delwork', { id: d.id });
+    if (r.ok) { history.back(); return; }   // 回上一级列表并重新拉取，被删的卡片随之消失
+    await uiAlert('删除失败：' + (r.message || ''));
+    delb.disabled = false; delb.textContent = '🗑 删除作品';
+  };
+  actions.appendChild(delb);
 
   if (d.body && d.body.length) {
     const body = el('div', 'body'); const bodyImgs = [];
@@ -181,7 +206,12 @@ async function renderDetail(id) {
       if (b.kind === 'text') { if (b.value.trim()) body.appendChild(el('p', null, b.value)); }
       else { const img = el('img'); img.src = `/api/asset?id=${enc(d.id)}&name=${enc(b.value)}`; img.loading = 'lazy'; const idx = ix++; img.onclick = () => LB.open(bodyImgs, idx); body.appendChild(img); }
     });
-    root.appendChild(body);
+    inner.appendChild(body);
   }
   const host = $('content'); host.innerHTML = ''; host.appendChild(root); window.scrollTo(0, 0);
+  // 作品文件：缩略图/文件列表，子文件夹仍逐级下钻（files 视图）。等它画完再返回，popView 才能恢复滚动位置
+  if (d.hasFiles) {
+    const files = el('div', 'dfiles'); host.appendChild(files);
+    await drawFiles(files, ctx, '作品文件');
+  }
 }

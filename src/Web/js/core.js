@@ -101,7 +101,37 @@ async function apiPost(path, body) {
 }
 
 // ---------- 登录 ----------
-function showLogin(initial) { $('login').classList.add('show'); if (!initial) $('loginErr').textContent = '会话已失效，请重新登录'; $('pw').focus(); }
+// 登录方式由 /api/state 决定：设了访问密码才画密码框，程序开了门户单点登录才画「门户登录」
+let loginState = { password: true, sso: false };
+let currentUser = null;   // 单点登录进来的用户 { username, display }；密码登录为 null
+function showLogin(initial) {
+  const st = loginState;
+  $('pwPart').hidden = !st.password;
+  $('ssoBtn').hidden = !st.sso;
+  $('ssoOr').hidden = !(st.password && st.sso);
+  $('loginTitle').textContent = st.password ? '需要访问密码' : '请登录';
+  $('login').classList.add('show');
+  if (!initial) $('loginErr').textContent = '会话已失效，请重新登录';
+  // 门户那一路出错时后端 303 回 ?sso_error=...；显示后从地址栏抹掉，免得刷新又弹一次
+  const q = new URLSearchParams(location.search);
+  if (q.get('sso_error')) {
+    $('loginErr').textContent = '门户登录失败：' + q.get('sso_error');
+    q.delete('sso_error');
+    const rest = q.toString();
+    history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  }
+  if (st.password) $('pw').focus();
+}
+// 整页跳转而非 fetch：授权要浏览器自己走完门户那一趟。地址用相对路径、base 取页面所在目录，
+// 经门户代理打开时（页面在 /api/proxy/<卡片>/ 底下）回调才会落回代理底下
+function ssoLogin() {
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  location.href = 'api/sso/login?base=' + encodeURIComponent(base);
+}
+async function doLogout() {
+  try { await fetch('api/logout', { method: 'POST' }); } catch (e) {}
+  location.reload();
+}
 async function doLogin() {
   $('loginErr').textContent = '';
   const r = await apiPost('/api/login', { password: $('pw').value });
@@ -120,6 +150,15 @@ function buildTabs() {
     b.onclick = () => selectSection(s.key);
     box.appendChild(b);
   });
+  if (currentUser) {
+    const u = el('div', 'navuser');
+    const name = el('span', null, '👤 ' + (currentUser.display || currentUser.username));
+    name.title = currentUser.username;
+    const out = el('a', null, '退出');
+    out.onclick = doLogout;
+    u.appendChild(name); u.appendChild(out);
+    box.appendChild(u);
+  }
 }
 // 移动端抽屉开关
 function toggleDrawer() {
@@ -140,15 +179,62 @@ function applyLayout() {
   if (!mobile) closeDrawer();
 }
 window.addEventListener('resize', applyLayout);
+
+// ---------- 顶栏 + 页内工具栏常驻页顶 ----------
+// 顶栏高度不固定（窄屏换行、详情页多一排操作按钮），页内工具栏（一张悬浮卡片）又要正好停在它下面，
+// 所以只能实测：按文档顺序取当前可见的工具栏，逐条把 top 设成「顶栏高 + 空隙 + 之前各条高度之和」，
+// 最后把总高写进 --bars-h 供表头一类的二级吸顶元素使用（已下载表的 .dt th）。
+// 一页可能叠两条（搜索栏 + 选择条），故再按位置打 stack-top/mid/bot，让整叠拼成同一张卡（样式见 app.css）。
+// 写入前先比对旧值：值没变就不写（class 同理），否则下面的 MutationObserver 会被自己的写入再次唤醒、来回打转。
+function syncStickyBars() {
+  const root = document.documentElement, head = document.querySelector('header');
+  const gap = parseFloat(getComputedStyle(root).getPropertyValue('--bar-gap')) || 10;
+  let top = head ? Math.round(head.getBoundingClientRect().height) : 0;
+  const setVar = (k, v) => { if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v); };
+  const setCls = (e, c, on) => { if (e.classList.contains(c) !== on) e.classList.toggle(c, on); };
+  setVar('--topbar-h', top + 'px');
+  const all = Array.from(document.querySelectorAll('#content .toolbar:not(.inline)'));
+  // 藏起来的结果面板（切换搜索来源时的另两套）里的工具栏不占位，也不参与拼卡
+  const bars = all.filter(b => b.offsetParent);
+  all.forEach(b => {
+    const i = bars.indexOf(b);
+    if (i < 0 && b.style.top) b.style.top = '';
+    setCls(b, 'bar-lead', i === 0);                                  // 只有最上面那条负责封住与顶栏之间的空隙
+    setCls(b, 'stack-top', i === 0 && bars.length > 1);
+    setCls(b, 'stack-mid', i > 0 && i < bars.length - 1);
+    setCls(b, 'stack-bot', i > 0 && i === bars.length - 1);
+  });
+  if (bars.length) top += gap;   // 卡片与顶栏之间的空隙
+  bars.forEach(bar => {
+    const v = top + 'px';
+    if (bar.style.top !== v) bar.style.top = v;
+    top += Math.round(bar.getBoundingClientRect().height);
+  });
+  // --bars-h 就取整叠卡片的下沿（不含下外边距）：已下载表的表头正好贴着卡片底边吸住，
+  // 顺带把那道外边距盖上，内容不会从卡片与表头之间的缝里透出来。
+  setVar('--bars-h', top + 'px');
+}
+let _stickyRaf = 0;
+function scheduleStickyBars() {
+  if (_stickyRaf) return;
+  _stickyRaf = requestAnimationFrame(() => { _stickyRaf = 0; syncStickyBars(); });
+}
+window.addEventListener('resize', scheduleStickyBars);
+// 各分区自行重绘内容，这里统一盯住 DOM 变化，省去在每个 render 里逐处调用。
+// 每帧最多重算一次；下载列表每秒重建一次表格也只触发一次。
+new MutationObserver(scheduleStickyBars).observe(document.body,
+  { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+
 function stopTimers() { if (pollTimer) clearInterval(pollTimer); if (usageTimer) clearInterval(usageTimer); pollTimer = usageTimer = null; }
 
-function selectSection(key) {
+function selectSection(key, noRender) {
   section = key; stopTimers(); closeVideo(); closeAudio(); closeDrawer();
   if (key === 'download') dlView = 'download';   // 进入分区先归位到下载列表视图，再写基线历史（encodeHash 依赖 dlView）
   const s = SECTIONS.find(x => x.key === key);
   buildTabs();
   $('search').hidden = !s.root;
   $('sort').hidden = true;
+  $('libToggle').hidden = true;   // 媒体库的「显示作品/显示社团」只属于卡片区，换分区必须收起（否则会跟到搜索/下载页上）
   $('back').hidden = true;
   $('count').textContent = '';
   $('content').innerHTML = '';
@@ -158,7 +244,7 @@ function selectSection(key) {
   if (s.root) { makerSort = 0; workSort = 0; stack = [{ view: s.root, ctx: {} }]; }
   // 反映到地址栏；切换分区重置历史基线（不累积层级），但 URL 可见当前分区
   history.replaceState({ nav: true, depth: s.root ? 1 : 0 }, '', encodeHash());
-  if (s.root) render();
+  if (s.root) { if (!noRender) render(); }
   else if (key === 'search') renderSearchArea();
   else if (key === 'download') renderDownloadArea();
   else if (key === 'settings') renderSettings();
@@ -173,7 +259,7 @@ function encodeHash() {
   if (section === 'download') return encodeDlHash();         // 下载管理有两视图，走独立编码
   if (!s || !s.root) return '#/' + section;             // 其它叶子分区（设置）
   const segs = stack.slice(1).map(e => {
-    const ctx = { ...e.ctx }; delete ctx.nodes;          // nodes 为运行时文件树缓存，过大不入 URL
+    const ctx = { ...e.ctx }; delete ctx.nodes; delete ctx.open;   // nodes 文件树缓存过大、open 详情折叠态是运行时状态，均不入 URL
     const c = Object.keys(ctx).length ? '~' + encodeURIComponent(JSON.stringify(ctx)) : '';
     return e.view + c;
   });
@@ -216,8 +302,9 @@ function parseHash() {
   const s = SECTIONS.find(x => x.key === parts[0]);
   if (!s) return null;
   if (s.key === 'search') {
-    // parts[1]：来源（dlsite / fanbox，缺省 dlsite）；parts[2..]：查询词（整段 URI 编码）
-    const src = parts[1] === 'fanbox' ? 'fanbox' : 'dlsite';
+    // parts[1]：来源（按 SEARCH_SOURCES 校验，缺省 dlsite）；parts[2..]：查询词（整段 URI 编码）
+    const known = typeof SEARCH_SOURCES !== 'undefined' && SEARCH_SOURCES.some(x => x.key === parts[1]);
+    const src = known ? parts[1] : 'dlsite';
     let query = '';
     if (parts[2]) { try { query = decodeURIComponent(parts.slice(2).join('/')); } catch (e) { } }
     return { key: s.key, root: false, src, query };
@@ -240,6 +327,12 @@ function parseHash() {
 
 // ========== 卡片区（媒体库/标签/作品形式/收藏）==========
 // 每深入一级 push 一个历史项：iOS/安卓的"返回"手势触发 popstate 即可逐级回退，并恢复浏览位置
+// 跨分区跳到媒体库里的某个作品详情（下载管理的「跳转作品」）：落在媒体库根之上一层，返回即回媒体库首页。
+// 不先画媒体库首页——两次 render 并发时先发的那次可能后回来，把详情页盖掉
+function gotoWork(id) {
+  selectSection('medialib', true);
+  pushView('detail', { id });
+}
 function pushView(view, ctx) {
   if (stack.length) { const cur = stack[stack.length - 1]; cur.scroll = window.scrollY; cur.loaded = _cardLoaded; }
   stack.push({ view, ctx: ctx || {} });
@@ -256,6 +349,7 @@ async function popView() {
   return true;
 }
 window.addEventListener('popstate', () => {
+  if (LB.isOpen) { LB.hide(); return; }   // 看图层先退：返回手势只关看图，不离开当前页
   if (section === 'search') return;   // 搜索分区内不压历史层级（来源/查询词只 replace）
   if (section === 'download') { syncDlFromHash(); return; }
   const s = SECTIONS.find(x => x.key === section);
@@ -284,7 +378,7 @@ async function render() {
     else if (st.view === 'genreworks') await renderWorks('/api/genreworks?genre=' + enc(st.ctx.genre), st.ctx.label || st.ctx.genre, true);
     else if (st.view === 'works') await renderWorks(worksUrl(st.ctx), st.ctx.label || st.ctx.maker || '未知社团', true, st.ctx);
     else if (st.view === 'filter') await renderWorks(`/api/filter?col=${enc(st.ctx.col)}&val=${enc(st.ctx.val)}`, st.ctx.label, true);
-    else if (st.view === 'detail') await renderDetail(st.ctx.id);
+    else if (st.view === 'detail') await renderDetail(st.ctx);
     else if (st.view === 'files') await renderFiles(st.ctx);
   } catch (e) { if (e.message !== 'unauth') $('content').appendChild(el('div', 'empty', '加载失败')); }
 }

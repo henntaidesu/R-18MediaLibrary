@@ -73,6 +73,98 @@ public static class I18n
     // 简体中文原文 -> {语言代码: 译文}
     private static readonly Dictionary<string, Dictionary<string, string>> Translations = new()
     {
+        // ---------- E-Hentai 数据源 ----------
+        ["站点未提供逐页缩略图（登录后可在站点把画廊版式设为大缩略图），此处只显示封面。"] = new()
+        {
+            ["zh_TW"] = "站點未提供逐頁縮圖（登入後可在站點把畫廊版式設為大縮圖），此處只顯示封面。",
+            ["ja"] = "サイトがページごとのサムネイルを返しません（ログイン後、ギャラリー表示を大サムネイルに設定すると取得できます）。ここでは表紙のみ表示します。",
+            ["en"] = "The site returns no per-page thumbnails (sign in and set the gallery layout to large thumbnails); showing the cover only.",
+        },
+        ["关键字 / 标签（如 artist:xxx），或粘贴 E-Hentai 画廊链接"] = new()
+        {
+            ["zh_TW"] = "關鍵字 / 標籤（如 artist:xxx），或貼上 E-Hentai 畫廊連結",
+            ["ja"] = "キーワード / タグ（artist:xxx など）、または E-Hentai のギャラリー URL",
+            ["en"] = "Keyword / tag (e.g. artist:xxx), or paste an E-Hentai gallery link",
+        },
+        ["← 返回搜索结果"] = new() { ["zh_TW"] = "← 返回搜尋結果", ["ja"] = "← 検索結果に戻る", ["en"] = "← Back to results" },
+        ["正在搜索画廊…"] = new() { ["zh_TW"] = "正在搜尋畫廊…", ["ja"] = "ギャラリーを検索中…", ["en"] = "Searching galleries…" },
+        ["未找到该画廊（可能已下架，或里站需要登录 cookie）"] = new()
+        {
+            ["zh_TW"] = "找不到該畫廊（可能已下架，或裏站需要登入 cookie）",
+            ["ja"] = "ギャラリーが見つかりません（削除済み、または ExHentai のログイン Cookie が必要）",
+            ["en"] = "Gallery not found (removed, or ExHentai needs login cookies)",
+        },
+        ["没有匹配的画廊"] = new() { ["zh_TW"] = "沒有符合的畫廊", ["ja"] = "一致するギャラリーがありません", ["en"] = "No matching galleries" },
+        ["已加载 {n} 本画廊"] = new()
+        {
+            ["zh_TW"] = "已載入 {n} 本畫廊",
+            ["ja"] = "{n} 件のギャラリーを読み込み済み",
+            ["en"] = "{n} galleries loaded",
+        },
+        ["{n} 页"] = new() { ["zh_TW"] = "{n} 頁", ["ja"] = "{n} ページ", ["en"] = "{n} pages" },
+        ["已选 {n} 本"] = new() { ["zh_TW"] = "已選 {n} 本", ["ja"] = "{n} 件選択中", ["en"] = "{n} selected" },
+        ["正在获取画廊内容…"] = new()
+        {
+            ["zh_TW"] = "正在取得畫廊內容…",
+            ["ja"] = "ギャラリーの内容を取得中…",
+            ["en"] = "Loading gallery contents…",
+        },
+        ["获取画廊信息失败"] = new()
+        {
+            ["zh_TW"] = "取得畫廊資訊失敗",
+            ["ja"] = "ギャラリー情報の取得に失敗しました",
+            ["en"] = "Failed to load gallery info",
+        },
+        ["取不到预览图"] = new() { ["zh_TW"] = "取不到預覽圖", ["ja"] = "プレビュー画像を取得できません", ["en"] = "No preview available" },
+        ["原名"] = new() { ["zh_TW"] = "原名", ["ja"] = "原題", ["en"] = "Original title" },
+        ["社团/作者"] = new() { ["zh_TW"] = "社團/作者", ["ja"] = "サークル/作者", ["en"] = "Circle / artist" },
+        ["分类"] = new() { ["zh_TW"] = "分類", ["ja"] = "カテゴリ", ["en"] = "Category" },
+        ["投稿者"] = new() { ["zh_TW"] = "投稿者", ["ja"] = "投稿者", ["en"] = "Uploader" },
+        ["投稿"] = new() { ["zh_TW"] = "投稿", ["ja"] = "投稿日", ["en"] = "Posted" },
+        ["评分"] = new() { ["zh_TW"] = "評分", ["ja"] = "評価", ["en"] = "Rating" },
+        ["页数"] = new() { ["zh_TW"] = "頁數", ["ja"] = "ページ数", ["en"] = "Pages" },
+        ["该画廊已在站点被删除，内容可能不全"] = new()
+        {
+            ["zh_TW"] = "該畫廊已在站點被刪除，內容可能不全",
+            ["ja"] = "このギャラリーはサイト上で削除済みです。内容が不完全な場合があります",
+            ["en"] = "This gallery was expunged on the site; contents may be incomplete",
+        },
+        ["仅预览前 {n} 页，共 {m} 页；下载可取全本。"] = new()
+        {
+            ["zh_TW"] = "僅預覽前 {n} 頁，共 {m} 頁；下載可取全本。",
+            ["ja"] = "プレビューは先頭 {n} ページのみ（全 {m} ページ）。ダウンロードすれば全ページ取得できます。",
+            ["en"] = "Preview shows the first {n} of {m} pages; download to get them all.",
+        },
+        ["在站点打开"] = new() { ["zh_TW"] = "在站點開啟", ["ja"] = "サイトで開く", ["en"] = "Open on site" },
+        ["正在抓取图片清单 {i}/{n}：{title}"] = new()
+        {
+            ["zh_TW"] = "正在抓取圖片清單 {i}/{n}：{title}",
+            ["ja"] = "画像リストを取得中 {i}/{n}：{title}",
+            ["en"] = "Fetching image list {i}/{n}: {title}",
+        },
+        ["已加入下载：{galleries} 本画廊 / {files} 张图片"] = new()
+        {
+            ["zh_TW"] = "已加入下載：{galleries} 本畫廊 / {files} 張圖片",
+            ["ja"] = "ダウンロードに追加：{galleries} 件のギャラリー / {files} 枚の画像",
+            ["en"] = "Queued: {galleries} galleries / {files} images",
+        },
+        ["，跳过 {n} 本"] = new() { ["zh_TW"] = "，跳過 {n} 本", ["ja"] = "、{n} 件をスキップ", ["en"] = ", skipped {n}" },
+        ["站点"] = new() { ["zh_TW"] = "站點", ["ja"] = "サイト", ["en"] = "Site" },
+        ["图片画质"] = new() { ["zh_TW"] = "圖片畫質", ["ja"] = "画質", ["en"] = "Image quality" },
+        ["原图"] = new() { ["zh_TW"] = "原圖", ["ja"] = "オリジナル", ["en"] = "Original" },
+        ["站点显示图（省额度）"] = new()
+        {
+            ["zh_TW"] = "站點顯示圖（省額度）",
+            ["ja"] = "サイト表示サイズ（制限節約）",
+            ["en"] = "Resampled (saves quota)",
+        },
+        ["连接测试"] = new() { ["zh_TW"] = "連線測試", ["ja"] = "接続テスト", ["en"] = "Test connection" },
+        ["从浏览器登录后的 Cookie 中复制；exhentai(里站) 三项缺一不可，e-hentai(表站) 可匿名浏览"] = new()
+        {
+            ["zh_TW"] = "從瀏覽器登入後的 Cookie 中複製；exhentai(裏站) 三項缺一不可，e-hentai(表站) 可匿名瀏覽",
+            ["ja"] = "ブラウザでログイン後の Cookie からコピー。ExHentai は 3 項目すべて必須、E-Hentai は未設定でも閲覧可。",
+            ["en"] = "Copy from your browser cookies after signing in; ExHentai needs all three, E-Hentai works anonymously.",
+        },
         // ---------- FANBOX（pawchive 数据源）----------
         // 社团显示名映射（卡片右上角 🖊）
         ["自定义显示名称"] = new()
@@ -119,7 +211,7 @@ public static class I18n
         ["没有匹配的作家"] = new() { ["zh_TW"] = "沒有符合的作家", ["ja"] = "一致する作家がありません", ["en"] = "No matching artists" },
         ["正在获取作品…"] = new() { ["zh_TW"] = "正在取得作品…", ["ja"] = "作品を取得中…", ["en"] = "Loading posts…" },
         ["获取作品列表失败"] = new() { ["zh_TW"] = "取得作品清單失敗", ["ja"] = "作品リストの取得に失敗しました", ["en"] = "Failed to load the post list" },
-        ["已加载 {n} 篇作品"] = new() { ["zh_TW"] = "已載入 {n} 篇作品", ["ja"] = "{n} 件の作品を読み込みました", ["en"] = "{n} posts loaded" },
+        ["全部图片（{n} 张）"] = new() { ["zh_TW"] = "全部圖片（{n} 張）", ["ja"] = "画像すべて（{n} 枚）", ["en"] = "All images ({n})" },
         ["（下拉加载更多）"] = new() { ["zh_TW"] = "（下拉載入更多）", ["ja"] = "（スクロールで続きを読み込み）", ["en"] = " (scroll for more)" },
         ["{n} 文件"] = new() { ["zh_TW"] = "{n} 檔案", ["ja"] = "{n} ファイル", ["en"] = "{n} files" },
         ["已选 {n} 篇"] = new() { ["zh_TW"] = "已選 {n} 篇", ["ja"] = "{n} 件選択中", ["en"] = "{n} selected" },
@@ -193,6 +285,7 @@ public static class I18n
         },
         ["查询"] = new() { ["zh_TW"] = "查詢", ["ja"] = "検索", ["en"] = "Search" },
         ["← 返回结果"] = new() { ["zh_TW"] = "← 返回結果", ["ja"] = "← 結果に戻る", ["en"] = "← Back to results" },
+        ["返回"] = new() { ["zh_TW"] = "返回", ["ja"] = "戻る", ["en"] = "Back" },
         ["← 返回作品列表"] = new() { ["zh_TW"] = "← 返回作品列表", ["ja"] = "← 作品一覧に戻る", ["en"] = "← Back to works" },
         ["未找到匹配的作品"] = new() { ["zh_TW"] = "未找到相符的作品", ["ja"] = "一致する作品が見つかりません", ["en"] = "No matching works found" },
         ["选择下载位置"] = new() { ["zh_TW"] = "選擇下載位置", ["ja"] = "ダウンロード先を選択", ["en"] = "Choose download location" },
@@ -376,16 +469,21 @@ public static class I18n
         ["媒体库设置"] = new() { ["zh_TW"] = "媒體庫設定", ["ja"] = "ライブラリ設定", ["en"] = "Library settings" },
         ["打开文件夹"] = new() { ["zh_TW"] = "開啟資料夾", ["ja"] = "フォルダを開く", ["en"] = "Open folder" },
         ["移动媒体库"] = new() { ["zh_TW"] = "移動媒體庫", ["ja"] = "ライブラリを移動", ["en"] = "Move library" },
-        ["查看作品"] = new() { ["zh_TW"] = "查看作品", ["ja"] = "作品を見る", ["en"] = "Browse files" },
+        ["作品详情"] = new() { ["zh_TW"] = "作品詳情", ["ja"] = "作品詳細", ["en"] = "Details" },
+        ["作品文件"] = new() { ["zh_TW"] = "作品檔案", ["ja"] = "作品ファイル", ["en"] = "Files" },
+        ["跳转作品"] = new() { ["zh_TW"] = "跳轉作品", ["ja"] = "作品へ移動", ["en"] = "Open work" },
+        ["删除作品"] = new() { ["zh_TW"] = "刪除作品", ["ja"] = "作品を削除", ["en"] = "Delete work" },
         ["解压密码库"] = new()
         {
             ["zh_TW"] = "解壓密碼庫", ["ja"] = "解凍パスワード一覧", ["en"] = "Archive passwords",
         },
-        ["一行一个密码，解压加密压缩包时按顺序尝试"] = new()
+        ["添加一条密码"] = new()
         {
-            ["zh_TW"] = "一行一個密碼，解壓加密壓縮檔時依序嘗試",
-            ["ja"] = "1 行に 1 つ。暗号化書庫の解凍時に上から順に試します",
-            ["en"] = "One password per line, tried in order on encrypted archives",
+            ["zh_TW"] = "新增一條密碼", ["ja"] = "パスワードを追加", ["en"] = "Add a password",
+        },
+        ["删除这条密码"] = new()
+        {
+            ["zh_TW"] = "刪除這條密碼", ["ja"] = "このパスワードを削除", ["en"] = "Remove this password",
         },
         ["作品信息"] = new() { ["zh_TW"] = "作品資訊", ["ja"] = "作品情報", ["en"] = "Work info" },
         ["查看图片"] = new() { ["zh_TW"] = "查看圖片", ["ja"] = "画像を表示", ["en"] = "View image" },
@@ -396,6 +494,13 @@ public static class I18n
         ["播放"] = new() { ["zh_TW"] = "播放", ["ja"] = "再生", ["en"] = "Play" },
         ["暂停"] = new() { ["zh_TW"] = "暫停", ["ja"] = "一時停止", ["en"] = "Pause" },
         ["移动中…"] = new() { ["zh_TW"] = "移動中…", ["ja"] = "移動中…", ["en"] = "Moving…" },
+        ["删除中…"] = new() { ["zh_TW"] = "刪除中…", ["ja"] = "削除中…", ["en"] = "Deleting…" },
+        ["确定删除《{name}》吗？\n作品文件夹内的全部文件与数据库记录都会被删除，且无法恢复。"] = new()
+        {
+            ["zh_TW"] = "確定刪除《{name}》嗎？\n作品資料夾內的全部檔案與資料庫記錄都會被刪除，且無法復原。",
+            ["ja"] = "《{name}》を削除しますか？\n作品フォルダ内の全ファイルとデータベース記録が削除され、元に戻せません。",
+            ["en"] = "Delete “{name}”?\nAll files in the work folder and its database records will be removed permanently."
+        },
         ["选择要移动到的媒体库"] = new()
         {
             ["zh_TW"] = "選擇要移動到的媒體庫",
@@ -475,12 +580,6 @@ public static class I18n
 
         // ---------- 媒体库管理（内联于系统设置页）----------
         ["新建媒体库"] = new() { ["zh_TW"] = "新增媒體庫", ["ja"] = "ライブラリを新規作成", ["en"] = "New library" },
-        ["文件夹路径为本机本地路径（如 D:\\ASMR）；添加后点\"扫描元数据\"导入作品与元数据。删除媒体库不会删除本地文件、已导入记录保留。"] = new()
-        {
-            ["zh_TW"] = "資料夾路徑為本機本地路徑（如 D:\\ASMR）；新增後點「掃描中繼資料」匯入作品與中繼資料。刪除媒體庫不會刪除本地檔案、已匯入記錄保留。",
-            ["ja"] = "フォルダパスは本機のローカルパス（例 D:\\ASMR）です。追加後「メタデータをスキャン」で作品とメタデータを取り込みます。ライブラリを削除してもローカルファイルは削除されず、取り込み済みの記録は保持されます。",
-            ["en"] = "Folder paths are local paths on this machine (e.g. D:\\ASMR). After adding, click \"Scan metadata\" to import works and metadata. Deleting a library does not delete local files; imported records are kept."
-        },
         ["还没有媒体库，点击\"新建媒体库\"创建。"] = new()
         {
             ["zh_TW"] = "還沒有媒體庫，點擊「新增媒體庫」建立。",
@@ -625,12 +724,6 @@ public static class I18n
             ["zh_TW"] = "✓ 已連線（圖床現有 {count} 張）",
             ["ja"] = "✓ 接続済み（画像ホスト上に {count} 枚）",
             ["en"] = "✓ Connected ({count} images on host)"
-        },
-        ["开启后作品卡封面由图床提供，未迁移的封面自动回退本地硬盘。迁移只复制不删除本地原图（它也是详情页的第一张图）；同一个作品重复迁移会被跳过，中断后再点一次即可续传。手机要看到图，服务地址须填电脑的局域网地址（不能是 127.0.0.1），并在图床「系统设置 → 附加访问主机名」里放行该地址。"] = new()
-        {
-            ["zh_TW"] = "開啟後作品卡封面由圖床提供，未遷移的封面自動回退本機硬碟。遷移只複製、不刪除本機原圖（它也是詳情頁的第一張圖）；同一個作品重複遷移會被跳過，中斷後再點一次即可續傳。手機要看到圖，服務位址須填電腦的區域網路位址（不能是 127.0.0.1），並在圖床「系統設定 → 附加存取主機名稱」裡放行該位址。",
-            ["ja"] = "有効にすると作品カードのカバーは画像ホストから配信されます（未移行分はローカルにフォールバック）。移行はコピーのみでローカル原本は消しません（詳細ページの1枚目でもあるため）。同じ作品の重複移行はスキップされ、中断しても再実行で続きから進みます。スマホで表示するにはサービスアドレスに PC の LAN アドレス（127.0.0.1 以外）を指定し、画像ホストの「システム設定 → 追加の許可ホスト名」に登録してください。",
-            ["en"] = "Work card covers are served from the image host; covers not yet migrated fall back to the local disk. Migration copies only — the local original is kept (it is also the first image on the detail page) — and a work already migrated is skipped, so an interrupted run just resumes. For phones, set the service URL to this PC's LAN address (not 127.0.0.1) and allow it under the image host's Settings → additional trusted hosts."
         },
     };
 }

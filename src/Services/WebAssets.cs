@@ -29,6 +29,8 @@ internal static class WebAssets
         ("/js/library.js",  ".library.js",  "application/javascript; charset=utf-8"),
         ("/js/search.js",   ".search.js",   "application/javascript; charset=utf-8"),
         ("/js/fanbox.js",   ".fanbox.js",   "application/javascript; charset=utf-8"),
+        ("/js/ehentai.js",  ".ehentai.js",  "application/javascript; charset=utf-8"),
+        ("/js/pixiv.js",    ".pixiv.js",    "application/javascript; charset=utf-8"),
         ("/js/download.js", ".download.js", "application/javascript; charset=utf-8"),
         ("/js/settings.js", ".settings.js", "application/javascript; charset=utf-8"),
         ("/js/viewer.js",   ".viewer.js",   "application/javascript; charset=utf-8"),

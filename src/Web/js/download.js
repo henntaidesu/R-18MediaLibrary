@@ -76,6 +76,7 @@ async function loadDownloads() {
     const stt = el('div', 'dst', g.statusText); stt.style.color = g.color; stt.title = g.statusText;
     row.append(tog, rj, prog, stt, sp);
     const act = el('div', 'dacts');
+    if (g.canOpen) { const b = el('button', 'mini', '跳转作品'); b.onclick = () => gotoWork(g.id); act.appendChild(b); }
     if (g.canResume) { const b = el('button', 'mini', '下载'); b.onclick = async () => { await apiPost('/api/resumework', { id: g.id }); loadDownloads(); }; act.appendChild(b); }
     if (g.canPause) { const b = el('button', 'mini', '停止'); b.onclick = async () => { await apiPost('/api/pausework', { id: g.id }); loadDownloads(); }; act.appendChild(b); }
     if (g.canReparse) {
@@ -238,6 +239,7 @@ function drawDownloaded() {
     pill.style.color = DLED_STATE_COLOR[w.state] || 'var(--muted)'; stTd.appendChild(pill); tr.appendChild(stTd);
     tr.appendChild(el('td', 'hide-sm', w.downTime));
     const actTd = el('td');
+    const go = el('button', 'mini', '跳转作品'); go.onclick = () => gotoWork(w.id); actTd.appendChild(go);
     // 仅"已下载"状态可标记为已品悦（对齐 WPF 右键菜单）
     if (w.state === '已下载') {
       const mk = el('button', 'mini', '标记为已品悦');

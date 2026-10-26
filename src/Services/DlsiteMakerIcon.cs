@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -46,9 +46,15 @@ public static class DlsiteMakerIcon
         return id.Length > 0 ? Map().GetValueOrDefault(id, "") : "";
     }
 
-    /// <summary>分组查询里取该社团的 DLsite 社团号（非 fanbox 的那一行；prefix 传表别名如 "w."）。</summary>
+    /// <summary>
+    /// 分组查询里取该社团的 DLsite 社团号（prefix 传表别名如 "w."）。
+    /// 只认 DLsite 系来源：fanbox 的 maker_id 是 pawchive 作家号、E-Hentai 的是
+    /// 「artist:/group: + 标签」、pixiv 的是站点用户号，都不是 RG 号，
+    /// 拿去查 ci-en 只会白发一轮必然 404 的请求。
+    /// </summary>
     public static string MakerIdExpr(string prefix) =>
-        $"MAX(CASE WHEN {prefix}\"source\" IS NULL OR {prefix}\"source\" <> '{FanboxService.SourceName}' " +
+        $"MAX(CASE WHEN IFNULL({prefix}\"source\", '') NOT IN " +
+        $"('{FanboxService.SourceName}', '{EhentaiApi.SourceName}', '{PixivApi.SourceName}') " +
         $"THEN {prefix}\"maker_id\" END)";
 
     public static void Invalidate()
@@ -96,9 +102,10 @@ public static class DlsiteMakerIcon
             var rows = Db.Select(
                 "SELECT DISTINCT \"maker_id\" FROM \"works\" " +
                 "WHERE \"state\" = '已品悦' AND \"maker_id\" IS NOT NULL AND \"maker_id\" <> '' " +
-                "AND (\"source\" IS NULL OR \"source\" <> @fb) " +
+                "AND IFNULL(\"source\", '') NOT IN (@fb, @eh, @px) " +
                 "AND \"maker_id\" NOT IN (SELECT \"maker_id\" FROM \"maker_icon\")",
-                ("@fb", FanboxService.SourceName)) ?? [];
+                ("@fb", FanboxService.SourceName), ("@eh", EhentaiApi.SourceName),
+                ("@px", PixivApi.SourceName)) ?? [];
             var pending = rows.Select(r => r[0] as string ?? "").Where(id => id.Length > 0).ToList();
             if (pending.Count == 0)
                 return;

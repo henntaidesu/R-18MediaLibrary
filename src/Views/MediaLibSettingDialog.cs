@@ -74,16 +74,6 @@ public class MediaLibSettingDialog
         _cardsPanel = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
         panel.Children.Add(_cardsPanel);
 
-        // 说明
-        panel.Children.Add(new TextBlock
-        {
-            Text = I18n.Tr("文件夹路径为本机本地路径（如 D:\\ASMR）；添加后点\"扫描元数据\"导入作品与元数据。删除媒体库不会删除本地文件、已导入记录保留。"),
-            Margin = new Thickness(0, 10, 0, 0),
-            Foreground = Res("CaptionBrush", Brushes.Gray),
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 12,
-        });
-
         RebuildCards();
         return panel;
     }

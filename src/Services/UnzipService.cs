@@ -178,26 +178,168 @@ public static class UnzipService
         }
     }
 
-    /// <summary>按「解压密码库」逐条试解，成功即止。日志只记第几条，不写出密码本身。</summary>
+    /// <summary>
+    /// 逐条试密码解压，成功即止。日志只记密码的来源（同目录说明文件 / 密码库第几条），不写出密码本身。
+    ///
+    /// 先试压缩包同目录的「解压密码.txt / password.doc」之类说明文件里写的密码——网盘上的作品
+    /// 十有八九是「压缩包 + 一个写着密码的小文件」一起打包下来的，那个密码就是为这个包准备的；
+    /// 试不出来再走用户自己填的密码库。
+    /// </summary>
     private static bool TryPasswords(string filePath, Func<string, bool> attempt)
     {
         var name = Path.GetFileName(filePath);
-        var passwords = AppConfig.UnzipPasswords;
-        if (passwords.Count == 0)
+        var candidates = new List<(string Password, string Source)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (pwd, file) in SidecarPasswords(Path.GetDirectoryName(filePath) ?? ""))
+            if (seen.Add(pwd))
+                candidates.Add((pwd, $"同目录的 {file}"));
+        var book = AppConfig.UnzipPasswords;
+        for (var i = 0; i < book.Count; i++)
+            if (seen.Add(book[i]))
+                candidates.Add((book[i], $"密码库第 {i + 1} 条"));
+
+        if (candidates.Count == 0)
         {
-            Logger.Error($"{name} 需要解压密码，但密码库是空的（系统设置 → 下载 → 解压密码库）");
+            Logger.Error($"{name} 需要解压密码，但密码库是空的、同目录也没有写着密码的说明文件" +
+                         "（可在 系统设置 → 下载 → 解压密码库 里填）");
             return false;
         }
-        Logger.Info($"{name} 需要解压密码，开始尝试密码库中的 {passwords.Count} 条");
-        for (var i = 0; i < passwords.Count; i++)
-            if (attempt(passwords[i]))
+        Logger.Info($"{name} 需要解压密码，开始尝试 {candidates.Count} 条候选密码");
+        foreach (var (password, source) in candidates)
+            if (attempt(password))
             {
-                Logger.Info($"{name} 已用密码库第 {i + 1} 条密码解压");
+                Logger.Info($"{name} 已用{source}的密码解压");
                 return true;
             }
-        Logger.Error($"{name} 需要解压密码，但密码库里的 {passwords.Count} 条都不匹配");
+        Logger.Error($"{name} 需要解压密码，但 {candidates.Count} 条候选密码都不匹配");
         return false;
     }
+
+    // ---------- 同目录说明文件里的密码 ----------
+
+    /// <summary>可能写着解压密码的说明文件扩展名（.doc 是 OLE 复合文档，按二进制挑字符串也读得出正文）。</summary>
+    private static readonly string[] PasswordFileExts =
+        [".txt", ".doc", ".docx", ".rtf", ".nfo", ".md", ".html", ".htm"];
+
+    /// <summary>说明文件最大读多大——密码说明都只有几 KB，再大的多半不是说明文件。</summary>
+    private const long MaxPasswordFileBytes = 1 << 20;
+
+    /// <summary>纯文本说明文件：整篇没有「密码：」字样时，可以把独占一行的字符串本身当密码试。</summary>
+    private static readonly string[] PlainTextExts = [".txt", ".nfo", ".md"];
+
+    /// <summary>一个压缩包最多试多少条从说明文件里猜出来的密码。</summary>
+    private const int MaxSidecarPasswords = 20;
+
+    // 「密码：xxxx」「Unzip Password: xxxx」这类写法，取冒号/等号后面的第一段
+    private static readonly Regex PasswordLinePattern = new(
+        @"(?:解(?:压|壓)密(?:码|碼)|密(?:码|碼)|口令|パスワード|pass\s*word|password|passwd|pwd|pass)" +
+        @"\s*(?:is)?\s*[:：=＝]?\s*([^\s:：=＝,，。、]{2,64})",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // 整行就是一串没有空格的字符（形如 153792468 / a1B2c3!）：说明文件里常常只写密码本身
+    private static readonly Regex LonePasswordPattern = new(
+        @"^[\x21-\x7E]{4,64}$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 从压缩包同目录的说明文件里找候选密码（按文件名排序，取前 <see cref="MaxSidecarPasswords"/> 条）。
+    ///
+    /// 优先取「密码：xxx」这种明写出来的；整篇都没有明写的，才把「独占一行的无空格串」当候选，
+    /// 免得把 .doc 里的字体名、软件版本号之类一股脑拿去试。
+    /// </summary>
+    private static List<(string Password, string File)> SidecarPasswords(string folder)
+    {
+        var found = new List<(string, string)>();
+        if (folder.Length == 0 || !Directory.Exists(folder))
+            return found;
+        try
+        {
+            var files = Directory.EnumerateFiles(folder)
+                .Where(f => PasswordFileExts.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var file in files)
+            {
+                if (found.Count >= MaxSidecarPasswords)
+                    break;
+                foreach (var pwd in PasswordsInFile(file))
+                    if (seen.Add(pwd) && found.Count < MaxSidecarPasswords)
+                        found.Add((pwd, Path.GetFileName(file)));
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Logger.Error($"读取同目录密码说明文件失败: {e.Message}");
+        }
+        return found;
+    }
+
+    private static List<string> PasswordsInFile(string file)
+    {
+        var result = new List<string>();
+        try
+        {
+            if (new FileInfo(file).Length is 0 or > MaxPasswordFileBytes)
+                return result;
+            var lines = ReadableLines(File.ReadAllBytes(file));
+            foreach (var line in lines)
+                foreach (Match m in PasswordLinePattern.Matches(line))
+                    result.Add(m.Groups[1].Value);
+            // 二进制文档（.doc/.docx）挑出来的字符串段里混着字体名、软件版本号，
+            // 只有纯文本说明文件才值得把「独占一行的字符串」当密码试
+            if (result.Count == 0 &&
+                PlainTextExts.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                foreach (var line in lines)
+                    if (LonePasswordPattern.IsMatch(line))
+                        result.Add(line);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Logger.Error($"读取密码说明文件 {Path.GetFileName(file)} 失败: {e.Message}");
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 从文件字节里抠出可读文本行。
+    ///
+    /// 纯文本按 UTF-8 解（解不动就按系统中文编码 GB18030 解）；.doc / .docx 这类二进制文档
+    /// 没必要引一整个解析库——正文在里面是成段的 UTF-16LE 字符串，把这些串挑出来就够找密码了。
+    /// </summary>
+    private static List<string> ReadableLines(byte[] bytes)
+    {
+        var lines = new List<string>();
+        void AddAll(string text)
+        {
+            foreach (var line in text.Split(['\r', '\n', '\t', '\0']))
+                if (line.Trim() is { Length: > 0 } one)
+                    lines.Add(one);
+        }
+
+        try
+        {
+            AddAll(new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes));
+        }
+        catch (DecoderFallbackException)
+        {
+            try
+            {
+                AddAll(Encoding.GetEncoding("GB18030").GetString(bytes));
+            }
+            catch (ArgumentException)
+            {
+                // 没有这个代码页就算了，UTF-16 段落一般已经够用
+            }
+            foreach (Match m in Utf16RunPattern.Matches(bytes.Length % 2 == 0
+                         ? Encoding.Unicode.GetString(bytes)
+                         : Encoding.Unicode.GetString(bytes, 0, bytes.Length - 1)))
+                AddAll(m.Value);
+        }
+        return lines;
+    }
+
+    // 二进制文档里成段的可读文本（按 UTF-16LE 解出来后，连续 4 个以上可打印字符即视为一段）
+    private static readonly Regex Utf16RunPattern = new(
+        @"[^\p{C}]{4,}", RegexOptions.Compiled);
 
     /// <summary>
     /// 修复目录下文件名乱码：按 系统编码(默认 cp437) 编码再按 Shift_JIS 解码。
@@ -315,31 +457,73 @@ public static class UnzipService
     private static readonly Regex NonFirstVolume =
         new(@"\.part0*([2-9]|\d{2,})\.rar$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>包中包最多解多少轮（异常增殖时的兜底，与 <see cref="Unzip"/> 同一量级）。</summary>
+    private const int MaxNestedRounds = 20;
+
     /// <summary>
-    /// 就地解压目录里的压缩包（fanbox 投稿的附件常是压缩包，且常带密码）：
-    /// 每个包解到与包同名的子目录，避免包内文件与已下载的图片重名互相覆盖；
-    /// 成功则删包，失败则原样保留。返回是否全部解开——
-    /// 调用方无论成败都应继续入库，别让一个解不开的包把整篇作品挡在缓存目录里。
+    /// 解压中转目录（建在作品目录下）：包里的东西先解到这里，拍平后立刻搬进作品根目录再删掉。
+    /// 名字固定，上次中途中断留下的残留下一次能认出来接着收，不会在作品里堆一堆无名目录。
+    /// </summary>
+    private const string TempDirName = ".unzip_tmp";
+
+    /// <summary>
+    /// 就地解压目录里的压缩包（fanbox 投稿的附件常是压缩包，且常带密码）。
+    ///
+    /// 三件事：
+    ///   1. **解到底**——网盘上的作品常是「外层一个壳包，里面才是本体（还可能带密码说明文件）」，
+    ///      故按轮循环：每轮重扫一遍目录，把上一轮新解出来的包继续解，直到没有压缩包为止。
+    ///   2. **解压结果一律放进作品根目录**——fanbox/网盘作品在库里本来就是「图片摊在作品目录里」
+    ///      的形态（详情页与看图都按这个来），中间多套几层壳目录只会碍事。
+    ///   3. **不留解压时建的目录**——包里的文件可能与已下载的图片重名，所以不能直接解到根目录，
+    ///      而是先解到 <see cref="TempDirName"/> 再整体搬走、随手删掉；重名不覆盖，自动加 _2/_3。
+    ///
+    /// 返回是否全部解开；调用方无论成败都应继续入库，别让一个解不开的包把整篇作品挡在缓存目录里。
     /// </summary>
     public static bool ExtractArchivesInPlace(string workId, string folderPath)
     {
-        // 先取快照：解出来的内容里若还套着压缩包，本轮不再深挖
-        var archives = GetAllArchiveFiles(folderPath)
-            .Where(a => !Path.GetExtension(a).Equals(".exe", StringComparison.OrdinalIgnoreCase))
-            .Where(a => !NonFirstVolume.IsMatch(a))
-            .ToList();
-        var allOk = true;
-        foreach (var archive in archives)
+        var tmp = Path.Combine(folderPath, TempDirName);
+        var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // 解不开的包，不再重试
+        var moved = DrainTempDir(tmp, folderPath);   // 上次中断留下的半截结果，先收进根目录
+        string? lastSignature = null;
+
+        for (var round = 1; ; round++)
         {
-            if (!File.Exists(archive))
-                continue;   // 已被上一个包当作分卷一并解掉
-            var dest = Path.Combine(folderPath, Path.GetFileNameWithoutExtension(archive));
-            var destExisted = Directory.Exists(dest);
-            Logger.Info($"{workId} 解压附件 {Path.GetFileName(archive)}");
-            if (ExtractArchive(archive, dest))
+            var archives = GetAllArchiveFiles(folderPath)
+                .Where(a => !Path.GetExtension(a).Equals(".exe", StringComparison.OrdinalIgnoreCase))
+                .Where(a => !NonFirstVolume.IsMatch(a))
+                .Where(a => !failed.Contains(a))
+                .ToList();
+            if (archives.Count == 0)
+                break;
+            // 本轮待解集合与上一轮完全相同 → 解压/删包都没推进，再转下去也是空转
+            var signature = string.Join("|", archives.OrderBy(a => a, StringComparer.OrdinalIgnoreCase));
+            if (signature == lastSignature)
             {
-                MoveToRoot(workId, dest);   // 包里常再套一层同名目录，拍平
-                FixEncoding(dest);          // SharpCompress 回退时的 Shift_JIS 乱码
+                Logger.Error($"{workId} 解压无进展（压缩包无法删除或反复重现），已中止：{archives[0]}");
+                break;
+            }
+            lastSignature = signature;
+            if (round > MaxNestedRounds)
+            {
+                Logger.Error($"{workId} 嵌套压缩包层数超过上限（{MaxNestedRounds}），已中止");
+                break;
+            }
+
+            foreach (var archive in archives)
+            {
+                if (!File.Exists(archive))
+                    continue;   // 已被上一个包当作分卷一并解掉
+                Logger.Info($"{workId} 解压附件 {Path.GetFileName(archive)}");
+                DiscardTempDir(tmp);   // 上一个包若解到一半失败，残留不能混进这一个包的结果
+                if (!ExtractArchive(archive, tmp))
+                {
+                    failed.Add(archive);
+                    DiscardTempDir(tmp);
+                    continue;
+                }
+                MoveToRoot(workId, tmp);   // 包里常再套一层同名目录，拍平
+                FixEncoding(tmp);          // SharpCompress 回退时的 Shift_JIS 乱码
+                moved += DrainTempDir(tmp, folderPath);
                 try
                 {
                     File.Delete(archive);
@@ -348,22 +532,68 @@ public static class UnzipService
                 {
                     Logger.Error(e, $"删除压缩包 {archive}");
                 }
-                continue;
-            }
-            allOk = false;
-            if (destExisted)
-                continue;
-            try
-            {
-                if (Directory.Exists(dest))
-                    Directory.Delete(dest, true);   // 清掉解了一半的残留，别污染作品目录
-            }
-            catch (Exception e)
-            {
-                Logger.Error(e, $"清理解压残留 {dest}");
             }
         }
-        return allOk;
+
+        if (moved > 0)
+            Logger.Info($"{workId} 解压完成，{moved} 项内容已放入作品根目录");
+        return failed.Count == 0;
+    }
+
+    /// <summary>
+    /// 把中转目录里的东西搬进作品根目录，再把空掉的中转目录删掉，返回搬了几项。
+    /// 目录本身用非递归删除：万一有文件没搬成功，宁可把目录留着也不能连内容一起删掉。
+    /// </summary>
+    private static int DrainTempDir(string tmp, string root)
+    {
+        if (!Directory.Exists(tmp))
+            return 0;
+        var moved = 0;
+        try
+        {
+            foreach (var entry in Directory.GetFileSystemEntries(tmp))
+            {
+                MoveEntry(entry, UniquePath(root, Path.GetFileName(entry)));
+                moved++;
+            }
+            Directory.Delete(tmp);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, $"移动解压结果到作品根目录 {tmp}");
+        }
+        return moved;
+    }
+
+    /// <summary>丢弃中转目录里解了一半的残留（只有解压失败时才走这里，删的都是本次解出来的碎片）。</summary>
+    private static void DiscardTempDir(string tmp)
+    {
+        if (!Directory.Exists(tmp))
+            return;
+        try
+        {
+            Directory.Delete(tmp, true);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, $"清理解压残留 {tmp}");
+        }
+    }
+
+    /// <summary>目录内不重名的落点：已存在就在名字后加 _2/_3…（扩展名保持在最后）。</summary>
+    private static string UniquePath(string folder, string name)
+    {
+        var dest = Path.Combine(folder, name);
+        if (!File.Exists(dest) && !Directory.Exists(dest))
+            return dest;
+        var ext = Path.GetExtension(name);
+        var stem = name[..^ext.Length];
+        for (var i = 2; ; i++)
+        {
+            dest = Path.Combine(folder, $"{stem}_{i}{ext}");
+            if (!File.Exists(dest) && !Directory.Exists(dest))
+                return dest;
+        }
     }
 
     /// <summary>

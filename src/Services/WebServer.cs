@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -299,12 +299,40 @@ public static class WebServer
         }
         if (path == "/api/state")
         {
-            WriteJson(stream, 200, new { needLogin = _authRequired && !Authed(req) });
+            var user = SessionUser(req);
+            WriteJson(stream, 200, new
+            {
+                needLogin = AuthRequired && !Authed(req),
+                password = _authRequired,                 // 登录页据此决定画不画密码框
+                sso = PortalSso.Active,                   // 程序这边开了单点登录才画「门户登录」按钮
+                user = user == null ? null : new { username = user.Username, display = user.DisplayName },
+            });
             return;
         }
         if (path == "/api/login")
         {
             HandleLogin(stream, req);
+            return;
+        }
+        if (path == "/api/logout")
+        {
+            WriteJson(stream, 200, new { ok = true },
+                ("Set-Cookie", "dasd_auth=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"),
+                ("Set-Cookie", $"{PortalSso.SessionCookie}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"));
+            return;
+        }
+        if (path is "/api/sso/login" or "/api/sso/callback")
+        {
+            // 程序这边没开单点登录（或没配齐）时这两条路就当不存在
+            if (!PortalSso.Active)
+            {
+                WriteJson(stream, 404, new { error = "sso disabled" });
+                return;
+            }
+            if (path == "/api/sso/login")
+                SsoLogin(stream, req);
+            else
+                await SsoCallbackAsync(stream, req);
             return;
         }
 
@@ -333,6 +361,8 @@ public static class WebServer
                 case "/api/toggle": ApiToggle(stream, req); break;
                 case "/api/searchworks": ApiSearchWorks(stream, req); break;
                 case "/api/movework": await ApiMoveWorkAsync(stream, req); break;
+                // 媒体库里彻底删除作品（连文件一起）；/api/deletework 是下载列表那个，别混
+                case "/api/delwork": await ApiDeleteLibWorkAsync(stream, req); break;
                 case "/api/cover": ApiCover(stream, req); break;
                 case "/api/asset": ApiAsset(stream, req); break;
                 case "/api/files": ApiFiles(stream, req); break;
@@ -371,6 +401,23 @@ public static class WebServer
                 case "/api/fanbox/post": await ApiFanboxPostAsync(stream, req); break;
                 case "/api/fanbox/enqueue": await ApiFanboxEnqueueAsync(stream, req); break;
                 case "/api/fanbox/image": await ApiFanboxImageAsync(stream, req); break;
+                // FANBOX 作家监控（有新投稿就自动下载）
+                case "/api/fanbox/watches": ApiFanboxWatches(stream); break;
+                case "/api/fanbox/watch/add": await ApiFanboxWatchAddAsync(stream, req); break;
+                case "/api/fanbox/watch/update": ApiFanboxWatchUpdate(stream, req); break;
+                case "/api/fanbox/watch/check": ApiFanboxWatchCheck(stream, req); break;
+                case "/api/fanbox/watch/config": ApiFanboxWatchConfig(stream, req); break;
+
+                case "/api/eh/search": await ApiEhSearchAsync(stream, req); break;
+                case "/api/eh/gallery": await ApiEhGalleryAsync(stream, req); break;
+                case "/api/eh/page": await ApiEhPageImageAsync(stream, req); break;
+                case "/api/eh/enqueue": await ApiEhEnqueueAsync(stream, req); break;
+                case "/api/eh/image": await ApiEhImageAsync(stream, req); break;
+
+                case "/api/px/search": await ApiPixivSearchAsync(stream, req); break;
+                case "/api/px/artwork": await ApiPixivArtworkAsync(stream, req); break;
+                case "/api/px/enqueue": await ApiPixivEnqueueAsync(stream, req); break;
+                case "/api/px/image": await ApiPixivImageAsync(stream, req); break;
                 // 设置
                 case "/api/settings": if (req.Method == "POST") ApiSettingsWrite(stream, req); else ApiSettings(stream); break;
                 case "/api/debridtest": await ApiDebridTestAsync(stream, req); break;
@@ -396,20 +443,84 @@ public static class WebServer
         }
     }
 
+    /// <summary>要不要登录：设了访问密码，或开了门户单点登录（开着单点登录却放任匿名访问就没意义了）。</summary>
+    private static bool AuthRequired => _authRequired || PortalSso.Active;
+
     private static bool Authed(Request req)
     {
-        if (!_authRequired)
+        if (!AuthRequired)
             return true;
+        if (_authRequired && GetCookie(req, "dasd_auth") is { } token && TokensEqual(token, _expectedToken))
+            return true;
+        return SessionUser(req) != null;
+    }
+
+    /// <summary>单点登录进来的用户；没开单点登录时一律不认，关掉开关即让这类会话全部失效。</summary>
+    private static PortalSso.WebUser? SessionUser(Request req) =>
+        PortalSso.Active && GetCookie(req, PortalSso.SessionCookie) is { Length: > 0 } s ? PortalSso.UserFromSession(s) : null;
+
+    private static string? GetCookie(Request req, string name)
+    {
         if (!req.Headers.TryGetValue("Cookie", out var cookie))
-            return false;
+            return null;
         foreach (var part in cookie.Split(';'))
         {
             var kv = part.Trim();
-            if (kv.StartsWith("dasd_auth=", StringComparison.Ordinal))
-                return TokensEqual(kv[10..], _expectedToken);
+            if (kv.Length > name.Length && kv[name.Length] == '=' && kv.StartsWith(name, StringComparison.Ordinal))
+                return kv[(name.Length + 1)..];
         }
-        return false;
+        return null;
     }
+
+    // ---------- 门户单点登录（逻辑在 PortalSso） ----------
+
+    /// <summary>
+    /// 浏览器整页跳过来；base 是页面所在目录（经门户代理时是代理底下那个地址）。
+    /// 回 303 去门户授权端点，同时种下 state/nonce/PKCE 的临时 Cookie。
+    /// </summary>
+    private static void SsoLogin(NetworkStream stream, Request req)
+    {
+        var baseUrl = PortalSso.NormalizeBase(req.Query.GetValueOrDefault("base"))
+                      ?? $"http://{req.Headers.GetValueOrDefault("Host")}/";
+        var (url, state) = PortalSso.Begin(baseUrl);
+        WriteRedirect(stream, url,
+            ("Set-Cookie", $"{PortalSso.StateCookie}={state}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax"));
+    }
+
+    /// <summary>
+    /// 门户跳回来。成功种会话 Cookie，失败把原因带在 sso_error 里交给登录页显示。
+    /// 跳回首页用相对地址 <c>../../</c>：直连时落到 /，经门户代理时落到 /api/proxy/&lt;卡片&gt;/，两种都对。
+    /// </summary>
+    private static async Task SsoCallbackAsync(NetworkStream stream, Request req)
+    {
+        const string home = "../../";
+        var clearState = ("Set-Cookie", $"{PortalSso.StateCookie}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+        var error = req.Query.GetValueOrDefault("error");
+        if (!string.IsNullOrEmpty(error))
+        {
+            var desc = req.Query.GetValueOrDefault("error_description") ?? "";
+            WriteRedirect(stream, home + "?sso_error=" + Uri.EscapeDataString($"{error} {desc}".Trim()), clearState);
+            return;
+        }
+        try
+        {
+            var user = await PortalSso.CompleteAsync(req.Query.GetValueOrDefault("code") ?? "",
+                req.Query.GetValueOrDefault("state") ?? "", GetCookie(req, PortalSso.StateCookie) ?? "");
+            Logger.Info($"门户单点登录：{user.Username} 登录外部访问");
+            WriteRedirect(stream, home, clearState,
+                ("Set-Cookie", $"{PortalSso.SessionCookie}={PortalSso.MakeSession(user)}; Path=/; " +
+                               $"Max-Age={PortalSso.SessionMaxAge}; HttpOnly; SameSite=Lax"));
+        }
+        catch (PortalSso.SsoException e)
+        {
+            Logger.Warning($"门户单点登录失败：{e.Message}");
+            WriteRedirect(stream, home + "?sso_error=" + Uri.EscapeDataString(e.Message), clearState);
+        }
+    }
+
+    private static void WriteRedirect(NetworkStream stream, string location, params (string Key, string Value)[] extra) =>
+        WriteBytes(stream, 303, "See Other", "text/plain; charset=utf-8", [],
+            [("Location", location), ("Cache-Control", "no-store"), .. extra]);
 
     // 登录暴力破解限流：全局共享一个密码，故失败次数按整体计。达到阈值即锁定一个窗口。
     private const int MaxLoginFails = 10;
@@ -437,6 +548,12 @@ public static class WebServer
         catch (Exception)
         {
             password = "";
+        }
+        if (!_authRequired && PortalSso.Active)
+        {
+            // 没设访问密码、只开了单点登录：密码这条路是关着的
+            WriteJson(stream, 401, new { ok = false });
+            return;
         }
         if (!_authRequired || TokensEqual(Sha256Hex(password), _expectedToken))
         {
@@ -795,16 +912,16 @@ public static class WebServer
             return;
         }
         var r = rows[0];
-        // fanbox 作品目录里摊着整篇投稿的图（动辄上百张），且没有 description.txt，
+        // fanbox 投稿 / E-Hentai 画廊的目录里摊着整篇的图（动辄上百张），且没有 description.txt，
         // 进详情一律不翻目录：左侧只挂封面，要看图走「查看作品」
-        var isFanbox = FanboxService.IsFanboxWorkId(id);
+        var isFlat = MediaLibraryService.IsFlatImageWork(id);
         var folder = ResolveAssetFolder(id, r[13] as string);
 
         // 正文：按 [img:文件名] 占位标记拆成 文本/图片 块
         var body = new List<object>();
         var bodyFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var txtPath = Path.Combine(folder, DlsitePage.DescriptionTxt);
-        if (!isFanbox && File.Exists(txtPath))
+        if (!isFlat && File.Exists(txtPath))
         {
             string raw;
             try { raw = File.ReadAllText(txtPath).Trim(); }
@@ -830,9 +947,9 @@ public static class WebServer
         }
 
         // 轮播图：数据源中除正文图片外的图片，主图排最前。
-        // fanbox 不给列表（前端据此回退到 /api/cover，只显示封面一张）
+        // fanbox / E-Hentai 不给列表（前端据此回退到 /api/cover，只显示封面一张）
         var slider = new List<string>();
-        if (!isFanbox && Directory.Exists(folder))
+        if (!isFlat && Directory.Exists(folder))
         {
             slider = Directory.GetFiles(folder)
                 .Select(Path.GetFileName)
@@ -958,8 +1075,8 @@ public static class WebServer
     /// <summary>详情资源文件夹：作品文件夹/DataSource 优先，否则回退 images/&lt;RJ&gt;。</summary>
     private static string ResolveAssetFolder(string id, string? workFolder)
     {
-        // fanbox 作品的图片直接摊在作品目录里，没有 DLsite 那套 DataSource 子目录
-        if (FanboxService.IsFanboxWorkId(id))
+        // fanbox / E-Hentai 作品的图片直接摊在作品目录里，没有 DLsite 那套 DataSource 子目录
+        if (MediaLibraryService.IsFlatImageWork(id))
             return workFolder ?? "";
         if (workFolder != null)
         {
@@ -1744,11 +1861,14 @@ public static class WebServer
                 canPause = statuses.Any(s => s is "0" or "3") && workId.Length > 0,
                 canResume = statuses.Contains("4") && workId.Length > 0,
                 canDelete = workId.Length > 0,
+                // 「跳转作品」：works 里有这一行才有详情可看（论坛源刚入队的占位番号可能还没有）
+                canOpen = nameMap.ContainsKey(workId),
                 children,
             };
         });
         // 工具栏按钮的可用性：与桌面端同源（DownloadListActions.FlagsOf），避免两端灰显规则漂移
-        var flags = DownloadListActions.FlagsOf(grouped.Values.SelectMany(v => v).Select(it => it.Status));
+        var flags = DownloadListActions.FlagsOf(
+            grouped.Values.SelectMany(v => v).Select(it => (it.Status, it.Error)));
         WriteJson(stream, 200, new
         {
             engine = new { running = DownloadEngine.IsRunning, stopRequested = DownloadEngine.StopRequested },
@@ -2043,6 +2163,10 @@ public static class WebServer
                 => "该网盘需要会员或已停用",
             "fileNotFound" or "fileUnavailable" or "notFound" or "fileError"
                 => "文件已失效或被删除",
+            // fanbox 投稿正文里的谷歌网盘链接（见 GoogleDriveClient）
+            GoogleDriveClient.QuotaError => "该文件的谷歌网盘下载配额已用尽，通常 24 小时后恢复",
+            GoogleDriveClient.GoneError => "谷歌网盘文件已失效、被删除或未公开分享",
+            GoogleDriveClient.FetchError => "连不上谷歌网盘（检查代理设置）",
             "floodDetected" => "请求过于频繁，请稍后再试",
             "badFileType" => "不支持的文件类型",
             _ => $"解析失败（{raw}）",
@@ -2058,6 +2182,9 @@ public static class WebServer
         "skipped" => "源站无此文件",
         "maxData" or "maxDataHost" => "流量用尽",
         "fileNotFound" or "fileUnavailable" or "notFound" or "fileError" => "文件失效",
+        GoogleDriveClient.QuotaError => "云盘限额",
+        GoogleDriveClient.GoneError => "云盘文件失效",
+        GoogleDriveClient.FetchError => "云盘连不上",
         "hostUnsupported" or "notDebrid" or "hostNotValid" or "noServer" => "网盘不支持",
         "notFreeHost" or "hostNotFree" or "disabledHost" or "disabledServerHost" => "需会员",
         "badToken" => "Key 无效",
@@ -2111,6 +2238,19 @@ public static class WebServer
             return;
         }
         var (ok, message) = await MediaLibraryService.MoveWorkToLibraryAsync(id, lib, folder);
+        WriteJson(stream, 200, new { ok, message });
+    }
+
+    /// <summary>彻底删除作品：作品文件夹与数据库记录一并清除（镜像详情页"删除作品"，不可恢复）。</summary>
+    private static async Task ApiDeleteLibWorkAsync(NetworkStream stream, Request req)
+    {
+        var id = ReadStringField(req.Body, "id").ToUpperInvariant();
+        if (id.Length == 0)
+        {
+            WriteJson(stream, 400, new { ok = false, message = "参数缺失" });
+            return;
+        }
+        var (ok, message) = await MediaLibraryService.DeleteWorkAsync(id);
         WriteJson(stream, 200, new { ok, message });
     }
 
@@ -2509,10 +2649,14 @@ public static class WebServer
         WriteJson(stream, 200, new
         {
             artist,
+            // 作家主页的「+ 监控作家 / ✓ 已监控」按钮据此定文案
+            watched = FanboxWatchService.IsWatched(artistId),
             posts = posts.Select(p => new
             {
                 id = p.Id, title = p.Title, published = p.Published, tags = p.Tags,
                 files = p.Files.Count,
+                // 正文里的谷歌网盘链接数：作品本体常常只在网盘上，卡片要标出来
+                drive = GoogleDriveClient.LinksIn(p.Links).Count,
                 cover = p.CoverPath.Length > 0 ? PawchiveApi.ThumbUrl(p.CoverPath) : "",
                 state = states.GetValueOrDefault(p.Id, ""),
             }),
@@ -2557,6 +2701,11 @@ public static class WebServer
             }),
             // 压缩包 / PDF / 视频等：只报名字，下载走入队
             others = post.Files.Where(f => !PawchiveApi.IsImageName(f.Name)).Select(f => new { name = f.Name }),
+            // 正文里的谷歌网盘链接：入队时会一并下载（文件夹展开成逐个文件），下完照常解压
+            links = GoogleDriveClient.LinksIn(post.Links).Select(l => new
+            {
+                url = l.Url, folder = l.Kind == DriveLinkKind.Folder,
+            }),
         });
     }
 
@@ -2641,6 +2790,535 @@ public static class WebServer
         }
     }
 
+    // ---------- API：FANBOX 作家监控 ----------
+
+    /// <summary>监控列表 + 全局开关/默认间隔 + 当前检查状态。</summary>
+    private static void ApiFanboxWatches(NetworkStream stream)
+    {
+        var (busy, status) = FanboxWatchService.State();
+        WriteJson(stream, 200, new
+        {
+            enabled = AppConfig.FanboxWatchEnabled,
+            interval = AppConfig.FanboxWatchInterval,
+            choices = FanboxWatchService.IntervalChoices,
+            busy,
+            status,
+            summary = FanboxWatchService.IdleSummary(),
+            watches = FanboxWatchService.All().Select(w => new
+            {
+                id = w.ArtistId, service = w.Service, name = w.Display,
+                interval = w.IntervalMin, enabled = w.Enabled,
+                lastCheck = w.LastCheck, lastResult = w.LastResult,
+                downloaded = w.Downloaded, lib = w.TargetLib,
+                next = FanboxWatchService.NextCheckText(w),
+                icon = PawchiveApi.IconUrl(w.Service, w.ArtistId),
+            }),
+        });
+    }
+
+    /// <summary>
+    /// 添加作家监控。作家名由服务端重新取（不信任前端提交，与 fanbox 入队同理）；
+    /// backfill=true 时连该作家现有的作品一起下，否则只管今后新发布的。
+    /// </summary>
+    private static async Task ApiFanboxWatchAddAsync(NetworkStream stream, Request req)
+    {
+        var artistId = ReadStringField(req.Body, "id").Trim();
+        if (!IsPlainId(artistId))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        var artist = await PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistId)
+                     ?? new PawchiveArtist { Id = artistId, Service = PawchiveApi.FanboxService };
+        var (ok, message) = await FanboxWatchService.AddAsync(
+            artist,
+            ReadIntField(req.Body, "interval"),
+            ReadBoolField(req.Body, "backfill"),
+            ReadStringField(req.Body, "lib"),
+            ReadStringField(req.Body, "folder"));
+        WriteJson(stream, 200, new { ok, message });
+    }
+
+    /// <summary>改间隔 / 暂停恢复 / 移除（remove=true 时其余字段忽略）。</summary>
+    private static void ApiFanboxWatchUpdate(NetworkStream stream, Request req)
+    {
+        var artistId = ReadStringField(req.Body, "id").Trim();
+        if (!IsPlainId(artistId))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        if (ReadBoolField(req.Body, "remove"))
+        {
+            FanboxWatchService.Remove(artistId);
+            WriteJson(stream, 200, new { ok = true });
+            return;
+        }
+        if (ReadIntField(req.Body, "interval") is var interval and > 0)
+            FanboxWatchService.SetInterval(artistId, interval);
+        if (ReadOptionalBoolField(req.Body, "enabled") is { } on)
+            FanboxWatchService.SetEnabled(artistId, on);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>立即检查（id 为空 = 全部）；检查在后台跑，前端轮询 /api/fanbox/watches 看进度。</summary>
+    private static void ApiFanboxWatchCheck(NetworkStream stream, Request req)
+    {
+        var artistId = ReadStringField(req.Body, "id").Trim();
+        if (artistId.Length == 0)
+            _ = FanboxWatchService.CheckAllAsync();
+        else if (IsPlainId(artistId))
+            _ = FanboxWatchService.CheckNowAsync(artistId);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>全局开关 / 默认轮询间隔。</summary>
+    private static void ApiFanboxWatchConfig(NetworkStream stream, Request req)
+    {
+        if (ReadOptionalBoolField(req.Body, "enabled") is { } on)
+            AppConfig.FanboxWatchEnabled = on;
+        if (ReadIntField(req.Body, "interval") is var interval and > 0)
+            AppConfig.FanboxWatchInterval = interval;
+        if (AppConfig.FanboxWatchEnabled)
+            FanboxWatchService.Kick();
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    // ---------- E-Hentai 数据源 ----------
+
+    /// <summary>
+    /// 搜索画廊。贴画廊链接时直接认出那一本并只返回它（等价于站内直达），
+    /// 否则按关键字搜；next 为上一页返回的游标（站点是游标翻页，没有页号）。
+    /// </summary>
+    private static async Task ApiEhSearchAsync(NetworkStream stream, Request req)
+    {
+        var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
+        var next = (req.Query.GetValueOrDefault("next") ?? "").Trim();
+        if (keyword.Length == 0 && next.Length == 0)
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+
+        // 贴的是画廊链接：跳过搜索，直接取这一本的元数据
+        if (next.Length == 0 && EhentaiApi.ParseGalleryInput(keyword) is { } direct)
+        {
+            var one = await EhentaiApi.GetGalleryAsync(direct);
+            WriteJson(stream, 200, new
+            {
+                items = one is null ? Array.Empty<object>() : [EhGalleryJson(one)],
+                next = "",
+                error = one is null ? "未找到该画廊（可能已下架，或里站需要登录 cookie）" : null,
+            });
+            return;
+        }
+
+        var result = await EhentaiApi.SearchAsync(keyword, next);
+        WriteJson(stream, 200, new
+        {
+            items = result.Items.Select(EhGalleryJson),
+            next = result.Next,
+            error = result.Error,
+        });
+    }
+
+    /// <summary>
+    /// 单本画廊详情（「查看内容」用）：元数据 + 该列表页的缩略图，按 p 分页。
+    ///
+    /// 缩略图在画廊页上现成就有（匿名访问是 20 张拼成的雪碧图），取它**不消耗看图额度**，
+    /// 所以整本的缩略图都能列出来；前端下拉到哪儿才要哪一页（p=0,1,2…）。
+    /// 图片本体不在这里给：每张的直链都要单独进它的图片页才拿得到，
+    /// 那是 /api/eh/page 的事，点开哪张才解析哪张。
+    /// </summary>
+    private static async Task ApiEhGalleryAsync(NetworkStream stream, Request req)
+    {
+        if (ParseEhRef(req) is not { } gref)
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        var p = Math.Max(0, GetInt(req, "p"));
+
+        // 元数据只在第一页取；往后翻页前端已经有了，不必再多发一次 API 请求
+        object? gallery = null;
+        var total = 0;
+        if (p == 0)
+        {
+            var meta = await EhentaiApi.GetGalleryAsync(gref);
+            if (meta is null)
+            {
+                WriteJson(stream, 502, new { error = "获取画廊信息失败" });
+                return;
+            }
+            gallery = EhGalleryJson(meta);
+            total = meta.FileCount;
+        }
+
+        var pages = await EhentaiApi.GetListingPageAsync(gref, p);
+        if (pages is null)
+        {
+            WriteJson(stream, 502, new { error = "获取画廊图片列表失败" });
+            return;
+        }
+        WriteJson(stream, 200, new
+        {
+            gallery,
+            total,
+            images = pages.Where(x => x.HasThumb).Select(x => new
+            {
+                index = x.Index,
+                name = x.FileName,
+                // 图片页的 key：前端拿它回请 /api/eh/page 看大图（省得服务端再翻一次列表页找）
+                key = EhKeyOf(x.Url),
+                // 逐张缩略图直接给地址；雪碧图则给「整张图 + 该格的位置与尺寸」，由前端用 CSS 裁出那一格
+                thumb = x.Thumb,
+                sprite = x.SpriteUrl,
+                x = x.SpriteX,
+                w = x.TileW,
+                h = x.TileH,
+            }),
+            hasMore = pages.Count >= EhentaiApi.ListingPageSize,
+        });
+    }
+
+    /// <summary>从图片页地址 /s/&lt;key&gt;/&lt;gid&gt;-&lt;n&gt; 里取出 key。</summary>
+    private static string EhKeyOf(string imagePageUrl)
+    {
+        var parts = imagePageUrl.Split('/');
+        return parts.Length >= 2 ? parts[^2] : "";
+    }
+
+    /// <summary>
+    /// 按页码现解析、现取该页大图并直接回给浏览器。
+    ///
+    /// 站点每张图的直链都藏在它自己的图片页里、与访问者 IP 绑定又会过期，没法预先算好交给前端。
+    /// 做成「一个页码一个地址」之后，灯箱只要把页码排成数组就能前后翻，
+    /// 而浏览器显示到哪张才请求哪张——既是天然的懒加载，也不会为没看的图白耗看图额度。
+    /// </summary>
+    private static async Task ApiEhPageImageAsync(NetworkStream stream, Request req)
+    {
+        var page = GetInt(req, "page");
+        var key = (req.Query.GetValueOrDefault("key") ?? "").Trim();
+        if (ParseEhRef(req) is not { } gref || page <= 0 || !IsEhToken(key))
+        {
+            WriteBytes(stream, 400, "Bad Request", "text/plain", []);
+            return;
+        }
+
+        var pageUrl = $"{EhentaiApi.Origin}/s/{key.ToLowerInvariant()}/{gref.Gid}-{page}";
+        var link = await EhentaiApi.ResolveImageAsync(pageUrl, AppConfig.EhentaiOriginal);
+        if (!link.Ok || !IsEhentaiUrl(link.Url))
+        {
+            // 额度用尽单独回 429，前端好照实提示，不至于看着像图坏了
+            if (link.Throttled)
+                WriteBytes(stream, 429, "Too Many Requests", "text/plain",
+                    Encoding.UTF8.GetBytes("image quota exceeded"));
+            else
+                WriteBytes(stream, 502, "Bad Gateway", "text/plain",
+                    Encoding.UTF8.GetBytes("resolve failed"));
+            return;
+        }
+
+        try
+        {
+            using var client = Http.CreateClient(TimeSpan.FromSeconds(60));
+            using var request = new HttpRequestMessage(HttpMethod.Get, link.Url);
+            EhentaiApi.ApplyHeaders(request);
+            using var resp = await client.SendAsync(request);
+            resp.EnsureSuccessStatusCode();
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
+            var type = resp.Content.Headers.ContentType?.MediaType ?? "";
+            // 站点会把「需要登录」当正常页面回（HTTP 200 + 登录页 HTML），别把它当图片送给浏览器
+            if (!type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteBytes(stream, 502, "Bad Gateway", "text/plain",
+                    Encoding.UTF8.GetBytes("not an image"));
+                return;
+            }
+            WriteBytes(stream, 200, "OK", type, bytes, ("Cache-Control", "max-age=3600"));
+        }
+        catch (Exception)
+        {
+            WriteBytes(stream, 404, "Not Found", "text/plain", []);
+        }
+    }
+
+    /// <summary>
+    /// 把选中的画廊加入下载队列。请求只带 gid/token，元数据与图片清单由服务端重新拉取，
+    /// 不信任前端提交的内容（与 fanbox 入队同理）。
+    /// </summary>
+    private static async Task ApiEhEnqueueAsync(NetworkStream stream, Request req)
+    {
+        var refs = new List<EhGalleryRef>();
+        foreach (var item in ReadStringArray(req.Body, "items"))
+        {
+            // 前端提交的每一项形如 "gid:token"
+            var parts = item.Split(':', 2);
+            if (parts.Length == 2 && long.TryParse(parts[0], out var gid) && IsEhToken(parts[1]))
+                refs.Add(new EhGalleryRef(gid, parts[1].ToLowerInvariant()));
+        }
+        var lib = ReadStringField(req.Body, "lib");
+        var folder = ReadStringField(req.Body, "folder");
+        if (refs.Count == 0)
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+
+        var galleries = await EhentaiApi.GetMetadataAsync(refs);
+        if (galleries.Count == 0)
+        {
+            WriteJson(stream, 404, new { error = "未找到选中的画廊" });
+            return;
+        }
+        var result = await EhentaiService.EnqueueGalleriesAsync(
+            galleries, folder.Length > 0 ? folder : null, lib.Length > 0 ? lib : null);
+        if (!result.Ok)
+        {
+            WriteJson(stream, 200, new { ok = false, error = result.Error ?? "入队失败" });
+            return;
+        }
+        WriteJson(stream, 200, new
+        {
+            ok = true, galleries = result.GalleryCount, files = result.FileCount, skipped = result.Skipped,
+        });
+    }
+
+    /// <summary>
+    /// 站上图片（封面/缩略图）代理：浏览器直连站点受跨域与代理设置影响，统一由本服务按配置的代理取回，
+    /// 顺带带上登录 cookie（里站的图也要）。只放行站点自身域与其图片 CDN。
+    /// </summary>
+    private static async Task ApiEhImageAsync(NetworkStream stream, Request req)
+    {
+        var url = req.Query.GetValueOrDefault("url") ?? "";
+        if (!IsEhentaiUrl(url) || !IsSafeFetchUrl(url))
+        {
+            WriteBytes(stream, 400, "Bad Request", "text/plain", []);
+            return;
+        }
+        try
+        {
+            using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            EhentaiApi.ApplyHeaders(request);
+            using var resp = await client.SendAsync(request);
+            resp.EnsureSuccessStatusCode();
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
+            var type = resp.Content.Headers.ContentType?.MediaType ?? "";
+            if (!type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                type = ContentType(url);
+            WriteBytes(stream, 200, "OK", type, bytes, ("Cache-Control", "max-age=86400"));
+        }
+        catch (Exception)
+        {
+            WriteBytes(stream, 404, "Not Found", "text/plain", []);
+        }
+    }
+
+    /// <summary>画廊元数据转成前端要的字段（两处搜索/详情共用，保证卡片与详情同源）。</summary>
+    private static object EhGalleryJson(EhGallery g) => new
+    {
+        gid = g.Gid,
+        token = g.Token,
+        title = g.DisplayTitle,
+        titleEn = g.Title,
+        category = g.Category,
+        uploader = g.Uploader,
+        posted = g.PostedUnix > 0 ? g.Posted.ToString("yyyy-MM-dd") : "",
+        files = g.FileCount,
+        rating = g.Rating,
+        expunged = g.Expunged,
+        maker = EhentaiService.MakerNameOf(g),
+        tags = g.Tags,
+        cover = g.Thumb,
+        state = EhentaiService.GalleryStates([g.Gid]).GetValueOrDefault(g.Gid.ToString(), ""),
+    };
+
+    /// <summary>从查询串里取 gid/token 并校验；不合法返回 null。</summary>
+    private static EhGalleryRef? ParseEhRef(Request req)
+    {
+        var token = (req.Query.GetValueOrDefault("token") ?? "").Trim();
+        return long.TryParse(req.Query.GetValueOrDefault("gid"), out var gid) && gid > 0 && IsEhToken(token)
+            ? new EhGalleryRef(gid, token.ToLowerInvariant())
+            : null;
+    }
+
+    // ---------- pixiv 数据源 ----------
+
+    /// <summary>
+    /// 搜索作品。贴作品链接/作品号时直接认出那一件并只返回它（等价于站内直达），
+    /// 否则按关键字搜；p 为页号（站点按页翻页，每页 60 件）。
+    /// </summary>
+    private static async Task ApiPixivSearchAsync(NetworkStream stream, Request req)
+    {
+        var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
+        if (keyword.Length == 0)
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        var page = Math.Max(1, GetInt(req, "p"));
+
+        // 贴的是作品链接/作品号：跳过搜索，直接取这一件的详情
+        if (page == 1 && PixivApi.ParseArtworkInput(keyword) is { } direct)
+        {
+            var (one, error) = await PixivApi.GetArtworkAsync(direct);
+            WriteJson(stream, 200, new
+            {
+                items = one is null ? Array.Empty<object>() : [PixivArtworkJson(one)],
+                total = one is null ? 0 : 1,
+                page = 1,
+                hasMore = false,
+                error,
+                anonymous = !PixivApi.HasCookie,
+            });
+            return;
+        }
+
+        var result = await PixivApi.SearchAsync(keyword, page);
+        WriteJson(stream, 200, new
+        {
+            items = result.Items.Select(PixivArtworkJson),
+            total = result.Total,
+            page = result.Page,
+            hasMore = result.HasMore,
+            error = result.Error,
+            // 未登录时站点会把 R-18 从结果里滤掉，前端据此提示一句，免得用户以为是搜索坏了
+            anonymous = !PixivApi.HasCookie,
+        });
+    }
+
+    /// <summary>
+    /// 单件作品详情（「查看内容」用）：元数据 + 逐页图片地址。
+    ///
+    /// 图一律给 1200px 的 regular：原图动辄几 MB，一篇漫画几十张全取原图会把带宽占满，
+    /// 而详情页只是预览（原图是下载时才取的）——与 FANBOX 详情页只给 800px 预览同理。
+    /// </summary>
+    private static async Task ApiPixivArtworkAsync(NetworkStream stream, Request req)
+    {
+        var id = (req.Query.GetValueOrDefault("id") ?? "").Trim();
+        if (id.Length == 0 || !id.All(char.IsAsciiDigit))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+
+        var (artwork, error) = await PixivApi.GetArtworkAsync(id);
+        if (artwork is null)
+        {
+            WriteJson(stream, 200, new { error = error ?? "获取作品信息失败" });
+            return;
+        }
+        var pages = await PixivApi.GetPagesAsync(id);
+        WriteJson(stream, 200, new
+        {
+            artwork = PixivArtworkJson(artwork),
+            images = pages.Select(x => new { index = x.Index, url = x.Regular, w = x.Width, h = x.Height }),
+        });
+    }
+
+    /// <summary>
+    /// 把选中的作品加入下载队列。请求只带作品号，元数据与图片清单由服务端重新拉取，
+    /// 不信任前端提交的内容（与 fanbox / E-Hentai 入队同理）。
+    /// </summary>
+    private static async Task ApiPixivEnqueueAsync(NetworkStream stream, Request req)
+    {
+        var ids = ReadStringArray(req.Body, "items")
+            .Where(x => x.Length > 0 && x.All(char.IsAsciiDigit))
+            .Distinct()
+            .ToList();
+        var lib = ReadStringField(req.Body, "lib");
+        var folder = ReadStringField(req.Body, "folder");
+        if (ids.Count == 0)
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+
+        // 元数据由入队流程统一现取（见 PixivService.EnqueueByIdsAsync），这里只递作品号
+        var result = await PixivService.EnqueueByIdsAsync(
+            ids, folder.Length > 0 ? folder : null, lib.Length > 0 ? lib : null);
+        if (!result.Ok)
+        {
+            WriteJson(stream, 200, new { ok = false, error = result.Error ?? "入队失败" });
+            return;
+        }
+        WriteJson(stream, 200, new
+        {
+            ok = true, artworks = result.ArtworkCount, files = result.FileCount, skipped = result.Skipped,
+        });
+    }
+
+    /// <summary>
+    /// 站上图片代理。pixiv 的图片服务器带防盗链：浏览器直接引用 i.pximg.net 一律 403
+    /// （缺 Referer），所以图必须由本服务按配置的代理取回再转交。只放行 pixiv 自家域。
+    /// </summary>
+    private static async Task ApiPixivImageAsync(NetworkStream stream, Request req)
+    {
+        var url = req.Query.GetValueOrDefault("url") ?? "";
+        if (!PixivApi.IsPixivUrl(url) || !IsSafeFetchUrl(url))
+        {
+            WriteBytes(stream, 400, "Bad Request", "text/plain", []);
+            return;
+        }
+        try
+        {
+            using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            PixivApi.ApplyHeaders(request);
+            using var resp = await client.SendAsync(request);
+            resp.EnsureSuccessStatusCode();
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
+            var type = resp.Content.Headers.ContentType?.MediaType ?? "";
+            if (!type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                type = ContentType(url);
+            WriteBytes(stream, 200, "OK", type, bytes, ("Cache-Control", "max-age=86400"));
+        }
+        catch (Exception)
+        {
+            WriteBytes(stream, 404, "Not Found", "text/plain", []);
+        }
+    }
+
+    /// <summary>作品元数据转成前端要的字段（搜索/详情共用，保证卡片与详情同源）。</summary>
+    private static object PixivArtworkJson(PixivArtwork a) => new
+    {
+        id = a.Id,
+        title = a.Title,
+        cover = a.Thumb,
+        userId = a.UserId,
+        maker = PixivService.MakerNameOf(a),
+        pages = a.PageCount,
+        type = a.TypeName,
+        restrict = a.RestrictName,
+        ai = a.IsAi,
+        posted = a.Created is { } t ? t.ToString("yyyy-MM-dd") : "",
+        width = a.Width,
+        height = a.Height,
+        bookmarks = a.BookmarkCount,
+        views = a.ViewCount,
+        description = a.Description,
+        tags = a.Tags,
+        state = PixivService.ArtworkStates([a.Id]).GetValueOrDefault(a.Id, ""),
+    };
+
+    /// <summary>画廊令牌固定是 10 位十六进制；用作 URL 参数前先校验。</summary>
+    private static bool IsEhToken(string token) =>
+        token.Length == 10 && token.All(char.IsAsciiHexDigit);
+
+    /// <summary>
+    /// URL 是否指向 E-Hentai 体系内的主机：站点自身（表/里站）、元数据 API，
+    /// 以及站点的图片 CDN（ehgt.org 与 H@H 网络的 hath.network）。
+    /// </summary>
+    private static bool IsEhentaiUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            return false;
+        var host = uri.Host.ToLowerInvariant();
+        string[] roots = ["e-hentai.org", "exhentai.org", "ehgt.org", "hath.network"];
+        return roots.Any(r => host == r || host.EndsWith("." + r, StringComparison.Ordinal));
+    }
+
     /// <summary>URL 是否指向当前配置的 pawchive 站点（主域或其 file./img. 子域）。</summary>
     private static bool IsPawchiveUrl(string url)
     {
@@ -2687,6 +3365,48 @@ public static class WebServer
         catch (Exception)
         {
             return false;
+        }
+    }
+
+    /// <summary>取整数字段；缺失/非数字时返回 0（调用方据此判断"没传"）。</summary>
+    private static int ReadIntField(byte[] body, string field)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(body));
+            if (!doc.RootElement.TryGetProperty(field, out var v))
+                return 0;
+            return v.ValueKind switch
+            {
+                JsonValueKind.Number when v.TryGetInt32(out var n) => n,
+                JsonValueKind.String when int.TryParse(v.GetString(), out var n) => n,
+                _ => 0,
+            };
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>取布尔字段，区分"没传"（null）与 false——只改其中一项的 PATCH 式请求要用到。</summary>
+    private static bool? ReadOptionalBoolField(byte[] body, string field)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(body));
+            if (!doc.RootElement.TryGetProperty(field, out var v))
+                return null;
+            return v.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                _ => null,
+            };
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

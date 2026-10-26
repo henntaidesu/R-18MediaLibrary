@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -81,16 +81,19 @@ public static class FanboxService
 
         foreach (var post in posts)
         {
-            if (post.Files.Count == 0)
-            {
-                skipped++;
-                continue;   // 纯文字/外链作品无附件可下载
-            }
             var workId = WorkIdOf(post.Id);
             if (IsBusy(workId))
             {
                 skipped++;
                 continue;   // 已入库或队列里还有未完成的文件
+            }
+            // 正文里的谷歌网盘链接也算作品文件：作者常把本体（压缩包）放网盘、站上只归档一张封面图。
+            // 共享文件夹要现拉一次目录展开成逐个文件，故放在 IsBusy 之后，免得为已入队的作品白跑一趟。
+            var driveFiles = ResolveDriveFiles(post);
+            if (post.Files.Count == 0 && driveFiles.Count == 0)
+            {
+                skipped++;
+                continue;   // 纯文字作品，既无附件也无可下载的外链
             }
 
             // meta_scanned='1'：元数据已从 pawchive 取到，别让 DL API 的两级元数据补全去动它
@@ -122,17 +125,31 @@ public static class FanboxService
 
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var index = 0;
-            foreach (var file in post.Files)
+            void Enqueue(string url, string subPath)
             {
-                index++;
-                var subPath = FileLeafName(index, file.Name, file.Path, names);
                 Db.Execute(
                     "INSERT OR REPLACE INTO \"download_list\" " +
                     "(\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\", \"source\", \"sub_path\") " +
                     "VALUES (@uuid, @w, @url, '0', '0', '1', @src, @sub)",
                     ("@uuid", Guid.NewGuid().ToString()), ("@w", workId),
-                    ("@url", DownloadUrl(file, post.Id)), ("@src", SourceName), ("@sub", subPath));
+                    ("@url", url), ("@src", SourceName), ("@sub", subPath));
                 fileCount++;
+            }
+
+            foreach (var file in post.Files)
+            {
+                index++;
+                Enqueue(DownloadUrl(file, post.Id), FileLeafName(index, file.Name, file.Path, names));
+            }
+            foreach (var (fileId, name) in driveFiles)
+            {
+                index++;
+                // 单条文件链接在入队时还不知道文件名（要现请求一次网盘才有），先挂个占位名；
+                // 下载线程解析出真名后会就地改掉 sub_path（见 DownloadEngine.FixDriveFileName）。
+                // 从共享文件夹展开出来的文件在列目录时已经有名字，直接用。
+                var leaf = FileLeafName(
+                    index, name.Length > 0 ? name : DrivePlaceholderName + fileId, "", names, keepName: true);
+                Enqueue(DriveDownloadUrl(fileId, post.Id), leaf);
             }
             postCount++;
         }
@@ -166,6 +183,45 @@ public static class FanboxService
     {
         var url = PawchiveApi.FileUrl(file.Path, file.Name);
         return url + (url.Contains('?') ? "&" : "?") + "pcid=" + postId;
+    }
+
+    // ---------- 正文里的谷歌网盘链接 ----------
+
+    /// <summary>还不知道真名的网盘文件的占位名前缀（下载线程解析出真名后就地替换）。</summary>
+    public const string DrivePlaceholderName = "谷歌网盘_";
+
+    /// <summary>
+    /// 网盘文件在队列里的地址。存的是分享页地址而非直链——直链要现请求网盘才能拿到、
+    /// 还带一次性参数，故与 E-Hentai 的图片页同理，由下载线程临下载前现解析。
+    /// 同一个网盘文件可能被多篇投稿引用，仍要带作品号（download_list 以 url 为主键）。
+    /// </summary>
+    private static string DriveDownloadUrl(string fileId, string postId) =>
+        GoogleDriveClient.FileUrl(fileId) + "?pcid=" + postId;
+
+    /// <summary>
+    /// 把投稿正文里的谷歌网盘链接摊成待下载文件表（网盘文件号 + 已知文件名，文件名未知时为空）。
+    /// 共享文件夹会现拉一次目录展开成逐个文件；拉不到（未公开分享/已删除）就记一笔日志跳过。
+    /// </summary>
+    private static List<(string FileId, string Name)> ResolveDriveFiles(PawchivePost post)
+    {
+        var files = new List<(string, string)>();
+        foreach (var link in GoogleDriveClient.LinksIn(post.Links))
+        {
+            if (link.Kind == DriveLinkKind.File)
+            {
+                files.Add((link.Id, ""));
+                continue;
+            }
+            var entries = GoogleDriveClient.ListFolderFilesAsync(link.Id).GetAwaiter().GetResult();
+            if (entries.Count == 0)
+            {
+                Logger.Warning($"fanbox {WorkIdOf(post.Id)} 的谷歌网盘文件夹取不到内容: {link.Url}");
+                continue;
+            }
+            Logger.Info($"fanbox {WorkIdOf(post.Id)} 的谷歌网盘文件夹展开出 {entries.Count} 个文件");
+            files.AddRange(entries.Select(e => (e.Id, e.Name)));
+        }
+        return files;
     }
 
     /// <summary>
@@ -206,8 +262,12 @@ public static class FanboxService
     /// cl6TGSqZd0AopE9lk6EbWM8n.png），留着没有任何意义，序号才是浏览时需要的顺序信息。
     /// 其余附件（压缩包 / 视频 / PSD 等）的文件名通常有含义，保留原名并加同样的序号前缀。
     /// 序号在整篇作品内连续递增、图片与非图片共用一个计数器，以保持站上的原始顺序。
+    ///
+    /// keepName=true 时即使是图片也保留原名（网盘里的文件名是作者自己起的，有意义，
+    /// 不像站上图片附件那样是随机串）。
     /// </summary>
-    private static string FileLeafName(int index, string name, string path, HashSet<string> seen)
+    private static string FileLeafName(
+        int index, string name, string path, HashSet<string> seen, bool keepName = false)
     {
         // 附件名偶尔不带扩展名，退回用站上哈希路径的扩展名
         var ext = NormalizeExtension(Path.GetExtension(name));
@@ -215,7 +275,7 @@ public static class FanboxService
             ext = NormalizeExtension(Path.GetExtension(path));
 
         string leaf;
-        if (ImageExts.Contains(ext))
+        if (!keepName && ImageExts.Contains(ext))
         {
             leaf = $"{index:D3}{ext}";
         }
@@ -328,6 +388,10 @@ public static class FanboxService
             ("@w", workId), ("@e", DownloadEngine.ThumbError));
         if (thumbs != null && Convert.ToInt64(thumbs) > 0)
             lines.Add($"注：其中 {Convert.ToInt64(thumbs)} 张为 800px 预览图（源站未归档原图）");
+        // 作品本体来自网盘时记下出处：正文里的链接可能是 <a> 标签（纯文本正文里看不到地址），
+        // 日后想回源找原件，这一行就是唯一的线索
+        foreach (var url in DriveLinksOf(workId))
+            lines.Add($"网盘：{url}");
         if (r[3] as string is { Length: > 0 } content)
         {
             lines.Add("");
@@ -343,23 +407,54 @@ public static class FanboxService
         }
     }
 
-    /// <summary>作品封面：目录内按名称排序的第一张图片（文件名的三位序号保证与站上顺序一致）。</summary>
-    private static string? FindCover(string folder)
+    /// <summary>该作品下载队列里的谷歌网盘分享页地址（去重，保持入队顺序）。</summary>
+    private static List<string> DriveLinksOf(string workId)
+    {
+        var urls = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var rows = Db.Select(
+            "SELECT \"url\" FROM \"download_list\" WHERE \"work_id\" = @w", ("@w", workId));
+        foreach (var r in rows ?? [])
+        {
+            if (r[0] as string is not { Length: > 0 } url || GoogleDriveClient.Parse(url) is not { } link)
+                continue;
+            if (seen.Add(link.Id))
+                urls.Add(link.Url);
+        }
+        return urls;
+    }
+
+    /// <summary>
+    /// 作品封面：目录内按名称排序的第一张图片（文件名的三位序号保证与站上顺序一致）。
+    /// E-Hentai 来源的命名规则与此一致（三位页码 + 扩展名），故共用这一个实现。
+    ///
+    /// 根目录一张图都没有时，再往下找一层：作品本体在网盘上（正文只给一条分享链接）的投稿，
+    /// 图全在解压出来的子目录里，不往下找就只能留一张空白卡片。
+    /// </summary>
+    internal static string? FindCover(string folder)
     {
         if (!Directory.Exists(folder))
             return null;
         try
         {
-            return Directory.EnumerateFiles(folder)
-                .Where(f => ImageExts.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            return FirstImage(folder) ?? Directory
+                .EnumerateDirectories(folder)
                 .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
+                .Select(FirstImage)
+                .FirstOrDefault(f => f != null);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return null;
         }
     }
+
+    /// <summary>该目录内按名称排序的第一张图片（不递归）。</summary>
+    private static string? FirstImage(string folder) =>
+        Directory.EnumerateFiles(folder)
+            .Where(f => ImageExts.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
 
     // ---------- 供搜索页用的查询 ----------
 

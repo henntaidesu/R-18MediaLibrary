@@ -1,0 +1,223 @@
+﻿<UserControl x:Class="R18MediaLibrary.Views.PixivSearchView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="clr-namespace:R18MediaLibrary.Controls">
+    <!-- 「作品搜索」分区里 pixiv 来源的结果区（对齐 Web 端 src/Web/js/pixiv.js 的两个面板）。
+         工具栏（来源下拉 + 输入框 + 查询 + 下载 + 返回）由宿主 SearchPage 统一提供，本控件只管结果。
+         层级只有两级：results（作品网格）/ detail（单件作品内容），没有「作家」中间层。 -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 选择操作条：仅作品网格显示。外层 Border 即工具栏卡片（对齐 Web 的 .toolbar）。
+             详情页自己不另起操作条——「下载 / 返回」两颗按钮都在宿主的搜索工具栏上（同 FANBOX）。 -->
+        <Border x:Name="SelectBar" Grid.Row="0" Style="{StaticResource ToolbarCard}" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="SelectInfo" VerticalAlignment="Center"
+                           Style="{StaticResource CaptionText}" Text="已选 0 件" />
+                <Button x:Name="SelectAllButton" Grid.Column="1" MinWidth="72" Margin="8,0,0,0"
+                        Click="SelectAll_Click" Content="全选" />
+                <Button x:Name="SelectNoneButton" Grid.Column="2" MinWidth="72" Margin="8,0,0,0"
+                        Click="SelectNone_Click" Content="清空" />
+                <Button x:Name="DownloadSelectedButton" Grid.Column="3" MinWidth="110" Margin="8,0,0,0"
+                        IsEnabled="False" Style="{StaticResource AccentButton}"
+                        Click="DownloadSelected_Click" Content="下载选中" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <!-- 作品卡网格：排布与媒体库作品卡一致（同 Web .grid.cards） -->
+            <ListBox x:Name="CardList"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Standard"
+                     ScrollViewer.ScrollChanged="CardList_ScrollChanged"
+                     SelectionChanged="CardList_SelectionChanged">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <ctrl:VirtualizingWrapPanel MinItemWidth="150" MaxColumns="8"
+                                                    ItemGap="12" ItemAspect="1.5" />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <!-- 卡片拉伸填满单元格；间距由网格自己排，容器不再带外边距 -->
+                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <!-- 结构对齐 Web 的 .card.mk：封面占卡片高度 2/3，底部 1/3 放标题 + 常驻操作按钮行 -->
+                        <Border Style="{StaticResource Card}" Padding="0" ClipToBounds="True"
+                                BorderThickness="1" BorderBrush="{Binding PickBorderBrush}"
+                                Opacity="{Binding CardOpacity}" ToolTip="{Binding Title}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="2*" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <!-- 封面：满幅按比例铺满裁切，无图时显示纯色底。
+                                     图用 ImageBrush 画在带圆角的 Border 上——塞 Image 进去顶角会戳出卡片圆角 -->
+                                <Grid ClipToBounds="True">
+                                    <Border Background="#0CFFFFFF" CornerRadius="8,8,0,0" />
+                                    <Border CornerRadius="8,8,0,0">
+                                        <Border.Background>
+                                            <ImageBrush ImageSource="{Binding Thumb}" Stretch="UniformToFill" />
+                                        </Border.Background>
+                                    </Border>
+                                    <!-- 角标：左上形式+分级（吃剩余宽度、超出省略）/ 右上张数 -->
+                                    <Grid VerticalAlignment="Top" Margin="6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border HorizontalAlignment="Left"
+                                                Background="#AA000000" CornerRadius="4" Padding="6,1"
+                                                Visibility="{Binding TagVisibility}">
+                                            <TextBlock Text="{Binding TagText}" Foreground="WhiteSmoke" FontSize="11"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                        <Border Grid.Column="1" HorizontalAlignment="Right" Margin="6,0,0,0"
+                                                Background="#AA000000" CornerRadius="4" Padding="6,1"
+                                                Visibility="{Binding MetaVisibility}">
+                                            <TextBlock Text="{Binding MetaText}" Foreground="WhiteSmoke" FontSize="11"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                    </Grid>
+                                    <!-- 底部：已下载 / 下载中 -->
+                                    <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Margin="6"
+                                            Background="#E66E6E7A" CornerRadius="4" Padding="6,1"
+                                            Visibility="{Binding StateVisibility}">
+                                        <TextBlock Text="{Binding StateText}" Foreground="WhiteSmoke"
+                                                   FontSize="11" HorizontalAlignment="Center" />
+                                    </Border>
+                                </Grid>
+
+                                <!-- 底部 1/3（Web .mk-foot）：标题占满剩余高度、超出省略；按钮行常驻在底 -->
+                                <Grid Grid.Row="1">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <!-- 最多两行、超出省略（Web .card.mk .wt 的 line-clamp: 2） -->
+                                    <TextBlock Text="{Binding Title}" FontSize="13.5" FontWeight="Medium"
+                                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                               LineHeight="18" LineStackingStrategy="BlockLineHeight" MaxHeight="36"
+                                               VerticalAlignment="Top" Margin="10,8,10,4" />
+
+                                    <!-- 卡内常驻操作按钮行：对齐 Web 的 .mcard-actions。
+                                         未下载 [选择/已选][下载]，已下载/下载中为禁用的状态按钮。 -->
+                                    <Grid Grid.Row="1" Height="26" Margin="8,4,8,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button Style="{StaticResource CardActionButton}"
+                                                Visibility="{Binding SelectVisibility}"
+                                                Background="{Binding PickBackground}"
+                                                Foreground="{Binding PickForeground}"
+                                                Content="{Binding PickText}"
+                                                Click="PickButton_Click" />
+                                        <Button Grid.Column="1" Margin="6,0,0,0"
+                                                Style="{StaticResource CardActionButton}"
+                                                Visibility="{Binding SelectVisibility}"
+                                                Background="{StaticResource AccentBrush}"
+                                                Foreground="White"
+                                                ToolTip="只下载这一件" Content="下载"
+                                                Click="DownloadOne_Click" />
+                                        <Button Grid.ColumnSpan="2" Style="{StaticResource CardActionButton}"
+                                                Visibility="{Binding BusyVisibility}" IsEnabled="False"
+                                                Content="{Binding StateText}" />
+                                    </Grid>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- 作品详情（对齐 Web 的 pxDetailPane）：封面+字段 → 说明 → 页尾整篇图流。
+                 上半结构照搬媒体库详情页（Web .detail > .dtop > .gallery + .fields）；
+                 看图不开弹窗：整篇的图竖排铺在页尾，滚动即读（同 Web 的 .fbpages）。 -->
+            <ScrollViewer x:Name="DetailPane" Visibility="Collapsed" ScrollChanged="DetailPane_ScrollChanged"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="0,0,8,0">
+                    <Border Style="{StaticResource Card}" Padding="16">
+                        <StackPanel>
+                            <TextBlock x:Name="DetailTitle" FontSize="20" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" Margin="0,0,0,12" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="1.6*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- 封面：只是张封面，内容在页尾的图流里，故不可点 -->
+                                <StackPanel>
+                                    <Border Background="#15151A" CornerRadius="8" MinHeight="140">
+                                        <Image x:Name="DetailCoverImage" Stretch="Uniform" MaxHeight="460" />
+                                    </Border>
+                                    <TextBlock x:Name="DetailNoImage" Text="取不到预览图" Visibility="Collapsed"
+                                               Style="{StaticResource CaptionText}" Margin="0,10,0,0"
+                                               HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- 字段（作者 / 投稿 / 形式 / 张数 / 尺寸 / 收藏 / 标签 / 状态） -->
+                                <StackPanel x:Name="DetailFields" Grid.Column="1" Margin="18,0,0,0" />
+                            </Grid>
+
+                            <!-- 桌面固有：在站点打开（Web 端是字段里的普通超链接） -->
+                            <Button x:Name="DetailOpenSiteButton" HorizontalAlignment="Left" MinWidth="130"
+                                    Margin="0,16,0,0" Click="DetailOpenSite_Click" Content="在 pixiv 打开" />
+
+                            <TextBlock x:Name="DetailBodyHeader" Text="说明" FontSize="17" FontWeight="Medium"
+                                       Margin="0,22,0,10" Visibility="Collapsed" />
+                            <TextBlock x:Name="DetailBody" TextWrapping="Wrap" FontSize="13.5" LineHeight="23"
+                                       LineStackingStrategy="BlockLineHeight" Visibility="Collapsed" />
+
+                            <!-- 全部图片：竖排连读，放在最后——上面的信息看完就一路滚到底。
+                                 未加载的格子留 320 占位高度，图到位后按真实高度排（见 PlaceholderHeight）。 -->
+                            <TextBlock x:Name="DetailPagesHeader" FontSize="17" FontWeight="Medium"
+                                       Margin="0,22,0,10" Visibility="Collapsed" />
+                            <ItemsControl x:Name="DetailPages" HorizontalAlignment="Center">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource WindowBrush}" CornerRadius="8"
+                                                MinHeight="{Binding PlaceholderHeight}" MaxWidth="900"
+                                                Margin="0,0,0,10">
+                                            <!-- DownOnly：预览图长边 1200px，撑到格宽只会糊，只缩不放（等价 Web 的 max-width:100%） -->
+                                            <Image Source="{Binding Thumb}" Stretch="Uniform" StretchDirection="DownOnly" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- 加载遮罩 -->
+            <Border x:Name="LoadingOverlay" Background="#96000000" Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <ProgressBar IsIndeterminate="True" Width="220" Height="6"
+                                 Foreground="{StaticResource AccentLightBrush}" />
+                    <TextBlock x:Name="LoadingText" Text="正在查询…" Margin="0,12,0,0"
+                               HorizontalAlignment="Center" Foreground="#e6e9f0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

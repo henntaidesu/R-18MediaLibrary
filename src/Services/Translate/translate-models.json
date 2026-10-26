@@ -1,0 +1,117 @@
+{
+  "manifest_version": 1,
+  "comment": [
+    "图片翻译的依赖清单。做成数据而不是写死在代码里，是为了两件事：",
+    "1) 换镜像源——HuggingFace / GitHub 在部分网络下取不到，用户可以只改 url 不动程序；",
+    "2) 升级模型不必发新版本。",
+    "程序优先读取「模型目录/translate-models.json」，没有才用内嵌的这一份。",
+    "",
+    "本清单里的 url 与 size 都是 2026-09-22 实测核对过的（HTTP 200 + Content-Length），",
+    "不是估算值。sha256 留 null 表示暂不做内容校验，只按服务端给的长度收货并在日志里提醒。",
+    "",
+    "重要：runtime 字段标明该文件是什么格式——",
+    "  onnx     = ONNX Runtime 可直接加载；",
+    "  gguf     = llama.cpp 系可直接加载；",
+    "  text     = 词表/字母表等纯文本；",
+    "  pytorch  = PyTorch checkpoint，ONNX Runtime **不能**直接加载。",
+    "上游（zyddnys/manga-image-translator）目前只有文字检测一项提供了 ONNX，",
+    "文字识别与消字修复都只有 .ckpt。要在纯 C# 侧跑这两项，必须先把它们导出成 ONNX 再换掉这里的 url。"
+  ],
+  "tiers": [
+    {
+      "id": "lite",
+      "name": "轻量档",
+      "note": "翻译用 m2m100 小模型，占盘小、CPU 也能跑，译文质量一般",
+      "components": ["detector", "ocr", "inpaint", "mt_small"]
+    },
+    {
+      "id": "full",
+      "name": "完整档",
+      "note": "翻译用本地大模型，译文更通顺、能结合整页上下文，建议配独立显卡",
+      "components": ["detector", "ocr", "inpaint", "llm"]
+    }
+  ],
+  "components": {
+    "detector": {
+      "name": "文字检测",
+      "files": [
+        {
+          "path": "detector/comic-text-detector.onnx",
+          "url": "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/comictextdetector.pt.onnx",
+          "size": 94669756,
+          "sha256": null,
+          "runtime": "onnx"
+        }
+      ]
+    },
+    "ocr": {
+      "name": "文字识别",
+      "files": [
+        {
+          "path": "ocr/ocr_ar_48px.ckpt",
+          "url": "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/ocr_ar_48px.ckpt",
+          "size": 204290192,
+          "sha256": null,
+          "runtime": "pytorch"
+        },
+        {
+          "path": "ocr/alphabet-all-v7.txt",
+          "url": "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/alphabet-all-v7.txt",
+          "size": 186651,
+          "sha256": null,
+          "runtime": "text"
+        },
+        {
+          "path": "ocr/vocab.txt",
+          "url": "https://huggingface.co/kha-white/manga-ocr-base/resolve/main/vocab.txt",
+          "size": 24072,
+          "sha256": null,
+          "runtime": "text"
+        }
+      ]
+    },
+    "inpaint": {
+      "name": "消字修复",
+      "files": [
+        {
+          "path": "inpaint/inpainting_lama_mpe.ckpt",
+          "url": "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/inpainting_lama_mpe.ckpt",
+          "size": 108580583,
+          "sha256": null,
+          "runtime": "pytorch"
+        }
+      ]
+    },
+    "mt_small": {
+      "name": "翻译模型（轻量）",
+      "files": [
+        {
+          "path": "mt/m2m100_418m_ct2.zip",
+          "url": "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/m2m100_418m_ct2.zip",
+          "size": 459362129,
+          "sha256": null,
+          "runtime": "ctranslate2"
+        }
+      ]
+    },
+    "llm": {
+      "name": "翻译模型（完整）",
+      "files": [
+        {
+          "path": "llm/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+          "url": "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+          "size": 3993201344,
+          "sha256": null,
+          "runtime": "gguf"
+        },
+        {
+          "path": "llm/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+          "url": "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+          "size": 689872288,
+          "sha256": null,
+          "runtime": "gguf"
+        }
+      ]
+    }
+  }
+}

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -138,6 +138,10 @@ public class DownloadGroupItem : ObservableBase
     private Visibility _resumeVisibility = Visibility.Collapsed;
     public Visibility ResumeVisibility { get => _resumeVisibility; set => Set(ref _resumeVisibility, value); }
 
+    private Visibility _openVisibility = Visibility.Collapsed;
+    public Visibility OpenVisibility { get => _openVisibility; set => Set(ref _openVisibility, value); }
+
+    public string OpenText => I18n.Tr("跳转作品");
     public string ReparseText => I18n.Tr("重新解析");
     public string ResearchText => I18n.Tr("重新搜索");
     public string DownloadText => I18n.Tr("下载");
@@ -153,6 +157,9 @@ public partial class DownloadPage : UserControl
 
     /// <summary>点击"已下载"按钮时触发，由主窗口切到已下载视图。</summary>
     public event Action? ShowDownloadedRequested;
+
+    /// <summary>作品行的"跳转作品"：由主窗口切到媒体库并打开该作品详情（对齐 Web gotoWork）。</summary>
+    public event Action<string>? OpenWorkRequested;
 
     // download_list.status -> 显示文本（中文原文，渲染时经 Tr 翻译）与颜色
     private static readonly Dictionary<string, (string Text, string Color)> StatusMap = new()
@@ -246,9 +253,9 @@ public partial class DownloadPage : UserControl
     /// 工具栏其余按钮按列表内容灰显：空列表点「清空列表」、没有失败项点「全部重新解析」都不会有任何反应。
     /// 判定规则与 Web 同源（<see cref="DownloadListActions.FlagsOf"/>，Web 由 /api/downloads 回传）。
     /// </summary>
-    private void UpdateToolbarButtons(IEnumerable<string> statuses)
+    private void UpdateToolbarButtons(IEnumerable<(string Status, string? Error)> items)
     {
-        var flags = DownloadListActions.FlagsOf(statuses);
+        var flags = DownloadListActions.FlagsOf(items);
         ClearDoneButton.IsEnabled = flags.HasDone;
         ClearNoLinkButton.IsEnabled = flags.HasNoLink;
         ClearAllButton.IsEnabled = flags.HasRows;
@@ -440,10 +447,14 @@ public partial class DownloadPage : UserControl
         {
             UpdateStartButton();
             // 全表读放到后台线程，避免每秒在 UI 线程阻塞（连接池 + WAL 下并发安全）
-            var rows = await Task.Run(() => Db.Select(
-                "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\" FROM \"download_list\" ORDER BY rowid"));
+            var (rows, works) = await Task.Run(() => (
+                Db.Select(
+                    "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\" FROM \"download_list\" ORDER BY rowid"),
+                // 「跳转作品」只给 works 里已有记录的番号（同 Web 的 canOpen：论坛源刚入队的占位番号可能还没有）
+                Db.Select(
+                    "SELECT \"work_id\" FROM \"works\" WHERE \"work_id\" IN (SELECT DISTINCT \"work_id\" FROM \"download_list\")")));
             if (rows != null)
-                ApplyRows(rows);   // 集合改动回到 UI 线程执行（await 后续接续在 UI 上下文）
+                ApplyRows(rows, (works ?? []).Select(w => w[0] as string ?? "").ToHashSet());   // 集合改动回到 UI 线程执行（await 后续接续在 UI 上下文）
         }
         finally
         {
@@ -451,7 +462,7 @@ public partial class DownloadPage : UserControl
         }
     }
 
-    private void ApplyRows(List<object?[]> rows)
+    private void ApplyRows(List<object?[]> rows, HashSet<string> inWorks)
     {
         // 按番号分组，同一番号合并为一个父条目
         var groups = new Dictionary<string, List<(string Uuid, string Url, string Status, string Long, string? Error, string? SubPath)>>();
@@ -468,7 +479,7 @@ public partial class DownloadPage : UserControl
                 row[3] as string ?? "", row[4]?.ToString() ?? "", row[5] as string, row[6] as string));
         }
         // 工具栏按钮灰显跟着列表内容走（整表已在手上，不再额外查库）
-        UpdateToolbarButtons(rows.Select(r => r[3] as string ?? ""));
+        UpdateToolbarButtons(rows.Select(r => (r[3] as string ?? "", r[5] as string)));
 
         // 同步到现有集合（保留展开状态与滚动位置）
         var anyActive = false;   // 是否存在下载中/等待/解压中的任务，用于空闲降频
@@ -505,6 +516,7 @@ public partial class DownloadPage : UserControl
             anyActive |= hasActive || DownloadEngine.UnzipProgress.ContainsKey(workId);
             group.PauseVisibility = hasActive && workId.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             group.ResumeVisibility = hasPaused && workId.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            group.OpenVisibility = inWorks.Contains(workId) ? Visibility.Visible : Visibility.Collapsed;
 
             var totalPct = 0;
             var totalSpeed = 0.0;
@@ -657,6 +669,10 @@ public partial class DownloadPage : UserControl
                 => I18n.Tr("该网盘需要会员或已停用"),
             "fileNotFound" or "fileUnavailable" or "notFound" or "fileError"
                 => I18n.Tr("文件已失效或被删除"),
+            // fanbox 投稿正文里的谷歌网盘链接（见 GoogleDriveClient）
+            GoogleDriveClient.QuotaError => I18n.Tr("该文件的谷歌网盘下载配额已用尽，通常 24 小时后恢复"),
+            GoogleDriveClient.GoneError => I18n.Tr("谷歌网盘文件已失效、被删除或未公开分享"),
+            GoogleDriveClient.FetchError => I18n.Tr("连不上谷歌网盘（检查代理设置）"),
             "floodDetected" => I18n.Tr("请求过于频繁，请稍后再试"),
             "badFileType" => I18n.Tr("不支持的文件类型"),
             _ => I18n.Format(I18n.Tr("解析失败（{code}）"), ("code", raw)),
@@ -672,6 +688,9 @@ public partial class DownloadPage : UserControl
         "skipped" => I18n.Tr("源站无此文件"),
         "maxData" or "maxDataHost" => I18n.Tr("流量用尽"),
         "fileNotFound" or "fileUnavailable" or "notFound" or "fileError" => I18n.Tr("文件失效"),
+        GoogleDriveClient.QuotaError => I18n.Tr("云盘限额"),
+        GoogleDriveClient.GoneError => I18n.Tr("云盘文件失效"),
+        GoogleDriveClient.FetchError => I18n.Tr("云盘连不上"),
         "hostUnsupported" or "notDebrid" or "hostNotValid" or "noServer" => I18n.Tr("网盘不支持"),
         "notFreeHost" or "hostNotFree" or "disabledHost" or "disabledServerHost" => I18n.Tr("需会员"),
         "badToken" => I18n.Tr("Key 无效"),
@@ -767,6 +786,12 @@ public partial class DownloadPage : UserControl
         DownloadEngine.PurgeWorkDownload(group.WorkId);
         Refresh();
         ResearchRequested?.Invoke(group.WorkId);
+    }
+
+    private void OpenWork_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is DownloadGroupItem group)
+            OpenWorkRequested?.Invoke(group.WorkId);
     }
 
     /// <summary>单独下载（继续）该作品：解除暂停并启动下载。</summary>

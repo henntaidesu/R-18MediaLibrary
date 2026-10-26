@@ -67,12 +67,17 @@
 
 <div id="login" class="login">
   <form class="box" onsubmit="doLogin(); return false;">
-    <h2>需要访问密码</h2>
+    <h2 id="loginTitle">需要访问密码</h2>
     <div id="loginErr" class="err"></div>
-    <!-- 隐藏用户名字段：让浏览器把保存的凭据锚定到本登录表单，而非误填到搜索/设置等文本框 -->
-    <input type="text" name="username" value="dlsite" autocomplete="username" tabindex="-1" aria-hidden="true" style="display:none">
-    <input id="pw" type="password" placeholder="密码" autocomplete="current-password">
-    <button type="submit">进入</button>
+    <div id="pwPart">
+      <!-- 隐藏用户名字段：让浏览器把保存的凭据锚定到本登录表单，而非误填到搜索/设置等文本框 -->
+      <input type="text" name="username" value="dlsite" autocomplete="username" tabindex="-1" aria-hidden="true" style="display:none">
+      <input id="pw" type="password" placeholder="密码" autocomplete="current-password">
+      <button type="submit">进入</button>
+    </div>
+    <!-- 门户单点登录：桌面端「系统设置 → 门户单点登录」开启后才出现（/api/state 的 sso） -->
+    <div id="ssoOr" class="or" hidden><span>或</span></div>
+    <button id="ssoBtn" type="button" class="sso" onclick="ssoLogin()" hidden>门户登录</button>
   </form>
 </div>
 
@@ -80,6 +85,8 @@
 <script src="/js/library.js"></script>
 <script src="/js/search.js"></script>
 <script src="/js/fanbox.js"></script>
+<script src="/js/ehentai.js"></script>
+<script src="/js/pixiv.js"></script>
 <script src="/js/download.js"></script>
 <script src="/js/settings.js"></script>
 <script src="/js/viewer.js"></script>

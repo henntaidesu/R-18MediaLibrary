@@ -1,4 +1,4 @@
-<UserControl x:Class="R18MediaLibrary.Views.DownloadPage"
+﻿<UserControl x:Class="R18MediaLibrary.Views.DownloadPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:v="clr-namespace:R18MediaLibrary.Views"
@@ -87,40 +87,43 @@
 
         <!-- 顶栏：按钮集合与顺序对齐 Web 下载管理（js/download.js renderDownloadSection）：
              已下载 · 清除已完成 · 清除无可用连接 · 清空列表 · 开始下载 · 全部重新解析 · 用量。
-             没有「刷新」：列表本就每秒自动刷新（_refreshTimer），同 Web 的每秒轮询。 -->
-        <Grid Grid.Row="0" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="200" />
-            </Grid.ColumnDefinitions>
-            <!-- "已下载"为本分区第二视图入口（对齐 Web 下载管理工具栏首位）；搜索已移到独立的"DLsite 搜索"导航 -->
-            <Button x:Name="ShowDownloadedButton" MinWidth="100"
-                    Click="ShowDownloadedButton_Click" Content="已下载" />
-            <Button x:Name="ClearDoneButton" Grid.Column="1" Margin="8,0,0,0"
-                    Click="ClearDoneButton_Click" Content="清除已完成" />
-            <Button x:Name="ClearNoLinkButton" Grid.Column="2" Margin="8,0,0,0"
-                    Click="ClearNoLinkButton_Click" Content="清除无可用连接" />
-            <Button x:Name="ClearAllButton" Grid.Column="3" Margin="8,0,0,0"
-                    Click="ClearAllButton_Click" Content="清空列表" />
-            <!-- 开始/暂停：始终为蓝色主按钮，只切文案（对齐 Web 的 .icon-btn.primary） -->
-            <Button x:Name="StartButton" Grid.Column="4" Margin="8,0,0,0" MinWidth="100"
-                    Style="{StaticResource AccentButton}"
-                    Click="StartButton_Click" Content="开始下载" />
-            <Button x:Name="ReparseAllButton" Grid.Column="5" Margin="8,0,0,0"
-                    Click="ReparseAllButton_Click" Content="全部重新解析" />
-            <TextBlock x:Name="UsageLabel" Grid.Column="7" VerticalAlignment="Center"
-                       Style="{StaticResource CaptionText}" Margin="0,0,8,0" Text="debrid-link 使用量 --"
-                       Background="Transparent" Cursor="Hand" MouseLeftButtonUp="Usage_Click" />
-            <ProgressBar x:Name="UsageBar" Grid.Column="8" Height="10" VerticalAlignment="Center"
-                         Cursor="Hand" MouseLeftButtonUp="Usage_Click" />
-        </Grid>
+             没有「刷新」：列表本就每秒自动刷新（_refreshTimer），同 Web 的每秒轮询。
+             整条包进 ToolbarCard：与 Web 的 .toolbar 一样是一张常驻页顶的悬浮卡片 -->
+        <Border Grid.Row="0" Style="{StaticResource ToolbarCard}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="200" />
+                </Grid.ColumnDefinitions>
+                <!-- "已下载"为本分区第二视图入口（对齐 Web 下载管理工具栏首位）；搜索已移到独立的"DLsite 搜索"导航 -->
+                <Button x:Name="ShowDownloadedButton" MinWidth="100"
+                        Click="ShowDownloadedButton_Click" Content="已下载" />
+                <Button x:Name="ClearDoneButton" Grid.Column="1" Margin="8,0,0,0"
+                        Click="ClearDoneButton_Click" Content="清除已完成" />
+                <Button x:Name="ClearNoLinkButton" Grid.Column="2" Margin="8,0,0,0"
+                        Click="ClearNoLinkButton_Click" Content="清除无可用连接" />
+                <Button x:Name="ClearAllButton" Grid.Column="3" Margin="8,0,0,0"
+                        Click="ClearAllButton_Click" Content="清空列表" />
+                <!-- 开始/暂停：始终为蓝色主按钮，只切文案（对齐 Web 的 .icon-btn.primary） -->
+                <Button x:Name="StartButton" Grid.Column="4" Margin="8,0,0,0" MinWidth="100"
+                        Style="{StaticResource AccentButton}"
+                        Click="StartButton_Click" Content="开始下载" />
+                <Button x:Name="ReparseAllButton" Grid.Column="5" Margin="8,0,0,0"
+                        Click="ReparseAllButton_Click" Content="全部重新解析" />
+                <TextBlock x:Name="UsageLabel" Grid.Column="7" VerticalAlignment="Center"
+                           Style="{StaticResource CaptionText}" Margin="0,0,8,0" Text="debrid-link 使用量 --"
+                           Background="Transparent" Cursor="Hand" MouseLeftButtonUp="Usage_Click" />
+                <ProgressBar x:Name="UsageBar" Grid.Column="8" Height="10" VerticalAlignment="Center"
+                             Cursor="Hand" MouseLeftButtonUp="Usage_Click" />
+            </Grid>
+        </Border>
 
         <!-- 下载列表（两级树：番号 -> 分卷文件）；虚拟化：仅渲染视口内的番号卡，元素数量恒定 -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" CanContentScroll="True">
@@ -186,6 +189,10 @@
                                                Foreground="{Binding StatusBrush}" FontWeight="SemiBold"
                                                VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="5" Orientation="Horizontal">
+                                        <!-- 跳转作品排第一（对齐 Web download.js 的 .dacts） -->
+                                        <Button Content="{Binding OpenText}" FontSize="12" Padding="10,3"
+                                                Margin="0,0,6,0" Visibility="{Binding OpenVisibility}"
+                                                Click="OpenWork_Click" />
                                         <Button Content="{Binding DownloadText}" FontSize="12" Padding="10,3"
                                                 Visibility="{Binding ResumeVisibility}" Click="DownloadOne_Click" />
                                         <Button Content="{Binding StopText}" FontSize="12" Padding="10,3"

@@ -116,6 +116,25 @@ public static class ImageHostService
             : $"已全部迁移（{mapped} 张封面）";
     }
 
+    /// <summary>
+    /// 作品被删除时清掉它在图床上的封面与本地映射行。
+    /// 图床不可达（或没开）时只删本地行：external_key 是幂等键，作品日后重新入库时
+    /// 由迁移流程的 lookup 认领回那一张，不会重复占位。
+    /// </summary>
+    public static async Task DeleteWorkCoverAsync(string workId)
+    {
+        if (workId.Length == 0)
+            return;
+        var key = CoverKey(workId);
+        var stored = Db.Scalar(
+            "SELECT \"stored_name\" FROM \"image_host\" WHERE \"external_key\" = @k", ("@k", key)) as string;
+        if (Active && !string.IsNullOrEmpty(stored))
+            await ImageHostClient.DeleteAsync(
+                AppConfig.ImageHostBaseUrl, AppConfig.ImageHostProject, AppConfig.ImageHostToken, stored);
+        Db.Execute("DELETE FROM \"image_host\" WHERE \"external_key\" = @k", ("@k", key));
+        Invalidate();
+    }
+
     /// <summary>配置变更或迁移完成后丢弃内存映射，下次取图重新载入。</summary>
     public static void Invalidate()
     {

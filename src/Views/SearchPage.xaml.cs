@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -283,17 +283,22 @@ public partial class SearchPage : UserControl
     // 自动下载自主翻页单实例守卫：逐页推进（等当前页 AS 扫完再翻页），避免并发翻页循环
     private bool _autoLoadingPages;
 
-    // 当前搜索来源："dlsite"（作品号/社团号/目录页）或 "fanbox"（pawchive 作家）。
-    // 两种来源共用同一条搜索栏，结果区互斥显示（对齐 Web 端 renderSearchArea 的来源下拉）。
+    // 当前搜索来源："dlsite"（作品号/社团号/目录页）、"fanbox"（pawchive 作家）、
+    // "ehentai"（画廊）或 "pixiv"（插画/漫画/动图）。
+    // 各来源共用同一条搜索栏，结果区互斥显示（对齐 Web 端 renderSearchArea 的来源下拉）。
     private string _source = SourceDlsite;
     private const string SourceDlsite = "dlsite";
     private const string SourceFanbox = "fanbox";
+    private const string SourceEhentai = "ehentai";
+    private const string SourcePixiv = "pixiv";
     // DLsite 侧最后停在哪个子视图（""=还没搜过 / "results"=帖子结果 / "maker"=社团作品网格），
     // 切到 FANBOX 再切回来时按它原样恢复
     private string _dlsiteLevel = "";
 
-    // FANBOX 结果区：在代码里创建并塞进 XAML 的 FanboxHost（见该处注释）
+    // FANBOX / E-Hentai / pixiv 结果区：在代码里创建并塞进 XAML 的空容器（见该处注释）
     private readonly FanboxSearchView FanboxView = new();
+    private readonly EhentaiSearchView EhentaiView = new();
+    private readonly PixivSearchView PixivView = new();
 
     // 社团卡片与下载页状态同步：每秒把下载列表的聚合状态写回对应卡片角标
     private readonly DispatcherTimer _downSyncTimer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -309,6 +314,8 @@ public partial class SearchPage : UserControl
         _asCdTimer.Tick += (_, _) => TickAsCountdown();
 
         FanboxHost.Content = FanboxView;
+        EhentaiHost.Content = EhentaiView;
+        PixivHost.Content = PixivView;
 
         // FANBOX 结果区的计数与「返回作家列表」按钮由本页的搜索栏统一呈现
         FanboxView.StatusChanged += text =>
@@ -318,11 +325,43 @@ public partial class SearchPage : UserControl
         };
         FanboxView.BackAvailabilityChanged += available =>
         {
-            // 文案随层级变（详情 → 返回作品列表；作家主页 → 返回作家列表）
             FanboxBackButton.Content = FanboxView.BackLabel;
             FanboxBackButton.Visibility =
                 available && _source == SourceFanbox ? Visibility.Visible : Visibility.Collapsed;
         };
+        // 详情页的「下载」也在本页的搜索栏上，文案/可用性随作品状态变
+        FanboxView.DetailDownloadChanged += SyncFanboxDownloadButton;
+
+        // E-Hentai 结果区的计数与返回按钮同样由本页的搜索栏统一呈现
+        EhentaiView.StatusChanged += text =>
+        {
+            if (_source != SourceEhentai)
+                return;
+            CountText.Text = text;
+            CountText.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        };
+        EhentaiView.BackAvailabilityChanged += available =>
+        {
+            EhentaiBackButton.Content = EhentaiView.BackLabel;
+            EhentaiBackButton.Visibility =
+                available && _source == SourceEhentai ? Visibility.Visible : Visibility.Collapsed;
+        };
+
+        // pixiv 结果区的计数与「下载 / 返回」按钮同样由本页的搜索栏统一呈现
+        PixivView.StatusChanged += text =>
+        {
+            if (_source != SourcePixiv)
+                return;
+            CountText.Text = text;
+            CountText.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        };
+        PixivView.BackAvailabilityChanged += available =>
+        {
+            PixivBackButton.Content = PixivView.BackLabel;
+            PixivBackButton.Visibility =
+                available && _source == SourcePixiv ? Visibility.Visible : Visibility.Collapsed;
+        };
+        PixivView.DetailDownloadChanged += SyncPixivDownloadButton;
 
         BuildSourceBox();
         RetranslateUi();
@@ -335,7 +374,15 @@ public partial class SearchPage : UserControl
         SourceBox.Items.Clear();
         SourceBox.Items.Add(new ComboBoxItem { Content = "DLsite", Tag = SourceDlsite });
         SourceBox.Items.Add(new ComboBoxItem { Content = "FANBOX", Tag = SourceFanbox });
-        SourceBox.SelectedIndex = _source == SourceFanbox ? 1 : 0;
+        SourceBox.Items.Add(new ComboBoxItem { Content = "E-Hentai", Tag = SourceEhentai });
+        SourceBox.Items.Add(new ComboBoxItem { Content = "pixiv", Tag = SourcePixiv });
+        SourceBox.SelectedIndex = _source switch
+        {
+            SourceFanbox => 1,
+            SourceEhentai => 2,
+            SourcePixiv => 3,
+            _ => 0,
+        };
     }
 
     private void SourceBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -354,22 +401,25 @@ public partial class SearchPage : UserControl
     /// </summary>
     private void ApplySource()
     {
-        var dlsite = _source == SourceDlsite;
-        InputBox.ToolTip = dlsite
-            ? I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接")
-            : FanboxSearchView.InputHint;
+        InputBox.ToolTip = SourceHint(_source);
 
         // 全部收起
         ResultList.Visibility = Visibility.Collapsed;
         MakerList.Visibility = Visibility.Collapsed;
         FanboxHost.Visibility = Visibility.Collapsed;
+        EhentaiHost.Visibility = Visibility.Collapsed;
+        PixivHost.Visibility = Visibility.Collapsed;
         AsmrBanner.Visibility = Visibility.Collapsed;
         AutoDownloadButton.Visibility = Visibility.Collapsed;
         BackButton.Visibility = Visibility.Collapsed;
         FanboxBackButton.Visibility = Visibility.Collapsed;
+        FanboxDownloadButton.Visibility = Visibility.Collapsed;
+        EhentaiBackButton.Visibility = Visibility.Collapsed;
+        PixivBackButton.Visibility = Visibility.Collapsed;
+        PixivDownloadButton.Visibility = Visibility.Collapsed;
         CountText.Visibility = Visibility.Collapsed;
 
-        if (dlsite)
+        if (_source == SourceDlsite)
         {
             // 恢复上次停留的 DLsite 子视图（ShowResultsPage / ShowMakerPage 会一并处理专属按钮）
             if (_dlsiteLevel == "maker")
@@ -379,23 +429,76 @@ public partial class SearchPage : UserControl
             return;
         }
 
+        if (_source == SourcePixiv)
+        {
+            PixivHost.Visibility = Visibility.Visible;
+            CountText.Text = PixivView.CurrentStatus;
+            CountText.Visibility = CountText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            PixivBackButton.Content = PixivView.BackLabel;
+            PixivBackButton.Visibility = PixivView.CanGoBack ? Visibility.Visible : Visibility.Collapsed;
+            SyncPixivDownloadButton();
+            return;
+        }
+
+        if (_source == SourceEhentai)
+        {
+            EhentaiHost.Visibility = Visibility.Visible;
+            CountText.Text = EhentaiView.CurrentStatus;
+            CountText.Visibility = CountText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            EhentaiBackButton.Content = EhentaiView.BackLabel;
+            EhentaiBackButton.Visibility = EhentaiView.CanGoBack ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
+
         FanboxHost.Visibility = Visibility.Visible;
         CountText.Text = FanboxView.CurrentStatus;
         CountText.Visibility = CountText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         FanboxBackButton.Content = FanboxView.BackLabel;
         FanboxBackButton.Visibility = FanboxView.CanGoBack ? Visibility.Visible : Visibility.Collapsed;
+        SyncFanboxDownloadButton();
     }
+
+    /// <summary>把 FANBOX 详情页那颗「下载」的文案/可用性/显隐同步到搜索栏（只在详情层出现）。</summary>
+    private void SyncFanboxDownloadButton()
+    {
+        FanboxDownloadButton.Content = FanboxView.DetailDownloadLabel;
+        FanboxDownloadButton.IsEnabled = FanboxView.DetailDownloadEnabled;
+        FanboxDownloadButton.Visibility =
+            _source == SourceFanbox && FanboxView.CanDownloadDetail
+                ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>把 pixiv 详情页那颗「下载」的文案/可用性/显隐同步到搜索栏（只在详情层出现）。</summary>
+    private void SyncPixivDownloadButton()
+    {
+        PixivDownloadButton.Content = PixivView.DetailDownloadLabel;
+        PixivDownloadButton.IsEnabled = PixivView.DetailDownloadEnabled;
+        PixivDownloadButton.Visibility =
+            _source == SourcePixiv && PixivView.CanDownloadDetail
+                ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>各来源的输入框占位提示（对齐 Web 的 SEARCH_SOURCES.placeholder）。</summary>
+    private static string SourceHint(string source) => source switch
+    {
+        SourceFanbox => FanboxSearchView.InputHint,
+        SourceEhentai => EhentaiSearchView.InputHint,
+        SourcePixiv => PixivSearchView.InputHint,
+        _ => I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接"),
+    };
 
     private void RetranslateUi()
     {
         SearchButton.Content = I18n.Tr("查询");
         FanboxBackButton.Content = FanboxView.BackLabel;
+        FanboxDownloadButton.Content = FanboxView.DetailDownloadLabel;
+        EhentaiBackButton.Content = EhentaiView.BackLabel;
+        PixivBackButton.Content = PixivView.BackLabel;
+        PixivDownloadButton.Content = PixivView.DetailDownloadLabel;
         BackButton.Content = I18n.Tr("← 返回社团作品");
         LoadingText.Text = I18n.Tr("正在查询…");
         AutoDownloadButton.Content = _autoDownload ? I18n.Tr("自动下载：开") : I18n.Tr("自动下载：关");
-        InputBox.ToolTip = _source == SourceDlsite
-            ? I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接")
-            : FanboxSearchView.InputHint;
+        InputBox.ToolTip = SourceHint(_source);
     }
 
     /// <summary>由下载管理页"重新搜索"触发：填入番号并自动搜索。</summary>
@@ -404,7 +507,7 @@ public partial class SearchPage : UserControl
         // 番号重搜固定走 DLsite 来源（下拉同步归位）
         if (_source != SourceDlsite)
         {
-            SourceBox.SelectedIndex = 0;
+            SourceBox.SelectedIndex = 0;   // 触发 SelectionChanged → ApplySource
             _source = SourceDlsite;
             ApplySource();
         }
@@ -420,12 +523,41 @@ public partial class SearchPage : UserControl
             await RunSearchAnyAsync();
     }
 
-    /// <summary>查询入口：按当前来源分流到 DLsite 搜索或 FANBOX 作家搜索。</summary>
-    private Task RunSearchAnyAsync() =>
-        _source == SourceFanbox ? FanboxView.RunSearchAsync(InputBox.Text) : RunSearchAsync();
+    /// <summary>查询入口：按当前来源分流到 DLsite / FANBOX / E-Hentai / pixiv 的搜索。</summary>
+    private Task RunSearchAnyAsync() => _source switch
+    {
+        SourceFanbox => FanboxView.RunSearchAsync(InputBox.Text),
+        SourceEhentai => EhentaiView.RunSearchAsync(InputBox.Text),
+        SourcePixiv => PixivView.RunSearchAsync(InputBox.Text),
+        _ => RunSearchAsync(),
+    };
+
+    /// <summary>搜索栏返回按钮：pixiv 从详情回到作品网格。</summary>
+    private void PixivBack_Click(object sender, RoutedEventArgs e) => PixivView.GoBack();
+
+    /// <summary>搜索栏「下载」：入队 pixiv 详情页当前这一件。</summary>
+    private void PixivDownload_Click(object sender, RoutedEventArgs e) => PixivView.DownloadDetail();
 
     /// <summary>搜索栏返回按钮：按 FANBOX 当前层级回上一层（详情 → 作品列表 → 作家列表）。</summary>
     private void FanboxBack_Click(object sender, RoutedEventArgs e) => FanboxView.GoBack();
+
+    /// <summary>搜索栏「下载」：入队 FANBOX 详情页当前这一篇。</summary>
+    private void FanboxDownload_Click(object sender, RoutedEventArgs e) => FanboxView.DownloadDetail();
+
+    /// <summary>由系统设置页的监控卡「打开主页」触发：切到 FANBOX 来源并直接进这位作家的主页。</summary>
+    public void OpenFanboxArtist(string artistId, string artistName)
+    {
+        if (_source != SourceFanbox)
+        {
+            SourceBox.SelectedIndex = 1;   // 触发 SelectionChanged → ApplySource
+            _source = SourceFanbox;
+            ApplySource();
+        }
+        FanboxView.OpenArtist(artistId, artistName);
+    }
+
+    /// <summary>搜索栏返回按钮：E-Hentai 的详情回画廊网格。</summary>
+    private void EhentaiBack_Click(object sender, RoutedEventArgs e) => EhentaiView.GoBack();
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {

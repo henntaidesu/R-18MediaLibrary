@@ -42,16 +42,12 @@
                                    MinWidth="0" Margin="24,0,12,0" />
                         <TextBox x:Name="SpeedLimitBox" Width="80" LostFocus="SpeedLimitBox_LostFocus" />
                     </StackPanel>
-                    <!-- 解压密码库：对齐 Web 设置页 下载 分区的同名多行输入（settings.js） -->
+                    <!-- 解压密码库：一个输入框一个密码，末尾「＋」新增一条（对齐 Web settings.js）。
+                         行由代码后台的 RebuildUnzipPwdRows 生成，存库时仍是「一行一个」的老格式 -->
                     <DockPanel Margin="0,4">
                         <TextBlock x:Name="UnzipPwdLabel" Text="解压密码库" Style="{StaticResource FieldLabel}"
                                    DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,6,12,0" />
-                        <StackPanel>
-                            <TextBox x:Name="UnzipPwdBox" AcceptsReturn="True" MinHeight="84" MaxHeight="160"
-                                     VerticalScrollBarVisibility="Auto" LostFocus="UnzipPwdBox_LostFocus" />
-                            <TextBlock x:Name="UnzipPwdHint" Text="一行一个密码，解压加密压缩包时按顺序尝试"
-                                       Style="{StaticResource CaptionText}" Margin="0,4,0,0" />
-                        </StackPanel>
+                        <StackPanel x:Name="UnzipPwdList" />
                     </DockPanel>
                 </StackPanel>
             </GroupBox>
@@ -88,8 +84,6 @@
                 <StackPanel>
                     <!-- 每个已知作品类型一行（动态生成）：类型名（代码）+ 来源下拉 -->
                     <WrapPanel x:Name="SearchSourcePanel" />
-                    <TextBlock x:Name="SearchSourceHint" Text="未列出的作品类型归为「其他」，仅使用 anime-sharing"
-                               Style="{StaticResource CaptionText}" Margin="0,6,0,0" />
                 </StackPanel>
             </GroupBox>
 
@@ -119,6 +113,89 @@
                         <WrapPanel x:Name="FileTypePanel" MaxWidth="400" VerticalAlignment="Top" />
                     </StackPanel>
                 </StackPanel>
+            </GroupBox>
+
+            <!-- E-Hentai（桌面独有配置，Web 设置页不暴露；排版随 ASMR.ONE 分区） -->
+            <GroupBox x:Name="EhentaiGroup" Header="E-Hentai">
+                <StackPanel>
+                    <!-- 站点 + 下载原图 同一行 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock x:Name="EhHostLabel" Text="站点" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="EhHostCombo" Width="160" VerticalContentAlignment="Center"
+                                  SelectionChanged="EhHostCombo_SelectionChanged" />
+                        <TextBlock x:Name="EhOriginalLabel" Text="图片画质" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <ComboBox x:Name="EhOriginalCombo" Width="200" VerticalContentAlignment="Center"
+                                  SelectionChanged="EhOriginalCombo_SelectionChanged" />
+                        <Button x:Name="EhTestButton" Content="连接测试" Margin="16,0,0,0"
+                                Click="EhTestButton_Click" />
+                    </StackPanel>
+                    <!-- 账号登录：成功后自动填好下面三个 cookie（密码只用一次、不保存） -->
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock x:Name="EhUserLabel" Text="账号" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="EhUserBox" Width="200" VerticalContentAlignment="Center"
+                                 LostFocus="EhUserBox_LostFocus" />
+                        <TextBlock x:Name="EhPassLabel" Text="密码" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <PasswordBox x:Name="EhPassBox" Width="200" VerticalContentAlignment="Center" />
+                        <Button x:Name="EhLoginButton" Content="登录并获取 Cookie" Margin="16,0,0,0"
+                                Style="{StaticResource AccentButton}" Click="EhLoginButton_Click" />
+                        <Button x:Name="EhLogoutButton" Content="退出登录" Margin="8,0,0,0"
+                                Click="EhLogoutButton_Click" />
+                    </StackPanel>
+                    <!-- 登录 cookie 三项同一行 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock x:Name="EhMemberLabel" Text="member_id" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="EhMemberBox" Width="140" VerticalContentAlignment="Center"
+                                 LostFocus="EhMemberBox_LostFocus" />
+                        <TextBlock x:Name="EhHashLabel" Text="pass_hash" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <TextBox x:Name="EhHashBox" Width="280" VerticalContentAlignment="Center"
+                                 LostFocus="EhHashBox_LostFocus" />
+                        <TextBlock x:Name="EhIgneousLabel" Text="igneous" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <TextBox x:Name="EhIgneousBox" Width="200" VerticalContentAlignment="Center"
+                                 LostFocus="EhIgneousBox_LostFocus" />
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- pixiv（桌面独有配置，Web 设置页不暴露；排版随 E-Hentai 分区） -->
+            <GroupBox x:Name="PixivGroup" Header="pixiv">
+                <StackPanel>
+                    <!-- 画质 + 分级 + 匹配方式 同一行 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock x:Name="PxOriginalLabel" Text="图片画质" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="PxOriginalCombo" Width="200" VerticalContentAlignment="Center"
+                                  SelectionChanged="PxOriginalCombo_SelectionChanged" />
+                        <TextBlock x:Name="PxModeLabel" Text="搜索分级" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <ComboBox x:Name="PxModeCombo" Width="120" VerticalContentAlignment="Center"
+                                  SelectionChanged="PxModeCombo_SelectionChanged" />
+                        <TextBlock x:Name="PxMatchLabel" Text="匹配方式" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <ComboBox x:Name="PxMatchCombo" Width="160" VerticalContentAlignment="Center"
+                                  SelectionChanged="PxMatchCombo_SelectionChanged" />
+                        <Button x:Name="PxTestButton" Content="连接测试" Margin="16,0,0,0"
+                                Click="PxTestButton_Click" />
+                    </StackPanel>
+                    <!-- 登录 cookie：站点的登录带人机验证，程序里走不通，只能从浏览器复制 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock x:Name="PxSessionLabel" Text="PHPSESSID" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="PxSessionBox" Width="420" VerticalContentAlignment="Center"
+                                 LostFocus="PxSessionBox_LostFocus" />
+                    </StackPanel>
+                    <TextBlock x:Name="PxHint" TextWrapping="Wrap" Margin="120,6,0,0"
+                               Style="{StaticResource CaptionText}"
+                               Text="留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请在浏览器登录 pixiv 后从 Cookie 里复制 PHPSESSID 填在这里。" />
+                </StackPanel>
+            </GroupBox>
+
+            <!-- FANBOX 作家监控（对齐 Web 设置页 renderFanboxWatchSection）：原先的入口是
+                 作品搜索工具栏的「⏱ 监控」，2026-09-22 起移到设置页；区块由 FanboxWatchSettings 在代码后台注入。
+                 添加监控仍在 作品搜索 → FANBOX 的作家主页（「+ 监控作家」） -->
+            <GroupBox x:Name="FanboxWatchGroup" Header="FANBOX 作家监控">
+                <ContentControl x:Name="FanboxWatchHost" />
             </GroupBox>
 
             <!-- 系统（顺序对齐 Web：系统在外部访问之前，settings.js）。关闭按钮为桌面独有项 -->
@@ -177,9 +254,46 @@
                     </DockPanel>
                     <TextBlock x:Name="ImageHostStatusLabel" Margin="0,6,0,0"
                                Foreground="{StaticResource CaptionBrush}" TextWrapping="Wrap" />
-                    <TextBlock x:Name="ImageHostHint" Style="{StaticResource CaptionText}" Margin="0,6,0,0"
-                               TextWrapping="Wrap"
-                               Text="开启后作品卡封面由图床提供，未迁移的封面自动回退本地硬盘。迁移只复制不删除本地原图（它也是详情页的第一张图）；同一个作品重复迁移会被跳过，中断后再点一次即可续传。手机要看到图，服务地址须填电脑的局域网地址（不能是 127.0.0.1），并在图床「系统设置 → 附加访问主机名」里放行该地址。" />
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 图片翻译（按需功能：模型依赖没下齐之前「启用」不可选） -->
+            <GroupBox x:Name="TranslateGroup" Header="图片翻译">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock x:Name="TransEnableLabel" Text="启用" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="TransEnableCombo" Width="120"
+                                  SelectionChanged="TransEnableCombo_SelectionChanged" />
+                        <TextBlock x:Name="TransTierLabel" Text="模型档位" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <ComboBox x:Name="TransTierCombo" Width="140"
+                                  SelectionChanged="TransTierCombo_SelectionChanged" />
+                        <TextBlock x:Name="TransDeviceLabel" Text="推理设备" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <ComboBox x:Name="TransDeviceCombo" Width="100"
+                                  SelectionChanged="TransDeviceCombo_SelectionChanged" />
+                    </StackPanel>
+                    <DockPanel Margin="0,8,0,4">
+                        <TextBlock x:Name="TransPathLabel" Text="模型目录" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <Button x:Name="TransPathChooseButton" Content="浏览" Margin="8,0,0,0"
+                                DockPanel.Dock="Right" Click="TransPathChooseButton_Click" />
+                        <TextBox x:Name="TransPathBox" LostFocus="TransPathBox_LostFocus" />
+                    </DockPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                        <TextBlock x:Name="TransFontLabel" Text="嵌字字体" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="TransFontBox" Width="180" LostFocus="TransFontBox_LostFocus" />
+                        <Button x:Name="TransDownloadButton" Content="下载依赖" Margin="24,0,0,0"
+                                Click="TransDownloadButton_Click" />
+                        <Button x:Name="TransCancelButton" Content="取消下载" Margin="8,0,0,0"
+                                Click="TransCancelButton_Click" />
+                        <Button x:Name="TransRemoveButton" Content="删除依赖" Margin="8,0,0,0"
+                                Click="TransRemoveButton_Click" />
+                    </StackPanel>
+                    <ProgressBar x:Name="TransProgressBar" Height="6" Margin="0,8,0,0"
+                                 Minimum="0" Maximum="100" Visibility="Collapsed" />
+                    <TextBlock x:Name="TransStatusLabel" Margin="0,6,0,0"
+                               Foreground="{StaticResource CaptionBrush}" TextWrapping="Wrap" />
                 </StackPanel>
             </GroupBox>
 
@@ -199,6 +313,40 @@
                     </StackPanel>
                     <TextBlock x:Name="WebStatusLabel" Margin="0,6,0,0"
                                Foreground="{StaticResource CaptionBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 门户单点登录（桌面独有配置，Web 设置页不暴露；排版随图床存储分区）。
+                 本程序这边开了才生效：关着时 /api/sso/* 一律 404，Web 登录页也不画「门户登录」 -->
+            <GroupBox x:Name="SsoGroup" Header="门户单点登录">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock x:Name="SsoEnableLabel" Text="启用" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="SsoEnableCombo" Width="120"
+                                  SelectionChanged="SsoEnableCombo_SelectionChanged" />
+                        <TextBlock x:Name="SsoClientIdLabel" Text="Client ID" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,12,0" />
+                        <TextBox x:Name="SsoClientIdBox" Width="180" LostFocus="SsoBox_LostFocus" Tag="client_id" />
+                    </StackPanel>
+                    <DockPanel Margin="0,8,0,4">
+                        <TextBlock x:Name="SsoPortalUrlLabel" Text="门户地址" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <TextBox x:Name="SsoPortalUrlBox" LostFocus="SsoBox_LostFocus" Tag="portal_url" />
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock x:Name="SsoInternalUrlLabel" Text="内网地址" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <TextBox x:Name="SsoInternalUrlBox" LostFocus="SsoBox_LostFocus" Tag="internal_url" />
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock x:Name="SsoSecretLabel" Text="Client Secret" Style="{StaticResource FieldLabel}"
+                                   DockPanel.Dock="Left" />
+                        <TextBox x:Name="SsoSecretBox" LostFocus="SsoBox_LostFocus" Tag="client_secret" />
+                    </DockPanel>
+                    <TextBlock x:Name="SsoStatusLabel" Margin="0,6,0,0"
+                               Foreground="{StaticResource CaptionBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="SsoUsersLabel" Text="用户" Margin="0,12,0,4" />
+                    <StackPanel x:Name="SsoUsersPanel" />
                 </StackPanel>
             </GroupBox>
         </StackPanel>

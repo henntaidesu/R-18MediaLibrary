@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -33,6 +33,25 @@ public partial class MainWindow : Window
 
     private SearchPage SearchPage => _searchPage ??= new SearchPage();
 
+    private SettingsPage SettingsPage
+    {
+        get
+        {
+            if (_settingsPage != null)
+                return _settingsPage;
+
+            var page = new SettingsPage();
+            _settingsPage = page;
+            // 监控卡的「打开主页」：跨分区切到"作品搜索"并直接进这位 FANBOX 作家的主页（同下载页的"重新搜索"）
+            page.OpenFanboxArtistRequested += (id, name) =>
+            {
+                NavSearch.IsChecked = true;   // 触发 Nav_Checked 切页
+                SearchPage.OpenFanboxArtist(id, name);
+            };
+            return page;
+        }
+    }
+
     private DownloadPage DownloadPage
     {
         get
@@ -50,6 +69,7 @@ public partial class MainWindow : Window
                 NavSearch.IsChecked = true;   // 触发 Nav_Checked 切页
                 SearchPage.SearchFor(workId);
             };
+            page.OpenWorkRequested += OpenWorkInLibrary;
             return page;
         }
     }
@@ -64,8 +84,16 @@ public partial class MainWindow : Window
             var page = new DownloadedPage();
             _downloadedPage = page;
             page.BackToDownloadRequested += () => PageHost.Content = DownloadPage;
+            page.OpenWorkRequested += OpenWorkInLibrary;
             return page;
         }
+    }
+
+    /// <summary>下载管理的"跳转作品"：跨分区切到媒体库并直接打开该作品详情（同"重新搜索"的跨分区跳转）。</summary>
+    private void OpenWorkInLibrary(string workId)
+    {
+        NavMediaLib.IsChecked = true;   // 触发 Nav_Checked 切页
+        _mediaLibPage.OpenWork(workId);
     }
 
     public MainWindow()
@@ -114,7 +142,7 @@ public partial class MainWindow : Window
             "type" => _typePage ??= new MediaLibPage(MediaLibRoot.WorkType),
             "maker" => _makerPage ??= new MediaLibPage(MediaLibRoot.Maker),
             "favorite" => _favoritePage ??= new MediaLibPage(MediaLibRoot.Favorite),
-            "setting" => _settingsPage ??= new SettingsPage(),
+            "setting" => SettingsPage,
             _ => (object)_mediaLibPage,
         };
     }

@@ -2,6 +2,8 @@
     --bg: #1b1b1f; --surface: #26262b; --surface2: #2f2f36; --line: #3a3a42;
     --text: #e8e8ea; --muted: #9a9aa3; --accent: #6aa3ff; --accent-dim: #4a78c0;
     --radius: 10px; --nav-w: 210px;
+    /* 页面左右内边距（工具栏卡片封住空隙时要按它外扩），以及卡片与顶栏/内容之间的空隙 */
+    --pad: max(12px, env(safe-area-inset-left)); --bar-gap: 10px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
@@ -54,8 +56,6 @@
   .layout-desktop .drawer-backdrop { display: none !important; }
   .layout-desktop #menuBtn { display: none !important; }
   .layout-desktop .abar { left: var(--nav-w); }
-  /* 返回键放到顶栏最右边（标题 margin-right:auto 已把其后的元素推到右侧，order 再保证它排在最后） */
-  .layout-desktop #back { order: 10; margin-left: 8px; }
 
   /* 移动端（iOS/Android 手机）：侧栏改为左侧抽屉，顶部左侧目录键、返回键移到右侧 */
   .layout-mobile .nav { width: 264px; transform: translateX(-100%);
@@ -67,13 +67,36 @@
   .layout-mobile #menuBtn { display: inline-block; order: 0; }
   .layout-mobile .topbar { flex-wrap: wrap; }
   .layout-mobile #title { order: 1; margin-right: auto; }
-  .layout-mobile #back { order: 2; }
   .layout-mobile #search { order: 5; flex-basis: 100%; }
   .layout-mobile #sort { order: 6; }
 
-  main { padding: 12px max(12px, env(safe-area-inset-left)) 40px; }
+  main { padding: 12px var(--pad) 40px; }
   .count { color: var(--muted); font-size: 13px; margin: 4px 2px 12px; }
-  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+  /* 没有计数的页（详情/搜索/下载/设置）整行不占位，否则空行的外边距会在页顶多垫出一截空白 */
+  .count:empty { display: none; }
+  /* 页内工具栏：一张常驻页顶的悬浮卡片，不随内容滚走。
+     top 不能写死：顶栏在窄屏会换行、详情页还会多出一排操作按钮，高度不固定；
+     且一页可能叠两条（搜索栏 + 选择条）——叠起来要拼成同一张卡，中间不留缝也不重复描边。
+     故由 syncStickyBars() 实测后逐条写入 top，并按所处位置标 bar-lead / stack-top|mid|bot。 */
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+             position: sticky; top: var(--topbar-h, 52px); z-index: 20;
+             background: var(--surface); border: 1px solid var(--line);
+             border-radius: var(--radius); box-shadow: 0 6px 16px rgba(0,0,0,.35);
+             margin: 0 0 var(--bar-gap); padding: 8px 10px; }
+  /* 叠起来的那几条：接缝处去掉圆角与上边框（用上一条的下边框当分隔线），首尾各圆一半 */
+  .toolbar.stack-top { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
+  .toolbar.stack-mid { border-radius: 0; border-top: none; margin-bottom: 0; }
+  .toolbar.stack-bot { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; }
+  /* 投影只由整叠最下面那条投，否则段与段之间会叠出一道暗边 */
+  .toolbar.stack-top, .toolbar.stack-mid { box-shadow: none; }
+  /* 卡片与顶栏之间留一道空隙（悬浮观感）；空隙要用页面底色封住，否则滚动时内容会从缝里透出来。
+     左右各外扩 main 的内边距，把整行封严。 */
+  .toolbar.bar-lead::before { content: ''; position: absolute; bottom: calc(100% + 1px);
+                              left: calc(-1 * var(--pad)); right: calc(-1 * var(--pad));
+                              height: var(--bar-gap); background: var(--bg); }
+  /* 分区内部的行内工具栏（系统设置的「媒体库」分区）不是页面顶栏，不参与顶置 */
+  .toolbar.inline { position: static; background: none; border: none; box-shadow: none;
+                    border-radius: 0; margin: 0 0 12px; padding: 0; }
 
   .grid { display: grid; gap: 12px; justify-content: start; }
   /* 列宽下限取 max(150px, 单行 8 列时每列的宽度)：一行最多 8 张，窄屏自动减列；
@@ -162,6 +185,16 @@
   .fb-files { display: flex; flex-direction: column; gap: 6px; }
   .fb-file { background: var(--surface2, #1b1b22); border: 1px solid var(--line); border-radius: 6px;
              padding: 7px 10px; font-size: 13px; word-break: break-all; }
+  /* 清单下方的一句说明（如「网盘文件会随本篇一起下载」），不是空状态，不占整屏 */
+  .fb-note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  /* FANBOX 详情页尾的整篇图流：竖排连读，一路滚到底，不再点开灯箱。
+     未加载的格子留 320px 占位高度——整列塌成 0 高的话会一次性全落进视口，懒加载就白做了；
+     图一到位由脚本把这段高度撤掉，改按图片真实高度排。 */
+  .fbpages { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .fbpage { width: 100%; max-width: 900px; min-height: 320px; border-radius: 8px;
+            background: var(--surface2); display: flex; align-items: center; justify-content: center; }
+  /* 不放大：预览图长边约 800px，竖图更窄，硬撑到格宽只会糊。按原始尺寸显示、超宽才缩 */
+  .fbpage img { max-width: 100%; height: auto; display: block; border-radius: 8px; }
   /* 文本占卡片高度的 1/3；min-height:0 允许收缩，超出按行夹取隐藏 */
   .card .wt { flex: 1 1 0; min-height: 0; padding: 8px 10px 10px; font-size: 13.5px; font-weight: 500;
               display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -173,6 +206,8 @@
   @media (max-width: 720px) { .dtop { grid-template-columns: minmax(0, 1fr); } }
   .gallery { min-width: 0; }
   .gallery img.main { width: 100%; max-width: 100%; border-radius: 8px; background: #15151a; cursor: zoom-in; display: block; }
+  /* FANBOX 的封面只是张封面（内容在页尾的图流里），点不开东西，就别给放大镜光标 */
+  .gallery img.main.fbcover { cursor: default; }
   .thumbs { display: flex; gap: 6px; overflow-x: auto; margin-top: 8px; }
   .thumbs img { height: 54px; border-radius: 5px; cursor: pointer; opacity: .65; border: 2px solid transparent; }
   .thumbs img.sel { opacity: 1; border-color: var(--accent); }
@@ -185,13 +220,27 @@
   .toggle { background: var(--surface2); border: 1px solid var(--line); color: var(--text);
             border-radius: 8px; padding: 7px 14px; cursor: pointer; font-size: 14px; }
   .toggle.on { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+  /* 破坏性操作（删除作品）：与 .icon-btn.danger 同一套红，不填充底色，避免比"已读/收藏"更抢眼 */
+  .toggle.danger { color: #f87171; border-color: #6b3030; }
+  .toggle.danger:hover { border-color: #f87171; }
   .topbar-actions .toggle { padding: 5px 12px; font-size: 13px; }
-  /* 作品详情页：顶栏不显示作品名（正文已有 h1），仅留按钮 —— 操作按钮靠左成组，返回键靠右 */
+  /* 作品详情页：顶栏不显示作品名（正文已有 h1），仅留按钮 —— 返回键在最左（各页一致），操作按钮紧随其后 */
   #topbar.detail-mode #title { display: none; }
   #topbar.detail-mode #detailActions { order: 1; margin-right: auto; }
-  /* 详情页移动端：返回键与目录键同一行、靠右；操作按钮另起一行铺满 */
-  .layout-mobile #topbar.detail-mode #back { order: 1; margin-left: auto; }
+  /* 详情页移动端：目录键、返回键一行；操作按钮另起一行铺满 */
   .layout-mobile #topbar.detail-mode #detailActions { order: 2; flex-basis: 100%; margin-right: 0; }
+  /* 详情折叠：标题下一行「▸ 作品详情」，默认收起，点开显示封面/字段/正文 */
+  .dfold-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer; user-select: none;
+                padding: 6px 0; color: var(--text); font-weight: 600; }
+  .dfold-head .arrow { width: 14px; color: var(--muted); }
+  .dfold-head .dfold-sub { color: var(--muted); font-size: 13px; font-weight: 400;
+                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dfold-body { display: none; padding-top: 8px; }
+  .dfold.open .dfold-body { display: block; }
+  /* 详情页下方的作品文件（原「查看作品」页） */
+  .dfiles { margin-top: 14px; }
+  .dfiles .dfiles-bar { margin-bottom: 10px; }
+  .dfiles-title { font-weight: 600; margin-right: auto; }
   .body { margin-top: 16px; }
   .body p { white-space: pre-wrap; word-break: break-word; margin: 10px 0; }
   .body img { max-width: 100%; border-radius: 8px; margin: 10px 0; display: block; cursor: zoom-in; }
@@ -272,7 +321,8 @@
   /* 已下载表 */
   .dt { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   .dt th { text-align: left; color: var(--muted); font-weight: 500; padding: 8px 10px; cursor: pointer;
-           border-bottom: 1px solid var(--line); white-space: nowrap; position: sticky; top: 0; background: var(--bg); }
+           border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--bg);
+           position: sticky; top: var(--bars-h, 0px); z-index: 10; }
   .dt td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
   .dt tr:hover td { background: var(--surface); }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
@@ -299,8 +349,12 @@
      （桌面端那一行是 DockPanel，空间不够时也是压缩这一格） */
   .frow > .grow { flex: 1 1 160px; min-width: 96px; }
   .frow input, .frow select { flex: none; }
-  .frow textarea { min-height: 84px; resize: vertical; font-family: inherit; line-height: 1.6; width: 100%; }
-  /* 多行输入那一行：标签与控件顶对齐（桌面端 VerticalAlignment=Top） */
+  /* 解压密码库：一个输入框一条密码，末行是「＋」新增（settings.js）。
+     .frow input 的 flex:none 要在这里翻回来，否则输入框会缩成内容宽 */
+  .pwlist { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .pwrow { display: flex; align-items: center; gap: 6px; width: 100%; }
+  .frow .pwrow input { flex: 1 1 auto; min-width: 0; }
+  /* 密码库那一行：标签与控件顶对齐（桌面端 VerticalAlignment=Top） */
   .frow.top { align-items: flex-start; }
   .frow.top > label { padding-top: 9px; }
   .ro { color: var(--muted); font-size: 13px; word-break: break-all; }
@@ -401,6 +455,15 @@
   .login button { width: 100%; background: var(--accent-dim); border: none; color: #fff;
                   padding: 10px; border-radius: 8px; cursor: pointer; font-size: 15px; }
   .login .err { color: #ff7a7a; font-size: 13px; min-height: 18px; margin-bottom: 6px; }
+  .login .or { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: var(--muted); font-size: 12px; }
+  .login .or::before, .login .or::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+  .login .or[hidden], .login button[hidden], .login #pwPart[hidden] { display: none; }
+  .login button.sso { background: var(--surface2); border: 1px solid var(--line); color: var(--text); }
+  .nav .navuser { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px 2px;
+                  border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .nav .navuser span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav .navuser a { color: var(--muted); cursor: pointer; }
+  .nav .navuser a:hover { color: var(--text); }
   .empty { color: var(--muted); text-align: center; padding: 50px 0; }
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--line);
           border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -3px; }
@@ -426,3 +489,17 @@
   .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .icon-btn.danger { color: #f87171; border-color: #6b3030; }
   .icon-btn.danger:hover { border-color: #f87171; }
+
+/* E-Hentai 详情页的整本图片网格：缩略图多为站点的雪碧图，按格宽定位裁出单张 */
+.ehgrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ehcell { position: relative; line-height: 0; }
+.ehthumb {
+  background-repeat: no-repeat; background-color: var(--card);
+  border-radius: 4px; cursor: pointer; display: block;
+}
+.ehthumb:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ehnum {
+  position: absolute; left: 3px; bottom: 3px; padding: 0 5px;
+  background: rgba(0,0,0,.66); color: #fff; font-size: 11px; line-height: 16px; border-radius: 3px;
+}
+.ehmore { min-height: 24px; padding: 12px 0; text-align: center; color: var(--muted); font-size: 13px; }

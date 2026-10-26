@@ -35,51 +35,47 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 顶栏 -->
+        <!-- 顶栏：返回键在最左（对齐 Web 顶栏，各页一致），详情操作条紧随其后 -->
         <Grid Grid.Row="0" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBox x:Name="SearchBox" Grid.Column="0" MaxWidth="320" HorizontalAlignment="Left"
+            <Button x:Name="BackButton" Grid.Column="0" Margin="0,0,8,0" Click="BackButton_Click" Content="← 返回"
+                    Visibility="Collapsed" />
+            <TextBox x:Name="SearchBox" Grid.Column="1" MaxWidth="320" HorizontalAlignment="Left"
                      MinWidth="220" TextChanged="SearchBox_TextChanged" />
-            <ComboBox x:Name="SortBox" Grid.Column="1" Margin="8,0,0,0" MinWidth="130" Visibility="Collapsed"
-                      VerticalAlignment="Center" SelectionChanged="SortBox_SelectionChanged" />
-            <Button x:Name="LibToggleButton" Grid.Column="2" Margin="8,0,0,0" Visibility="Collapsed"
-                    VerticalAlignment="Center" Click="LibToggleButton_Click" Content="显示社团" />
-            <TextBlock x:Name="RjLabel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left"
+            <TextBlock x:Name="RjLabel" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Left"
                        Margin="0,0,8,0" FontWeight="SemiBold" Visibility="Collapsed" />
-            <StackPanel x:Name="ViewModeBar" Grid.Column="3" Orientation="Horizontal" Visibility="Collapsed"
-                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0">
-                <Button x:Name="ThumbViewButton" Click="ThumbViewButton_Click" Content="缩略图" />
-                <Button x:Name="ListViewButton" Margin="8,0,0,0" Click="ListViewButton_Click" Content="文件列表" />
-            </StackPanel>
-            <!-- 详情操作条顺序对齐 Web：已读 → 收藏 → 查看作品 → 移动媒体库（library.js）；打开文件夹为桌面独有，置于其后 -->
+            <ComboBox x:Name="SortBox" Grid.Column="2" Margin="8,0,0,0" MinWidth="130" Visibility="Collapsed"
+                      VerticalAlignment="Center" SelectionChanged="SortBox_SelectionChanged" />
+            <Button x:Name="LibToggleButton" Grid.Column="3" Margin="8,0,0,0" Visibility="Collapsed"
+                    VerticalAlignment="Center" Click="LibToggleButton_Click" Content="显示社团" />
+            <!-- 详情操作条顺序对齐 Web：已读 → 收藏 → 移动媒体库 → 删除作品（library.js）；打开文件夹为桌面独有，置于其后。
+                 原「查看作品」按钮已撤：作品文件直接画在详情页下方 -->
             <Button x:Name="ReadButton" Grid.Column="4" Margin="8,0,0,0" Visibility="Collapsed"
                     FontFamily="Segoe UI Emoji" Click="ReadButton_Click" Content="☆ 已读" />
             <Button x:Name="FavButton" Grid.Column="5" Margin="8,0,0,0" Visibility="Collapsed"
                     FontFamily="Segoe UI Emoji" Click="FavButton_Click" Content="♡ 收藏" />
-            <Button x:Name="ViewFilesButton" Grid.Column="6" Margin="8,0,0,0" Visibility="Collapsed"
-                    FontFamily="Segoe UI Emoji" Click="ViewFilesButton_Click" Content="📂 查看作品" />
-            <Button x:Name="MoveLibButton" Grid.Column="7" Margin="8,0,0,0" Visibility="Collapsed"
+            <Button x:Name="MoveLibButton" Grid.Column="6" Margin="8,0,0,0" Visibility="Collapsed"
                     FontFamily="Segoe UI Emoji" Click="MoveLibButton_Click" Content="📦 移动媒体库" />
+            <Button x:Name="DeleteWorkButton" Grid.Column="7" Margin="8,0,0,0" Visibility="Collapsed"
+                    FontFamily="Segoe UI Emoji" Foreground="{StaticResource RedBrush}"
+                    Click="DeleteWorkButton_Click" Content="🗑 删除作品" />
             <Button x:Name="OpenFolderButton" Grid.Column="8" Margin="8,0,0,0" Visibility="Collapsed"
                     Click="OpenFolderButton_Click" Content="打开文件夹" />
             <!-- 媒体库设置已移入「系统设置」页（对齐 Web），此处不再提供入口 -->
             <TextBlock x:Name="CountLabel" Grid.Column="10" VerticalAlignment="Center"
-                       Style="{StaticResource CaptionText}" Margin="12,0,12,0" />
-            <Button x:Name="BackButton" Grid.Column="11" Click="BackButton_Click" Content="← 返回"
-                    Visibility="Collapsed" />
+                       Style="{StaticResource CaptionText}" Margin="12,0,0,0" />
         </Grid>
 
         <!-- 卡片区 / 详情区 -->

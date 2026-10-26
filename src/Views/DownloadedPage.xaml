@@ -1,4 +1,4 @@
-<UserControl x:Class="R18MediaLibrary.Views.DownloadedPage"
+﻿<UserControl x:Class="R18MediaLibrary.Views.DownloadedPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              IsVisibleChanged="Page_IsVisibleChanged">
@@ -54,25 +54,27 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- 顶栏：搜索框居左，刷新按钮居右 -->
-        <Grid Grid.Row="0" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <Button x:Name="BackButton" Click="BackButton_Click" Content="← 下载" Margin="0,0,8,0" />
-            <TextBox x:Name="SearchBox" Grid.Column="1" MinWidth="220" MaxWidth="320"
-                     VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" />
-            <ComboBox x:Name="StateFilter" Grid.Column="2" Margin="8,0,0,0" MinWidth="110"
-                      SelectionChanged="StateFilter_SelectionChanged" />
-            <TextBlock x:Name="CountLabel" Grid.Column="4" VerticalAlignment="Center"
-                       Margin="0,0,12,0" Style="{StaticResource CaptionText}" />
-            <Button x:Name="RefreshButton" Grid.Column="5" Click="RefreshButton_Click" Content="刷新" />
-        </Grid>
+        <!-- 顶栏：搜索框居左，刷新按钮居右。整条包进 ToolbarCard（对齐 Web 的 .toolbar 悬浮卡片） -->
+        <Border Grid.Row="0" Style="{StaticResource ToolbarCard}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton" Click="BackButton_Click" Content="← 下载" Margin="0,0,8,0" />
+                <TextBox x:Name="SearchBox" Grid.Column="1" MinWidth="220" MaxWidth="320"
+                         VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" />
+                <ComboBox x:Name="StateFilter" Grid.Column="2" Margin="8,0,0,0" MinWidth="110"
+                          SelectionChanged="StateFilter_SelectionChanged" />
+                <TextBlock x:Name="CountLabel" Grid.Column="4" VerticalAlignment="Center"
+                           Margin="0,0,12,0" Style="{StaticResource CaptionText}" />
+                <Button x:Name="RefreshButton" Grid.Column="5" Click="RefreshButton_Click" Content="刷新" />
+            </Grid>
+        </Border>
 
         <!-- 表头：点击切换排序（与行卡片同列宽，左右留出卡片内边距） -->
         <Grid Grid.Row="1" Margin="14,0,24,6">
@@ -83,6 +85,7 @@
                 <ColumnDefinition Width="130" />
                 <ColumnDefinition Width="90" />
                 <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="100" />
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="HdrId" Style="{StaticResource HeaderCell}"
                        Tag="WorkId" MouseLeftButtonUp="Header_Click" />
@@ -117,6 +120,7 @@
                             <ColumnDefinition Width="130" />
                             <ColumnDefinition Width="90" />
                             <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="100" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{Binding WorkId}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" Text="{Binding WorkName}" Margin="0,0,12,0"
@@ -131,6 +135,9 @@
                                    FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="{Binding DownTime}"
                                    Foreground="{StaticResource CaptionBrush}" VerticalAlignment="Center" />
+                        <!-- 跳转作品：切到媒体库打开该作品详情（对齐 Web 已下载表的行内按钮） -->
+                        <Button Grid.Column="6" Content="{Binding OpenText}" FontSize="12" Padding="10,3"
+                                Margin="8,0,0,0" Click="OpenWork_Click" />
                     </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>

@@ -43,6 +43,12 @@ public class PawchivePost
     /// <summary>封面的站上哈希路径（形如 /e1/1d/xxxx.jpeg），可空。</summary>
     public string CoverPath { get; init; } = "";
     public List<PawchiveFile> Files { get; init; } = [];
+    /// <summary>
+    /// 正文里出现的外部链接（去重、保持原顺序）。
+    /// 作者常把作品本体放在网盘上、正文只留一条分享链接，站上归档的附件就只剩一张封面图；
+    /// 其中的谷歌网盘链接由 <see cref="GoogleDriveClient"/> 认出来并一并下载。
+    /// </summary>
+    public List<string> Links { get; init; } = [];
 }
 
 /// <summary>
@@ -345,18 +351,52 @@ public static class PawchiveApi
                         ?? siteCover?.Path
                         ?? (files.Count > 0 ? files[0].Path : "");
 
+        var contentHtml = DlsiteApi.JStr(item, "content");
         return new PawchivePost
         {
             Id = DlsiteApi.JStr(item, "id"),
             Service = service,
             ArtistId = DlsiteApi.JStr(item, "user"),
             Title = DlsiteApi.JStr(item, "title"),
-            Content = StripHtml(DlsiteApi.JStr(item, "content")),
+            Content = StripHtml(contentHtml),
             Tags = ParseTags(item),
             Published = DlsiteApi.JStr(item, "published"),
             CoverPath = coverPath,
             Files = files,
+            Links = ExtractLinks(contentHtml, item),
         };
+    }
+
+    /// <summary>正文/嵌入块里的外部链接，按 http(s) 整段匹配。</summary>
+    private static readonly System.Text.RegularExpressions.Regex UrlPattern =
+        new(@"https?://[^\s""'<>]+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 抽出正文里的外部链接：<c>&lt;a href&gt;</c> 与光秃秃写在文字里的地址都要认
+    /// （同一作者两种写法都见得到），外加 fanbox 的 embed 块里的地址。
+    /// 先反转义 HTML 实体，免得 <c>&amp;amp;</c> 把查询串切坏；按出现顺序去重。
+    /// </summary>
+    private static List<string> ExtractLinks(string contentHtml, JsonElement item)
+    {
+        var links = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string url)
+        {
+            // 紧跟在地址后面的中英文标点不属于地址（正文里常写成「…/view?usp=sharing。」）
+            url = url.TrimEnd('.', ',', '，', '。', '、', ')', '）', ']', '】', ';', '；', ':', '：');
+            if (url.Length > 0 && seen.Add(url))
+                links.Add(url);
+        }
+
+        if (contentHtml.Length > 0)
+            foreach (System.Text.RegularExpressions.Match m in
+                     UrlPattern.Matches(HtmlAgilityPack.HtmlEntity.DeEntitize(contentHtml) ?? contentHtml))
+                Add(m.Value);
+        if (item.TryGetProperty("embed", out var embed) && embed.ValueKind == JsonValueKind.Object)
+            foreach (var key in new[] { "url", "description" })
+                foreach (System.Text.RegularExpressions.Match m in UrlPattern.Matches(DlsiteApi.JStr(embed, key)))
+                    Add(m.Value);
+        return links;
     }
 
     /// <summary>按图片看待的扩展名（决定卡片封面取哪一张）。</summary>

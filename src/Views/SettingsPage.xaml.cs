@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -6,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using R18MediaLibrary.Core;
 using R18MediaLibrary.Services;
+using R18MediaLibrary.Services.Translate;
 using Microsoft.Win32;
 
 namespace R18MediaLibrary.Views;
@@ -14,7 +16,12 @@ namespace R18MediaLibrary.Views;
 public partial class SettingsPage : UserControl
 {
     private bool _loading;  // 回填控件时不触发保存
+    private readonly List<string> _unzipPwds = new();  // 解压密码库：一条一个输入框
     private readonly MediaLibSettingDialog _mediaLibSection = new();  // 内联的媒体库管理区块（常驻，扫描随其存活）
+    private readonly FanboxWatchSettings _fanboxWatchSection = new();  // 内联的 FANBOX 作家监控区块
+
+    /// <summary>监控卡的「打开主页」：请求跨分区切到 作品搜索 → FANBOX 并打开这位作家（参数：作家号 / 作家名）。</summary>
+    public event Action<string, string>? OpenFanboxArtistRequested;
 
     public SettingsPage()
     {
@@ -24,8 +31,16 @@ public partial class SettingsPage : UserControl
         ReadConf();
         // 媒体库管理内联进设置页（对齐 Web 设置页），构建一次；扫描状态在页面切换间保持
         MediaLibHost.Content = _mediaLibSection.BuildSection(this);
+        // FANBOX 作家监控同样内联进设置页（对齐 Web），「打开主页」转交宿主跨分区跳转
+        _fanboxWatchSection.OpenArtistRequested += (id, name) => OpenFanboxArtistRequested?.Invoke(id, name);
+        FanboxWatchHost.Content = _fanboxWatchSection.BuildSection(this);
         I18n.LanguageChanged += RetranslateUi;
+        // 模型依赖下载在后台线程推进度，切回调度线程再动控件
+        TranslateDeps.Changed += OnTranslateDepsChanged;
     }
+
+    private void OnTranslateDepsChanged() =>
+        Dispatcher.BeginInvoke(new Action(UpdateTranslateStatus));
 
     private void BuildCombos()
     {
@@ -42,6 +57,18 @@ public partial class SettingsPage : UserControl
         WebEnableCombo.Items.Add(I18n.Tr("关闭"));
         ImageHostEnableCombo.Items.Add(I18n.Tr("开启"));
         ImageHostEnableCombo.Items.Add(I18n.Tr("关闭"));
+        SsoEnableCombo.Items.Add(I18n.Tr("开启"));
+        SsoEnableCombo.Items.Add(I18n.Tr("关闭"));
+        TransEnableCombo.Items.Add(I18n.Tr("开启"));
+        TransEnableCombo.Items.Add(I18n.Tr("关闭"));
+        // 档位来自依赖清单（用户可换清单），故按 id 记住顺序而不是写死索引语义
+        foreach (var tier in TranslateModels.Tiers)
+        {
+            _tierIds.Add(tier.Id);
+            TransTierCombo.Items.Add(tier.Note.Length > 0 ? $"{tier.Name} · {tier.Note}" : tier.Name);
+        }
+        TransDeviceCombo.Items.Add("CPU");
+        TransDeviceCombo.Items.Add("GPU");
         // 关闭按钮行为：索引 0=每次询问 / 1=最小化到托盘 / 2=退出程序
         CloseActionCombo.Items.Add(I18n.Tr("每次询问"));
         CloseActionCombo.Items.Add(I18n.Tr("最小化到托盘"));
@@ -52,6 +79,8 @@ public partial class SettingsPage : UserControl
             LanguageCombo.Items.Add(name);
         foreach (var site in new[] { "Original", "Mirror-1", "Mirror-2", "Mirror-3" })
             AsmrMirrorCombo.Items.Add(site);
+        foreach (var host in EhHosts)
+            EhHostCombo.Items.Add(host);
         BuildSearchSourceRows();
         BuildFileTypeChecks();
         _loading = false;
@@ -59,6 +88,9 @@ public partial class SettingsPage : UserControl
 
     // 作品类型 → 来源下拉框（动态生成，按 WorkTypes.Known）
     private readonly System.Collections.Generic.Dictionary<string, ComboBox> _sourceCombos = new();
+
+    // 图片翻译档位下拉框的索引 → 清单里的档位 id（档位由清单决定，不能按索引写死语义）
+    private readonly System.Collections.Generic.List<string> _tierIds = [];
 
     private void BuildSearchSourceRows()
     {
@@ -129,15 +161,37 @@ public partial class SettingsPage : UserControl
         ProxyGroup.Header = I18n.Tr("代理");
         DebridGroup.Header = I18n.Tr("Debrid-Link 下载中转站");
         SearchSourceGroup.Header = I18n.Tr("作品类型优先搜索");
-        SearchSourceHint.Text = I18n.Tr("未列出的作品类型归为「其他」，仅使用 anime-sharing");
         AsmrGroup.Header = "ASMR.ONE";
         AsmrUserLabel.Text = I18n.Tr("账号");
         AsmrPassLabel.Text = I18n.Tr("密码");
         AsmrMirrorLabel.Text = I18n.Tr("镜像站");
         AsmrFileTypeLabel.Text = I18n.Tr("下载文件类型");
         AsmrTestButton.Content = I18n.Tr("登录测试");
+        EhentaiGroup.Header = "E-Hentai";
+        EhHostLabel.Text = I18n.Tr("站点");
+        EhOriginalLabel.Text = I18n.Tr("图片画质");
+        EhUserLabel.Text = I18n.Tr("账号");
+        EhPassLabel.Text = I18n.Tr("密码");
+        EhLoginButton.Content = I18n.Tr("登录并获取 Cookie");
+        EhLogoutButton.Content = I18n.Tr("退出登录");
+        EhMemberLabel.Text = "member_id";
+        EhHashLabel.Text = "pass_hash";
+        EhIgneousLabel.Text = "igneous";
+        EhTestButton.Content = I18n.Tr("连接测试");
+        BuildEhOriginalCombo();
+        PixivGroup.Header = "pixiv";
+        PxOriginalLabel.Text = I18n.Tr("图片画质");
+        PxModeLabel.Text = I18n.Tr("搜索分级");
+        PxMatchLabel.Text = I18n.Tr("匹配方式");
+        PxSessionLabel.Text = "PHPSESSID";
+        PxTestButton.Content = I18n.Tr("连接测试");
+        PxHint.Text = I18n.Tr(
+            "留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉。" +
+            "要看 R-18，请在浏览器登录 pixiv 后从 Cookie 里复制 PHPSESSID 填在这里。");
+        BuildPixivCombos();
         SystemGroup.Header = I18n.Tr("系统");
         MediaLibGroup.Header = I18n.Tr("媒体库");
+        FanboxWatchGroup.Header = I18n.Tr("FANBOX 作家监控");
         PathLabel.Text = I18n.Tr("缓存路径");
         PathChooseButton.Content = I18n.Tr("保存");
         AutoDownloadLabel.Text = I18n.Tr("自动下载");
@@ -152,7 +206,7 @@ public partial class SettingsPage : UserControl
         SpeedLimitLabel.Text = I18n.Tr("速度限制 (KB/s)");
         SpeedLimitBox.ToolTip = I18n.Tr("下载总速度上限，0 表示不限速");
         UnzipPwdLabel.Text = I18n.Tr("解压密码库");
-        UnzipPwdHint.Text = I18n.Tr("一行一个密码，解压加密压缩包时按顺序尝试");
+        RebuildUnzipPwdRows();
         LanguageLabel.Text = I18n.Tr("语言");
         LogLevelLabel.Text = I18n.Tr("日志级别");
         EncodingLabel.Text = I18n.Tr("解压编码");
@@ -164,7 +218,17 @@ public partial class SettingsPage : UserControl
         ImageHostTokenLabel.Text = "API Token";
         ImageHostTestButton.Content = I18n.Tr("测试连接");
         ImageHostMigrateButton.Content = I18n.Tr("迁移封面");
-        ImageHostHint.Text = I18n.Tr("开启后作品卡封面由图床提供，未迁移的封面自动回退本地硬盘。迁移只复制不删除本地原图（它也是详情页的第一张图）；同一个作品重复迁移会被跳过，中断后再点一次即可续传。手机要看到图，服务地址须填电脑的局域网地址（不能是 127.0.0.1），并在图床「系统设置 → 附加访问主机名」里放行该地址。");
+        TranslateGroup.Header = I18n.Tr("图片翻译");
+        TransEnableLabel.Text = I18n.Tr("启用");
+        TransTierLabel.Text = I18n.Tr("模型档位");
+        TransDeviceLabel.Text = I18n.Tr("推理设备");
+        TransPathLabel.Text = I18n.Tr("模型目录");
+        TransFontLabel.Text = I18n.Tr("嵌字字体");
+        TransPathChooseButton.Content = I18n.Tr("浏览");
+        TransDownloadButton.Content = I18n.Tr("下载依赖");
+        TransCancelButton.Content = I18n.Tr("取消下载");
+        TransRemoveButton.Content = I18n.Tr("删除依赖");
+        TransFontBox.ToolTip = I18n.Tr("留空使用系统默认中文字体");
         WebGroup.Header = I18n.Tr("外部访问");
         WebEnableLabel.Text = I18n.Tr("外部访问");
         WebPortLabel.Text = I18n.Tr("端口");
@@ -181,11 +245,23 @@ public partial class SettingsPage : UserControl
         WebEnableCombo.Items[1] = I18n.Tr("关闭");
         ImageHostEnableCombo.Items[0] = I18n.Tr("开启");
         ImageHostEnableCombo.Items[1] = I18n.Tr("关闭");
+        SsoEnableCombo.Items[0] = I18n.Tr("开启");
+        SsoEnableCombo.Items[1] = I18n.Tr("关闭");
+        SsoGroup.Header = I18n.Tr("门户单点登录");
+        SsoEnableLabel.Text = I18n.Tr("启用");
+        SsoPortalUrlLabel.Text = I18n.Tr("门户地址");
+        SsoInternalUrlLabel.Text = I18n.Tr("内网地址");
+        SsoUsersLabel.Text = I18n.Tr("用户");
+        SsoPortalUrlBox.ToolTip = I18n.Tr("浏览器访问门户的地址，须与门户 conf.json 的 idp.issuer 一致");
+        SsoInternalUrlBox.ToolTip = I18n.Tr("本机访问门户的地址（换 token 用），留空则同门户地址");
+        TransEnableCombo.Items[0] = I18n.Tr("开启");
+        TransEnableCombo.Items[1] = I18n.Tr("关闭");
         CloseActionCombo.Items[0] = I18n.Tr("每次询问");
         CloseActionCombo.Items[1] = I18n.Tr("最小化到托盘");
         CloseActionCombo.Items[2] = I18n.Tr("退出程序");
         _loading = false;
         UpdateWebStatus();
+        UpdateTranslateStatus();
     }
 
     private long _cfgVersionSeen = -1;
@@ -193,7 +269,10 @@ public partial class SettingsPage : UserControl
     private void Page_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (!(bool)e.NewValue)
+        {
+            _fanboxWatchSection.Suspend();   // 离开设置页即停掉监控状态轮询，没人看时不必每 1.5 秒查一次
             return;
+        }
         // 切换到本页时若配置版本变过才重读数据库（未变则用进程缓存，避免每次进页都打库）
         if (AppConfig.Version != _cfgVersionSeen)
         {
@@ -202,6 +281,7 @@ public partial class SettingsPage : UserControl
         }
         ReadConf();
         _mediaLibSection.RefreshLibs();   // 拾取外部对媒体库的改动
+        _fanboxWatchSection.Refresh();    // 监控状态可能被后台轮询改过
     }
 
     /// <summary>用户的"下载"文件夹。</summary>
@@ -241,6 +321,17 @@ public partial class SettingsPage : UserControl
 
         AsmrUserBox.Text = AppConfig.AsmrUsername;
         AsmrPassBox.Text = AppConfig.AsmrPassword;
+        var ehHost = Array.IndexOf(EhHosts, AppConfig.EhentaiHost);
+        EhHostCombo.SelectedIndex = ehHost >= 0 ? ehHost : 0;
+        EhOriginalCombo.SelectedIndex = AppConfig.EhentaiOriginal ? 0 : 1;
+        EhUserBox.Text = AppConfig.EhentaiUsername;
+        EhMemberBox.Text = AppConfig.EhentaiMemberId;
+        EhHashBox.Text = AppConfig.EhentaiPassHash;
+        EhIgneousBox.Text = AppConfig.EhentaiIgneous;
+        PxSessionBox.Text = AppConfig.PixivSessionId;
+        PxOriginalCombo.SelectedIndex = AppConfig.PixivOriginal ? 0 : 1;
+        PxModeCombo.SelectedIndex = Math.Max(0, Array.IndexOf(PixivModes, AppConfig.PixivSearchMode));
+        PxMatchCombo.SelectedIndex = Math.Max(0, Array.IndexOf(PixivMatches, AppConfig.PixivTagMatch));
         AsmrMirrorCombo.SelectedIndex = AppConfig.AsmrMirrorSite switch
         {
             "Mirror-1" => 1,
@@ -256,7 +347,9 @@ public partial class SettingsPage : UserControl
         DownProcBox.Text = AppConfig.DownloadProcesses.ToString();
         MinSpeedBox.Text = AppConfig.MinSpeedKb.ToString();
         SpeedLimitBox.Text = AppConfig.SpeedLimitKb.ToString();
-        UnzipPwdBox.Text = AppConfig.UnzipPasswordsText;
+        _unzipPwds.Clear();
+        _unzipPwds.AddRange(AppConfig.UnzipPasswords);
+        RebuildUnzipPwdRows();
         LogLevelCombo.SelectedIndex = AppConfig.Read("loglevel", "level") switch
         {
             "error" => 1,
@@ -279,12 +372,27 @@ public partial class SettingsPage : UserControl
         ImageHostProjectBox.Text = AppConfig.ImageHostProject;
         ImageHostTokenBox.Text = AppConfig.ImageHostToken;
 
+        TransEnableCombo.SelectedIndex = AppConfig.TranslateEnabledSetting ? 0 : 1;
+        var tierIndex = _tierIds.IndexOf(AppConfig.TranslateModelTier);
+        TransTierCombo.SelectedIndex = tierIndex >= 0 ? tierIndex : 0;
+        TransDeviceCombo.SelectedIndex = AppConfig.TranslateDevice == "gpu" ? 1 : 0;
+        TransPathBox.Text = TranslateModels.Root;
+        TransFontBox.Text = AppConfig.TranslateFont;
+
         WebEnableCombo.SelectedIndex = AppConfig.WebEnabled ? 0 : 1;
         WebPortBox.Text = AppConfig.WebPort.ToString();
         WebPasswordBox.Text = AppConfig.WebPassword;
+
+        SsoEnableCombo.SelectedIndex = AppConfig.SsoEnabled ? 0 : 1;
+        SsoPortalUrlBox.Text = AppConfig.SsoPortalUrl;
+        SsoInternalUrlBox.Text = AppConfig.SsoInternalUrl;
+        SsoClientIdBox.Text = AppConfig.SsoClientId;
+        SsoSecretBox.Text = AppConfig.SsoClientSecret;
         _loading = false;
         UpdateWebStatus();
+        UpdateSsoStatus();
         UpdateImageHostStatus();
+        UpdateTranslateStatus();
     }
 
     // ---------- 保存 ----------
@@ -420,6 +528,235 @@ public partial class SettingsPage : UserControl
                 I18n.Format(I18n.Tr("登录失败：{err}"), ("err", error ?? "")), I18n.Tr("测试失败"));
     }
 
+    // ---------- E-Hentai ----------
+
+    /// <summary>可选站点：表站可匿名浏览，里站必须带登录 cookie。</summary>
+    private static readonly string[] EhHosts = ["e-hentai.org", "exhentai.org"];
+
+    /// <summary>画质下拉的选项随语言重建（下标 0=原图 / 1=站点显示图）。</summary>
+    private void BuildEhOriginalCombo()
+    {
+        var index = EhOriginalCombo.SelectedIndex;
+        var loading = _loading;
+        _loading = true;
+        EhOriginalCombo.Items.Clear();
+        EhOriginalCombo.Items.Add(I18n.Tr("原图"));
+        EhOriginalCombo.Items.Add(I18n.Tr("站点显示图（省额度）"));
+        EhOriginalCombo.SelectedIndex = index >= 0 ? index : (AppConfig.EhentaiOriginal ? 0 : 1);
+        _loading = loading;
+    }
+
+    private void EhHostCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || EhHostCombo.SelectedIndex < 0)
+            return;
+        AppConfig.EhentaiHost = EhHosts[EhHostCombo.SelectedIndex];
+        EhentaiApi.Invalidate();   // 换站/换 cookie 后要按新配置重建客户端
+    }
+
+    private void EhOriginalCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || EhOriginalCombo.SelectedIndex < 0)
+            return;
+        AppConfig.Write("ehentai", "original", EhOriginalCombo.SelectedIndex == 0 ? "True" : "False");
+    }
+
+    private void EhUserBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.Write("ehentai", "username", EhUserBox.Text.Trim());
+    }
+
+    /// <summary>
+    /// 账号密码登录：由 <see cref="EhentaiApi.LoginAsync"/> 取回三个 cookie 并落库，
+    /// 这里只负责回填输入框——登录成功后用户应当能在下面看到取到了什么。
+    /// </summary>
+    private async void EhLoginButton_Click(object sender, RoutedEventArgs e)
+    {
+        var user = EhUserBox.Text.Trim();
+        var pass = EhPassBox.Password;
+        if (user.Length == 0 || pass.Length == 0)
+        {
+            InAppDialog.Warn(this, I18n.Tr("请先填写账号与密码"), I18n.Tr("登录"));
+            return;
+        }
+
+        AppConfig.Write("ehentai", "username", user);
+        EhLoginButton.IsEnabled = false;
+        EhLoginButton.Content = I18n.Tr("登录中…");
+        try
+        {
+            var result = await EhentaiApi.LoginAsync(user, pass);
+            if (result.Ok)
+            {
+                // 拿到的 cookie 要显示出来：用户据此知道里站权限到底有没有拿到
+                _loading = true;
+                EhMemberBox.Text = AppConfig.EhentaiMemberId;
+                EhHashBox.Text = AppConfig.EhentaiPassHash;
+                EhIgneousBox.Text = AppConfig.EhentaiIgneous;
+                _loading = false;
+                EhPassBox.Clear();   // 密码不留在界面上，也不写进配置
+                InAppDialog.Info(this, result.Message, I18n.Tr("登录成功"));
+            }
+            else
+            {
+                InAppDialog.Warn(this, result.Message, I18n.Tr("登录失败"));
+            }
+        }
+        finally
+        {
+            EhLoginButton.IsEnabled = true;
+            EhLoginButton.Content = I18n.Tr("登录并获取 Cookie");
+        }
+    }
+
+    /// <summary>退出登录：清掉三个 cookie（账号名留着，方便下次再登）。</summary>
+    private void EhLogoutButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!InAppDialog.Confirm(
+                this, I18n.Tr("确定要清除 E-Hentai 登录信息吗？清除后将无法访问 exhentai(里站)。"),
+                I18n.Tr("退出登录")))
+            return;
+
+        AppConfig.Write("ehentai", "member_id", "");
+        AppConfig.Write("ehentai", "pass_hash", "");
+        AppConfig.Write("ehentai", "igneous", "");
+        EhentaiApi.Invalidate();
+        _loading = true;
+        EhMemberBox.Text = "";
+        EhHashBox.Text = "";
+        EhIgneousBox.Text = "";
+        _loading = false;
+        EhPassBox.Clear();
+    }
+
+    private void EhMemberBox_LostFocus(object sender, RoutedEventArgs e) =>
+        SaveEhCookie("member_id", EhMemberBox.Text);
+
+    private void EhHashBox_LostFocus(object sender, RoutedEventArgs e) =>
+        SaveEhCookie("pass_hash", EhHashBox.Text);
+
+    private void EhIgneousBox_LostFocus(object sender, RoutedEventArgs e) =>
+        SaveEhCookie("igneous", EhIgneousBox.Text);
+
+    private void SaveEhCookie(string key, string value)
+    {
+        if (_loading)
+            return;
+        AppConfig.Write("ehentai", key, value.Trim());
+        EhentaiApi.Invalidate();
+    }
+
+    private async void EhTestButton_Click(object sender, RoutedEventArgs e)
+    {
+        // 先保存当前输入，再用其连接
+        AppConfig.Write("ehentai", "member_id", EhMemberBox.Text.Trim());
+        AppConfig.Write("ehentai", "pass_hash", EhHashBox.Text.Trim());
+        AppConfig.Write("ehentai", "igneous", EhIgneousBox.Text.Trim());
+        EhentaiApi.Invalidate();
+        EhTestButton.IsEnabled = false;
+        try
+        {
+            var (ok, message) = await EhentaiApi.TestAsync();
+            if (ok)
+                InAppDialog.Info(this, message, I18n.Tr("测试成功"));
+            else
+                InAppDialog.Warn(this, message, I18n.Tr("测试失败"));
+        }
+        finally
+        {
+            EhTestButton.IsEnabled = true;
+        }
+    }
+
+    // ---------- pixiv ----------
+
+    /// <summary>搜索分级下拉的索引 → 站点的 mode 参数。</summary>
+    private static readonly string[] PixivModes = ["all", "safe", "r18"];
+
+    /// <summary>匹配方式下拉的索引 → 站点的 s_mode 参数。</summary>
+    private static readonly string[] PixivMatches = ["s_tag", "s_tag_full", "s_tc"];
+
+    /// <summary>三个下拉的选项文案随语言变，故每次重译都重建（同 BuildEhOriginalCombo）。</summary>
+    private void BuildPixivCombos()
+    {
+        var original = PxOriginalCombo.SelectedIndex;
+        var mode = PxModeCombo.SelectedIndex;
+        var match = PxMatchCombo.SelectedIndex;
+        _loading = true;
+
+        PxOriginalCombo.Items.Clear();
+        PxOriginalCombo.Items.Add(I18n.Tr("原图"));
+        PxOriginalCombo.Items.Add(I18n.Tr("站点缩放图（1200px）"));
+        PxOriginalCombo.SelectedIndex = original >= 0 ? original : (AppConfig.PixivOriginal ? 0 : 1);
+
+        PxModeCombo.Items.Clear();
+        PxModeCombo.Items.Add(I18n.Tr("全部"));
+        PxModeCombo.Items.Add(I18n.Tr("全年龄"));
+        PxModeCombo.Items.Add(I18n.Tr("仅 R-18"));
+        PxModeCombo.SelectedIndex =
+            mode >= 0 ? mode : Math.Max(0, Array.IndexOf(PixivModes, AppConfig.PixivSearchMode));
+
+        PxMatchCombo.Items.Clear();
+        PxMatchCombo.Items.Add(I18n.Tr("标签部分一致"));
+        PxMatchCombo.Items.Add(I18n.Tr("标签完全一致"));
+        PxMatchCombo.Items.Add(I18n.Tr("标题与说明文"));
+        PxMatchCombo.SelectedIndex =
+            match >= 0 ? match : Math.Max(0, Array.IndexOf(PixivMatches, AppConfig.PixivTagMatch));
+
+        _loading = false;
+    }
+
+    private void PxOriginalCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || PxOriginalCombo.SelectedIndex < 0)
+            return;
+        AppConfig.Write("pixiv", "original", PxOriginalCombo.SelectedIndex == 0 ? "True" : "False");
+    }
+
+    private void PxModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || PxModeCombo.SelectedIndex < 0)
+            return;
+        AppConfig.Write("pixiv", "mode", PixivModes[PxModeCombo.SelectedIndex]);
+    }
+
+    private void PxMatchCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || PxMatchCombo.SelectedIndex < 0)
+            return;
+        AppConfig.Write("pixiv", "s_mode", PixivMatches[PxMatchCombo.SelectedIndex]);
+    }
+
+    private void PxSessionBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.Write("pixiv", "php_sessid", PxSessionBox.Text.Trim());
+        PixivApi.Invalidate();   // cookie 变了要重建客户端
+    }
+
+    private async void PxTestButton_Click(object sender, RoutedEventArgs e)
+    {
+        // 先保存当前输入，再用其连接
+        AppConfig.Write("pixiv", "php_sessid", PxSessionBox.Text.Trim());
+        PixivApi.Invalidate();
+        PxTestButton.IsEnabled = false;
+        try
+        {
+            var (ok, message) = await PixivApi.TestAsync();
+            if (ok)
+                InAppDialog.Info(this, message, I18n.Tr("测试成功"));
+            else
+                InAppDialog.Warn(this, message, I18n.Tr("测试失败"));
+        }
+        finally
+        {
+            PxTestButton.IsEnabled = true;
+        }
+    }
+
     private void AutoDownloadCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loading)
@@ -457,12 +794,64 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("down_list", "speed_limit", int.TryParse(value, out _) ? value : "0");
     }
 
-    private void UnzipPwdBox_LostFocus(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 解压密码库：一个输入框一个密码，末尾「＋」新增一条、每行「✕」删除（对齐 Web 设置页）。
+    /// 库里仍存老格式（一行一个），故 AppConfig.UnzipPasswords 那边不用改。
+    /// </summary>
+    private void RebuildUnzipPwdRows()
+    {
+        UnzipPwdList.Children.Clear();
+        for (var i = 0; i < _unzipPwds.Count; i++)
+        {
+            var index = i;   // 行随增删整体重建，故这里捕获的下标始终对得上
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+            var remove = new Button
+            {
+                Content = "✕", Width = 30, Margin = new Thickness(6, 0, 0, 0),
+                Padding = new Thickness(0, 4, 0, 4), ToolTip = I18n.Tr("删除这条密码"),
+                Style = (Style)FindResource("DangerButton"),
+            };
+            remove.Click += (_, _) =>
+            {
+                _unzipPwds.RemoveAt(index);
+                SaveUnzipPwds();
+                RebuildUnzipPwdRows();
+            };
+            DockPanel.SetDock(remove, Dock.Right);
+            row.Children.Add(remove);
+            var box = new TextBox
+            {
+                Text = _unzipPwds[index], VerticalContentAlignment = VerticalAlignment.Center,
+            };
+            box.TextChanged += (_, _) => _unzipPwds[index] = box.Text;
+            box.LostFocus += (_, _) => SaveUnzipPwds();
+            row.Children.Add(box);
+            UnzipPwdList.Children.Add(row);
+        }
+
+        var add = new Button
+        {
+            Content = "＋", Width = 34, Padding = new Thickness(0, 4, 0, 4),
+            HorizontalAlignment = HorizontalAlignment.Left, ToolTip = I18n.Tr("添加一条密码"),
+        };
+        add.Click += (_, _) =>
+        {
+            _unzipPwds.Add("");
+            RebuildUnzipPwdRows();
+            // 新增的那一行直接可以打字
+            (UnzipPwdList.Children[_unzipPwds.Count - 1] as DockPanel)?
+                .Children.OfType<TextBox>().FirstOrDefault()?.Focus();
+        };
+        UnzipPwdList.Children.Add(add);
+    }
+
+    /// <summary>写回密码库：去掉空行与首尾空白，顺序即解压时的尝试顺序。</summary>
+    private void SaveUnzipPwds()
     {
         if (_loading)
             return;
-        // 原样存（一行一个），取用时再拆行去空去重
-        AppConfig.Write("unzip", "passwords", UnzipPwdBox.Text);
+        AppConfig.Write("unzip", "passwords",
+            string.Join("\n", _unzipPwds.Select(p => p.Trim()).Where(p => p.Length > 0)));
     }
 
     private void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -532,6 +921,83 @@ public partial class SettingsPage : UserControl
         else
             WebServer.Stop();
         UpdateWebStatus();
+    }
+
+    // ---------- 门户单点登录 ----------
+
+    private void SsoEnableCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.Write("sso", "enabled", SsoEnableCombo.SelectedIndex == 0 ? "True" : "False");
+        UpdateSsoStatus();
+        UpdateWebStatus();
+    }
+
+    /// <summary>四个文本框共用：Tag 即 sso 段的键名。失焦即存（同其它分区，无保存按钮）。</summary>
+    private void SsoBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not TextBox box || box.Tag is not string key)
+            return;
+        AppConfig.Write("sso", key, box.Text.Trim());
+        UpdateSsoStatus();
+        UpdateWebStatus();
+    }
+
+    private void UpdateSsoStatus()
+    {
+        if (SsoStatusLabel == null)
+            return;
+        if (!AppConfig.SsoEnabled)
+            SsoStatusLabel.Text = I18n.Tr("单点登录已关闭：Web 端只认访问密码");
+        else if (!AppConfig.SsoConfigured)
+            SsoStatusLabel.Text = I18n.Tr("未生效：门户地址 / Client ID / Client Secret 需填齐");
+        else
+        {
+            // 门户那边要登记的回调地址：局域网直连一个；经门户代理打开的话再加代理底下那个
+            var callback = $"http://{WebServer.LocalIPv4()}:{AppConfig.WebPort}/api/sso/callback";
+            SsoStatusLabel.Text = I18n.Format(
+                I18n.Tr("已生效 · 请在门户 conf.json 的 idp.clients 里登记 redirect_uris：{url}（经门户代理访问时，另加 <门户地址>/api/proxy/<卡片ID>/api/sso/callback）"),
+                ("url", callback));
+        }
+        RefreshSsoUsers();
+    }
+
+    /// <summary>用户列表：门户单点登录首次登录时自动建出来的本地用户。删掉即让其会话失效，下次登录会重新建。</summary>
+    private void RefreshSsoUsers()
+    {
+        SsoUsersPanel.Children.Clear();
+        var users = PortalSso.ListUsers();
+        if (users.Count == 0)
+        {
+            SsoUsersPanel.Children.Add(new TextBlock
+            {
+                Text = I18n.Tr("还没有用户：从门户首次登录时自动创建"),
+                Foreground = (System.Windows.Media.Brush)FindResource("CaptionBrush"),
+            });
+            return;
+        }
+        foreach (var u in users)
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
+            var del = new Button { Content = I18n.Tr("删除"), Margin = new Thickness(8, 0, 0, 0) };
+            var id = u.Id;
+            var name = u.Username;
+            del.Click += (_, _) =>
+            {
+                PortalSso.DeleteUser(id);
+                Logger.Info($"门户单点登录：已删除本地用户 {name}");
+                RefreshSsoUsers();
+            };
+            DockPanel.SetDock(del, Dock.Right);
+            row.Children.Add(del);
+            var text = u.DisplayName == u.Username ? u.Username : $"{u.DisplayName}（{u.Username}）";
+            if (u.IsAdmin)
+                text += " · " + I18n.Tr("门户管理员");
+            text += " · " + I18n.Tr("最近登录") + " " + u.LastLogin;
+            row.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+            SsoUsersPanel.Children.Add(row);
+        }
     }
 
     // ---------- 图床存储 ----------
@@ -639,6 +1105,207 @@ public partial class SettingsPage : UserControl
         ImageHostStatusLabel.Text = status.Length > 0 ? "✓ " + status : ImageHostService.IdleSummary();
     }
 
+    // ---------- 图片翻译 ----------
+
+    private void TransEnableCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading)
+            return;
+        var wantOn = TransEnableCombo.SelectedIndex == 0;
+        // 依赖没下齐就不让开：开了也不会生效（TranslateService.Enabled 两个条件都要），
+        // 与其让用户以为开了，不如在这里挡住并说清楚原因
+        if (wantOn && !TranslateService.DepsReady)
+        {
+            _loading = true;
+            TransEnableCombo.SelectedIndex = 1;
+            _loading = false;
+            TransStatusLabel.Text = I18n.Tr("请先下载模型依赖，下齐后才能启用");
+            return;
+        }
+        AppConfig.TranslateEnabledSetting = wantOn;
+        UpdateTranslateStatus();
+    }
+
+    private void TransTierCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading)
+            return;
+        var index = TransTierCombo.SelectedIndex;
+        if (index < 0 || index >= _tierIds.Count)
+            return;
+        AppConfig.TranslateModelTier = _tierIds[index];
+        // 换档位后新档位的依赖多半没下齐，此时先前的"已启用"就成了空头支票——直接关掉
+        if (AppConfig.TranslateEnabledSetting && !TranslateService.DepsReady)
+        {
+            AppConfig.TranslateEnabledSetting = false;
+            _loading = true;
+            TransEnableCombo.SelectedIndex = 1;
+            _loading = false;
+        }
+        UpdateTranslateStatus();
+    }
+
+    private void TransDeviceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.TranslateDevice = TransDeviceCombo.SelectedIndex == 1 ? "gpu" : "cpu";
+    }
+
+    private void TransPathBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+            return;
+        ApplyTranslatePath(TransPathBox.Text.Trim());
+    }
+
+    private void TransPathChooseButton_Click(object sender, RoutedEventArgs e)
+    {
+        var current = TransPathBox.Text;
+        var dialog = new OpenFolderDialog
+        {
+            Title = I18n.Tr("选择模型目录"),
+            InitialDirectory = Directory.Exists(current) ? current : TranslateModels.Root,
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+            return;
+        ApplyTranslatePath(Path.GetFullPath(dialog.FolderName));
+    }
+
+    /// <summary>换模型目录：清单与安装记录都跟着目录走，必须整体失效重读。</summary>
+    private void ApplyTranslatePath(string path)
+    {
+        if (TranslateDeps.Running)
+        {
+            TransStatusLabel.Text = I18n.Tr("下载进行中，无法更改模型目录");
+            TransPathBox.Text = TranslateModels.Root;
+            return;
+        }
+        AppConfig.TranslateModelPath = path;
+        TranslateModels.Invalidate();
+        TransPathBox.Text = TranslateModels.Root;
+        // 新目录里多半没有模型，同样不能让"已启用"悬空
+        if (AppConfig.TranslateEnabledSetting && !TranslateService.DepsReady)
+        {
+            AppConfig.TranslateEnabledSetting = false;
+            _loading = true;
+            TransEnableCombo.SelectedIndex = 1;
+            _loading = false;
+        }
+        UpdateTranslateStatus();
+    }
+
+    private void TransFontBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.TranslateFont = TransFontBox.Text.Trim();
+    }
+
+    private async void TransDownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (TranslateDeps.Running)
+            return;
+        var tier = TranslateModels.Tier(AppConfig.TranslateModelTier);
+        var status = TranslateModels.Status(tier.Id);
+        if (status.Ready)
+        {
+            TransStatusLabel.Text = I18n.Tr("依赖已齐备，可以启用图片翻译");
+            return;
+        }
+        var need = Math.Max(0, status.TotalBytes - status.HaveBytes);
+        var message = I18n.Format(
+            I18n.Tr("将下载「{tier}」的模型依赖，约 {size}，存放在：\n{path}\n\n下载可随时取消并支持断点续传。是否继续？"),
+            ("tier", tier.Name), ("size", TranslateModels.FormatSize(need)), ("path", TranslateModels.Root));
+        if (!InAppDialog.Confirm(this, message, I18n.Tr("下载依赖")))
+            return;
+
+        UpdateTranslateStatus();
+        await TranslateDeps.StartAsync(tier.Id);
+        UpdateTranslateStatus();
+    }
+
+    private void TransCancelButton_Click(object sender, RoutedEventArgs e) => TranslateDeps.Cancel();
+
+    private void TransRemoveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (TranslateDeps.Running)
+        {
+            TransStatusLabel.Text = I18n.Tr("请先取消下载");
+            return;
+        }
+        var tier = TranslateModels.Tier(AppConfig.TranslateModelTier);
+        var status = TranslateModels.Status(tier.Id);
+        if (status.HaveBytes <= 0)
+        {
+            TransStatusLabel.Text = I18n.Tr("没有已下载的模型文件");
+            return;
+        }
+        var message = I18n.Format(
+            I18n.Tr("将删除「{tier}」的模型文件，释放约 {size}。图片翻译会随之停用。是否继续？"),
+            ("tier", tier.Name), ("size", TranslateModels.FormatSize(status.HaveBytes)));
+        if (!InAppDialog.Confirm(this, message, I18n.Tr("删除依赖")))
+            return;
+
+        var freed = TranslateModels.Remove(tier.Id);
+        AppConfig.TranslateEnabledSetting = false;
+        _loading = true;
+        TransEnableCombo.SelectedIndex = 1;
+        _loading = false;
+        UpdateTranslateStatus();
+        TransStatusLabel.Text = I18n.Format(
+            I18n.Tr("已删除模型文件，释放 {size}"), ("size", TranslateModels.FormatSize(freed)));
+    }
+
+    /// <summary>刷新图片翻译区块的可用性、进度条与状态文字。</summary>
+    private void UpdateTranslateStatus()
+    {
+        if (TransStatusLabel == null)
+            return;
+
+        var running = TranslateDeps.Running;
+        var ready = TranslateService.DepsReady;
+
+        // 依赖没齐就不给开；下载中把会改动目标的控件全部锁住
+        TransEnableCombo.IsEnabled = ready && !running;
+        TransTierCombo.IsEnabled = !running;
+        TransPathBox.IsEnabled = !running;
+        TransPathChooseButton.IsEnabled = !running;
+        TransDownloadButton.IsEnabled = !running && !ready;
+        TransCancelButton.IsEnabled = running;
+        TransRemoveButton.IsEnabled = !running;
+
+        var progress = TranslateDeps.Progress;
+        if (running && progress.TotalTotal > 0)
+        {
+            TransProgressBar.Visibility = Visibility.Visible;
+            TransProgressBar.Value = Math.Clamp(progress.TotalHave * 100.0 / progress.TotalTotal, 0, 100);
+        }
+        else
+        {
+            TransProgressBar.Visibility = Visibility.Collapsed;
+        }
+
+        if (running)
+        {
+            var speed = progress.SpeedBps > 0
+                ? $" · {TranslateModels.FormatSize((long)progress.SpeedBps)}/s"
+                : "";
+            TransStatusLabel.Text =
+                $"⏳ {progress.Message}　{TranslateModels.FormatSize(progress.TotalHave)} / " +
+                $"{TranslateModels.FormatSize(progress.TotalTotal)}{speed}";
+            return;
+        }
+
+        // 下载刚失败/刚取消时优先显示那句话，否则显示常驻状态
+        if (progress.Message.Length > 0 && progress.Failed)
+        {
+            TransStatusLabel.Text = "✗ " + progress.Message;
+            return;
+        }
+        TransStatusLabel.Text = (ready ? "✓ " : "") + TranslateService.StatusText();
+    }
+
     private void UpdateWebStatus()
     {
         if (WebStatusLabel == null)
@@ -654,6 +1321,8 @@ public partial class SettingsPage : UserControl
             var text = I18n.Format(I18n.Tr("已开启 · 在手机/电脑浏览器打开 {url}"), ("url", url));
             if (AppConfig.WebPassword.Length > 0)
                 text += I18n.Tr("（需输入访问密码）");
+            if (PortalSso.Active)
+                text += I18n.Tr("（可用门户单点登录）");
             WebStatusLabel.Text = text;
         }
         else

@@ -23,6 +23,8 @@
     <EmbeddedResource Include="Web\js\*.js" />
     <!-- 浏览器标签页图标（favicon），由 WebAssets 作为静态资源在鉴权前放行 -->
     <EmbeddedResource Include="Web\favicon.ico" />
+    <!-- 图片翻译的依赖清单（内置默认值；模型目录下放同名文件即可覆盖，便于换镜像源） -->
+    <EmbeddedResource Include="Services\Translate\translate-models.json" />
   </ItemGroup>
 
   <ItemGroup>

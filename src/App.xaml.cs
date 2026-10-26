@@ -21,10 +21,14 @@ public partial class App : Application
         DlsiteMakerIcon.Kick();
         // 开启了图床存储时，后台把新入库作品的封面补传上去（未开启为空操作）
         ImageHostService.Kick();
+        // FANBOX 作家监控的轮询线程：到点就去 pawchive 看有没有新投稿，有就自动入队下载
+        // （没有监控项时为空转；总开关关闭时只是不做事，手动「立即检查」仍可用）
+        FanboxWatchService.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        FanboxWatchService.Stop();
         ImageHostService.Stop();
         WebServer.Stop();
         Db.Checkpoint();

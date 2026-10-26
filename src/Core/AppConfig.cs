@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -50,10 +50,35 @@ public static class AppConfig
         },
         // fanbox 数据源（pawchive 站点）：域名可换镜像，附件/缩略图子域由主域推导
         ["pawchive"] = new() { ["host"] = "pawchive.pw" },
+        // FANBOX 作家监控：总开关 + 新建监控时的默认轮询间隔（分钟）。
+        // 总开关只管后台自动轮询，手动「立即检查」不受它影响；没有监控项时轮询是空转。
+        ["fanbox_watch"] = new() { ["enabled"] = "True", ["interval"] = "360" },
+        // E-Hentai 数据源：表站(e-hentai.org)可匿名浏览，里站(exhentai.org)必须带登录 cookie；
+        // original=True 时下原图（fullimg），否则下站点显示用的缩放图（省看图额度）
+        ["ehentai"] = new()
+        {
+            ["host"] = "e-hentai.org", ["member_id"] = "", ["pass_hash"] = "", ["igneous"] = "",
+            ["username"] = "",
+            ["original"] = "True",
+        },
+        // pixiv 数据源：匿名也能搜，但结果里不含 R-18，要看 R-18 就得填浏览器里的 PHPSESSID。
+        // mode=搜索分级(all/safe/r18)，s_mode=匹配方式(标签部分/完全一致、标题说明文)，
+        // original=True 时下原图，否则下 1200px 缩放图
+        ["pixiv"] = new()
+        {
+            ["php_sessid"] = "", ["mode"] = "all", ["s_mode"] = "s_tag", ["original"] = "True",
+        },
         // 图床存储（自建 Image_hosting 服务）：开启后作品卡封面由图床直供，不再逐张唤醒 HDD
         ["image_host"] = new()
         {
             ["enabled"] = "False", ["base_url"] = "", ["project"] = "", ["token"] = "",
+        },
+        // 图片翻译（漫画嵌字）：默认关闭，且模型依赖没下齐之前启用也不生效
+        // （生效与否一律问 Services.Translate.TranslateService.Enabled，别直接读 enabled）
+        ["translate"] = new()
+        {
+            ["enabled"] = "False", ["model_tier"] = "full", ["model_path"] = "",
+            ["target_lang"] = "zh_CN", ["device"] = "cpu", ["font"] = "",
         },
         // asmr.one 下载的文件类型过滤（仅勾选的类型会入队下载）
         ["asmr_filetype"] = new()
@@ -247,6 +272,56 @@ public static class AppConfig
     /// <summary>外部访问密码；为空表示不鉴权。</summary>
     public static string WebPassword => Read("web_server", "password", "") ?? "";
 
+    // ---------- 门户单点登录（Portal 当 OIDC 提供方，Services/PortalSso）----------
+
+    /// <summary>外部访问是否接入门户单点登录。开着时 Web 端一律要登录（不论访问密码是否为空）。</summary>
+    public static bool SsoEnabled => Read("sso", "enabled") == "True";
+
+    /// <summary>
+    /// 浏览器看到的门户地址（如 https://portal.example.com）。授权跳转去这里，
+    /// 也是 id_token 的 iss——必须与门户 conf.json 的 idp.issuer 一字不差。
+    /// </summary>
+    public static string SsoPortalUrl => NormalizeUrl(Read("sso", "portal_url", "") ?? "");
+
+    /// <summary>
+    /// 本机访问门户用的地址（如 http://10.0.10.5:9921），用于换 token。留空则同门户地址。
+    /// 门户挂在 Cloudflare 之类后面时，从本机直连内网地址更快也更稳。
+    /// </summary>
+    public static string SsoInternalUrl => NormalizeUrl(Read("sso", "internal_url", "") ?? "");
+
+    public static string SsoClientId => (Read("sso", "client_id", "") ?? "").Trim();
+    public static string SsoClientSecret => (Read("sso", "client_secret", "") ?? "").Trim();
+
+    /// <summary>四项必填齐了没有（内网地址可选）。没齐时即使开着也不生效。</summary>
+    public static bool SsoConfigured =>
+        SsoPortalUrl.Length > 0 && SsoClientId.Length > 0 && SsoClientSecret.Length > 0;
+
+    /// <summary>
+    /// Web 端登录会话的签名密钥，首次用到时随机生成并落库。不做成设置项：让人填多半会被填成弱口令；
+    /// 换掉它等于让所有已登录的浏览器下线。
+    /// </summary>
+    public static string SsoSessionSecret
+    {
+        get
+        {
+            var key = Read("sso", "session_secret", "") ?? "";
+            if (key.Length >= 32)
+                return key;
+            key = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            Write("sso", "session_secret", key);
+            return key;
+        }
+    }
+
+    private static string NormalizeUrl(string raw)
+    {
+        var url = raw.Trim().TrimEnd('/');
+        if (url.Length > 0 && !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                           && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            url = "http://" + url;
+        return url;
+    }
+
     /// <summary>媒体库列表（media_lib.libs，JSON）。</summary>
     public static List<MediaLib> ReadMediaLibs()
     {
@@ -330,6 +405,102 @@ public static class AppConfig
         set => Write("pawchive", "host", value.Trim());
     }
 
+    /// <summary>FANBOX 作家监控的后台轮询总开关（关掉只停自动轮询，手动「立即检查」照常可用）。</summary>
+    public static bool FanboxWatchEnabled
+    {
+        get => Read("fanbox_watch", "enabled", "True") != "False";
+        set => Write("fanbox_watch", "enabled", value ? "True" : "False");
+    }
+
+    /// <summary>新建作家监控时的默认轮询间隔（分钟）；已有监控各自存自己的间隔。</summary>
+    public static int FanboxWatchInterval
+    {
+        get => Math.Clamp(ReadInt("fanbox_watch", "interval", 360), 10, 7 * 24 * 60);
+        set => Write("fanbox_watch", "interval",
+            Math.Clamp(value, 10, 7 * 24 * 60).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    // ---------- E-Hentai 数据源 ----------
+
+    /// <summary>
+    /// 站点域名：e-hentai.org（表站，可匿名浏览）或 exhentai.org（里站，必须带登录 cookie）。
+    /// 元数据 API 固定走 api.e-hentai.org，两站通用，不随此项变化。
+    /// </summary>
+    public static string EhentaiHost
+    {
+        get
+        {
+            var host = (Read("ehentai", "host", "e-hentai.org") ?? "").Trim();
+            return host.Length > 0 ? host : "e-hentai.org";
+        }
+        set => Write("ehentai", "host", value.Trim());
+    }
+
+    /// <summary>
+    /// 站点账号名。只为「登录并获取 Cookie」按钮回填输入框而存，鉴权一律用下面三个 cookie。
+    /// 密码有意不存：cookie 本身就是长期凭据，留一份明文口令没有额外用处。
+    /// </summary>
+    public static string EhentaiUsername => (Read("ehentai", "username", "") ?? "").Trim();
+
+    /// <summary>登录 cookie 的 ipb_member_id（浏览器登录后从 Cookie 里复制）。</summary>
+    public static string EhentaiMemberId => (Read("ehentai", "member_id", "") ?? "").Trim();
+
+    /// <summary>登录 cookie 的 ipb_pass_hash。</summary>
+    public static string EhentaiPassHash => (Read("ehentai", "pass_hash", "") ?? "").Trim();
+
+    /// <summary>登录 cookie 的 igneous（仅 exhentai 需要，表站留空即可）。</summary>
+    public static string EhentaiIgneous => (Read("ehentai", "igneous", "") ?? "").Trim();
+
+    /// <summary>
+    /// 是否下载原图。关闭时下站点显示用的缩放图（默认 1280px 宽）——画质略低，
+    /// 但每张只算一次看图额度，大批量下载不容易触发站点的限额封锁。
+    ///
+    /// 注意：原图走站点的 fullimg 接口，**必须登录**（填了 member_id / pass_hash）。
+    /// 未登录时 EhentaiApi 会自动退回显示图，不会因此下载失败。
+    /// </summary>
+    public static bool EhentaiOriginal => Read("ehentai", "original", "True") != "False";
+
+    // ---------- pixiv 数据源 ----------
+
+    /// <summary>
+    /// 登录 cookie 的 PHPSESSID（浏览器登录 pixiv 后从 Cookie 里复制，形如 <c>12345678_abcdef…</c>）。
+    /// 留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉，单独打开也会被拒。
+    /// 只存这一个 cookie：pixiv 的鉴权只认它，别的 cookie 存了也没用。
+    /// </summary>
+    public static string PixivSessionId => (Read("pixiv", "php_sessid", "") ?? "").Trim();
+
+    /// <summary>
+    /// 搜索分级（站点的 mode 参数）：all=全部 / safe=全年龄 / r18=仅 R-18。
+    /// 未登录时选 all 或 r18 都只会拿到全年龄作品，那是站点在过滤，不是这里没生效。
+    /// </summary>
+    public static string PixivSearchMode
+    {
+        get
+        {
+            var mode = (Read("pixiv", "mode", "all") ?? "").Trim();
+            return mode is "all" or "safe" or "r18" ? mode : "all";
+        }
+    }
+
+    /// <summary>
+    /// 匹配方式（站点的 s_mode 参数）：s_tag=标签部分一致 / s_tag_full=标签完全一致 /
+    /// s_tc=标题与说明文。默认部分一致——搜索框里多是随手输入的词，完全一致常常一条都搜不到。
+    /// </summary>
+    public static string PixivTagMatch
+    {
+        get
+        {
+            var mode = (Read("pixiv", "s_mode", "s_tag") ?? "").Trim();
+            return mode is "s_tag" or "s_tag_full" or "s_tc" ? mode : "s_tag";
+        }
+    }
+
+    /// <summary>
+    /// 是否下载原图。关闭时下站点的 1200px 缩放图——体积小得多，但漫画的文字会糊。
+    /// 与 E-Hentai 不同，pixiv 的原图不需要登录（只有 R-18 作品本身才需要）。
+    /// </summary>
+    public static bool PixivOriginal => Read("pixiv", "original", "True") != "False";
+
     // ---------- 图床存储（自建 Image_hosting）----------
 
     /// <summary>是否启用图床存储（作品卡封面改由图床直供，媒体库翻页不再读 HDD 原图）。</summary>
@@ -363,4 +534,52 @@ public static class AppConfig
     /// <summary>配置是否齐全（地址/项目/Token 缺一不可），与"是否启用"分开判断。</summary>
     public static bool ImageHostConfigured =>
         ImageHostBaseUrl.Length > 0 && ImageHostProject.Length > 0 && ImageHostToken.Length > 0;
+
+    // ---------- 图片翻译（漫画嵌字）----------
+
+    /// <summary>
+    /// 用户在设置页勾的那个开关——**不代表功能真的可用**。
+    /// 模型依赖没下齐时这里为 True 也不该翻译，故各调用点一律问
+    /// <c>Services.Translate.TranslateService.Enabled</c>，不要直接读本属性。
+    /// </summary>
+    public static bool TranslateEnabledSetting
+    {
+        get => Read("translate", "enabled") == "True";
+        set => Write("translate", "enabled", value ? "True" : "False");
+    }
+
+    /// <summary>模型档位 id（对应依赖清单 tiers 里的 id，如 lite / full）。</summary>
+    public static string TranslateModelTier
+    {
+        get => (Read("translate", "model_tier", "full") ?? "full").Trim();
+        set => Write("translate", "model_tier", value.Trim());
+    }
+
+    /// <summary>模型存放目录；留空表示用默认的「工作目录/models/translate」。</summary>
+    public static string TranslateModelPath
+    {
+        get => (Read("translate", "model_path", "") ?? "").Trim();
+        set => Write("translate", "model_path", value.Trim());
+    }
+
+    /// <summary>译文目标语言（沿用 I18n 的语言代码）。</summary>
+    public static string TranslateTargetLang
+    {
+        get => (Read("translate", "target_lang", "zh_CN") ?? "zh_CN").Trim();
+        set => Write("translate", "target_lang", value.Trim());
+    }
+
+    /// <summary>推理设备："cpu" 或 "gpu"（无可用显卡时由引擎自行退回 CPU）。</summary>
+    public static string TranslateDevice
+    {
+        get => (Read("translate", "device", "cpu") ?? "cpu").Trim();
+        set => Write("translate", "device", value.Trim());
+    }
+
+    /// <summary>嵌字用的字体名；留空表示用系统默认中文字体。</summary>
+    public static string TranslateFont
+    {
+        get => (Read("translate", "font", "") ?? "").Trim();
+        set => Write("translate", "font", value.Trim());
+    }
 }

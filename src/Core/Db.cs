@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Microsoft.Data.Sqlite;
@@ -201,6 +201,41 @@ public static class Db
                         "up_time" text,
                         PRIMARY KEY ("maker_name")
                     );
+
+                    -- FANBOX 作家监控：按作家轮询 pawchive，发现新投稿就自动入队下载。
+                    -- last_published 是"已处理到哪一篇"的水位线：站上投稿的 published 是 ISO 字符串
+                    -- （2026-08-29T23:53:10），按字典序比较即按时间比较，比它新的才算新作品。
+                    -- 空串表示"连现有作品也要下"，第一轮会把该作家站上的全部投稿入队，水位线随即推到最新。
+                    -- target_lib / target_folder 是添加监控时选定的下载目标，自动下载据此入库。
+                    CREATE TABLE IF NOT EXISTS "fanbox_watch" (
+                        "artist_id" text NOT NULL,
+                        "service" text,
+                        "artist_name" text,
+                        "interval_min" integer,
+                        "enabled" text,
+                        "last_check" text,
+                        "last_published" text,
+                        "target_lib" text,
+                        "target_folder" text,
+                        "last_result" text,
+                        "downloaded" integer,
+                        "add_time" text,
+                        PRIMARY KEY ("artist_id")
+                    );
+
+                    -- 外部访问（Web 端）的登录用户，由门户单点登录首次登录时建出来（Services/PortalSso）。
+                    -- 认人只认 portal_sub（门户的用户 id）：用户名在门户里能改，跟着它走会把改过名的人
+                    -- 认成另一个人。用户名只在首次绑定时用来匹配同名的已有用户。
+                    -- 媒体库数据不分用户，这张表只管「谁登进来了」。
+                    CREATE TABLE IF NOT EXISTS "web_users" (
+                        "id" integer PRIMARY KEY AUTOINCREMENT,
+                        "username" text NOT NULL UNIQUE COLLATE NOCASE,
+                        "display_name" text,
+                        "portal_sub" text UNIQUE,
+                        "is_admin" text,
+                        "created_at" text,
+                        "last_login" text
+                    );
                     """;
                 cmd.ExecuteNonQuery();
             }
@@ -219,8 +254,9 @@ public static class Db
                 "state", "library", "sell_date", "series", "scenario", "illust",
                 "voice_actor", "genre", "file_size", "cover", "meta_scanned", "folder",
                 "target", "target_lib", "read_flag", "favorite",
-                // 数据源区分："anime-sharing"(默认/旧数据) 或 "asmr"；asmr_id 存 asmr.one 的数字作品 id（调 API 用）
-                "source", "asmr_id"
+                // 数据源区分："anime-sharing"(默认/旧数据) / "asmr" / "fanbox" / "ehentai" / "pixiv"；
+                // asmr_id 存 asmr.one 的数字作品 id，eh_token 存 E-Hentai 画廊令牌（回访画廊页两者缺一不可）
+                "source", "asmr_id", "eh_token"
             ];
             foreach (var col in required)
             {
