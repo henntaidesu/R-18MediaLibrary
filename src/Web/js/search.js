@@ -66,7 +66,7 @@ function renderSearchArea() {
   pxDl.onclick = pxDownloadDetail;
   const pxBack = el('button', 'icon-btn', '返回'); pxBack.id = 'pxBackBtn'; pxBack.style.display = 'none'; pxBack.onclick = pxGoBackToList;
 
-  bar.append(src, inp, btn, autoAll, backList, fbDl, fbBack, ehBack, pxDl, pxBack);
+  bar.append(src, inp, btn, autoAll, backList, fbDl, fbBack, ehBack, pxDl, pxBack, helpButton());   // ? 按当前来源打开对应章节
   host.appendChild(bar);
 
   // DLsite：社团网格与帖子列表分两个 pane（进帖子列表时只隐藏社团 pane，保留 DOM 与后台扫描，返回即缓存恢复）

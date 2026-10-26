@@ -49,7 +49,14 @@ public class AccountPage : UserControl
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         // 顶栏只有标题（Web accounts.js：$('title') = '账号访问'），样式同其它页的页顶横条
-        root.Children.Add(new Border { Style = Res<Style>("ToolbarCard"), Child = _title });
+        // 标题右端是 ? 使用帮助（Web 顶栏 #helpBtn）
+        var head = new DockPanel();
+        var help = HelpPanel.Button("13");
+        DockPanel.SetDock(help, Dock.Right);
+        head.Children.Add(help);
+        _title.VerticalAlignment = VerticalAlignment.Center;
+        head.Children.Add(_title);
+        root.Children.Add(new Border { Style = Res<Style>("ToolbarCard"), Child = head });
         var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _panel };
         Grid.SetRow(scroll, 1);
         root.Children.Add(scroll);

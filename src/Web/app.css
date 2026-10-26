@@ -564,3 +564,41 @@
   background: rgba(0,0,0,.66); color: #fff; font-size: 11px; line-height: 16px; border-radius: 3px;
 }
 .ehmore { min-height: 24px; padding: 12px 0; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ---------- 使用帮助（help.js）：各页面的 ? 按钮 + 右侧帮助面板 ---------- */
+.help-btn { width: 34px; padding-left: 0; padding-right: 0; font-weight: 700; flex: none; }
+#helpBtn { order: 3; margin-left: auto; }
+.layout-mobile #topbar.detail-mode #helpBtn { order: 1; }
+.toolbar .help-btn { margin-left: auto; }
+.toolbar .grow ~ .help-btn, .toolbar .usage-card ~ .help-btn { margin-left: 0; }
+.sec > h3 { display: flex; align-items: center; gap: 8px; }
+.sec > h3 .help-btn { margin-left: auto; width: 26px; height: 26px; min-height: 0; font-size: 13px; }
+.help-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 68; display: none; }
+.help-backdrop.show { display: block; }
+.help-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); z-index: 69;
+  display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line);
+  box-shadow: -2px 0 18px rgba(0,0,0,.55); transform: translateX(100%); transition: transform .22s ease;
+  visibility: hidden;
+}
+.help-panel.show { transform: none; visibility: visible; }
+.help-head, .help-foot { display: flex; align-items: center; gap: 8px; padding: 10px var(--pad); flex: none; }
+.help-head { border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.help-head .grow { flex: 1; min-width: 0; }
+.help-title { font-weight: 600; white-space: nowrap; }
+.help-foot { border-top: 1px solid var(--line); justify-content: space-between; }
+.help-body { flex: 1; overflow-y: auto; padding: 4px var(--pad) 24px; overscroll-behavior: contain; }
+.help-body h2 { font-size: 18px; margin: 14px 0 10px; }
+.help-doc h3 { font-size: 15px; margin: 20px 0 8px; padding-top: 4px; scroll-margin-top: 8px; }
+.help-doc h4 { font-size: 14px; margin: 16px 0 6px; }
+.help-doc h3.flash, .help-doc h4.flash { color: var(--accent); }
+.help-doc p, .help-doc li { line-height: 1.7; }
+.help-doc ol, .help-doc ul { padding-left: 22px; }
+.help-doc code { background: var(--surface2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 13px; }
+.help-doc pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: 13px; }
+.help-doc img { display: block; max-width: 100%; margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; }
+.help-doc .htable { overflow-x: auto; margin: 10px 0; }
+.help-doc table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.help-doc th, .help-doc td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+.help-doc th { background: var(--surface2); white-space: nowrap; }
+.help-doc a.hxref { cursor: pointer; }

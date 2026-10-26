@@ -36,7 +36,7 @@ async function fbWatchRefresh(body) {
   checkAll.disabled = !d.watches.length;
   checkAll.onclick = async () => { await apiPost('/api/fanbox/watch/check', {}); pollFbWatch(body); };
   bar.append(sw, checkAll, el('span', 'ro', '默认间隔'),
-    fbIntervalSelect(d.interval, v => apiPost('/api/fanbox/watch/config', { interval: v })));
+    fbIntervalSelect(d.interval, v => apiPost('/api/fanbox/watch/config', { interval: v })), helpButton('12'));
   body.appendChild(bar);
 
   const status = el('div', 'note'); status.id = 'fbWatchStatus';

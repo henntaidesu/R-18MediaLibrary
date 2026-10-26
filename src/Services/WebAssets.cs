@@ -37,6 +37,7 @@ internal static class WebAssets
         ("/js/accounts.js", ".accounts.js", "application/javascript; charset=utf-8"),
         ("/js/viewer.js",   ".viewer.js",   "application/javascript; charset=utf-8"),
         ("/js/stream.js",   ".stream.js",   "application/javascript; charset=utf-8"),
+        ("/js/help.js",     ".help.js",     "application/javascript; charset=utf-8"),
         ("/js/boot.js",     ".boot.js",     "application/javascript; charset=utf-8"),
     ];
 

@@ -70,7 +70,13 @@ public class WatchPage : UserControl
             AppConfig.FanboxWatchInterval = minutes;
         };
         bar.Children.Add(_defaultIntervalBox);
-        var barCard = new Border { Style = Res<Style>("ToolbarCard"), Child = bar };
+        // ? 使用帮助靠右（Web 工具栏末尾的 helpButton）
+        var barDock = new DockPanel();
+        var help = HelpPanel.Button("12");
+        DockPanel.SetDock(help, Dock.Right);
+        barDock.Children.Add(help);
+        barDock.Children.Add(bar);
+        var barCard = new Border { Style = Res<Style>("ToolbarCard"), Child = barDock };
         var panel = new StackPanel();
 
         // 检查状态 / 空闲时的一句概况（同 Web：忙时 ⏳ 正在检查…，闲时 IdleSummary）

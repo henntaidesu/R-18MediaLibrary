@@ -20,7 +20,7 @@ async function renderSettings() {
   const grow = node => { node.classList.add('grow'); return node; };                             // 撑满剩余宽度
 
   // 下载（桌面端：缓存路径 / 自动下载+自动解压 / 线程数+最低速度+速度限制 / 解压密码库）
-  let s = el('div', 'sec'); s.appendChild(el('h3', null, '下载'));
+  let s = el('div', 'sec'); s.appendChild(helpHeading('下载', '11.3'));
   s.appendChild(frow('缓存路径', grow(mkInput(d.downpath, v => write('downpath', 'downpath', v)))));
   s.appendChild(frow(
     '自动下载', w(mkSelect(boolOpts, d.autoDownload ? 'True' : 'False', v => write('down_list', 'auto_download', v)), 120),
@@ -65,7 +65,7 @@ async function renderSettings() {
   host.appendChild(s);
 
   // 代理（桌面端：开关 / 类型 / 主机 / 端口 同一行，只有第一个有标签）
-  s = el('div', 'sec'); s.appendChild(el('h3', null, '代理'));
+  s = el('div', 'sec'); s.appendChild(helpHeading('代理', '14.1'));
   const proxyHost = grow(mkInput(d.proxy.host, v => write('proxy', 'host', v)));
   proxyHost.placeholder = '主机';
   const proxyPort = w(mkInput(d.proxy.port, v => write('proxy', 'port', v)), 80);
@@ -77,7 +77,7 @@ async function renderSettings() {
   host.appendChild(s);
 
   // Debrid-Link（桌面端：API Key 与「测试」同一行）
-  s = el('div', 'sec'); s.appendChild(el('h3', null, 'Debrid-Link 下载中转站'));
+  s = el('div', 'sec'); s.appendChild(helpHeading('Debrid-Link 下载中转站', '7.2'));
   // API Key 不回传明文：留空表示不修改；仅在填入新值时写入
   // 明文仍不随设置一起回传：已设置时框里先放一串占位圆点；点 👁 输入访问密码后才向服务端取明文显示。
   // 占位值原样失焦不算修改，清空也不写库（留空 = 不修改）
@@ -114,7 +114,7 @@ async function renderSettings() {
   host.appendChild(s);
 
   // 系统（桌面端：语言 + 日志级别 + 解压编码 同一行；「关闭按钮」为桌面独有项）
-  s = el('div', 'sec'); s.appendChild(el('h3', null, '系统'));
+  s = el('div', 'sec'); s.appendChild(helpHeading('系统', '14.1'));
   s.appendChild(frow(
     '语言', w(mkSelect(d.languages.map(l => [l.code, l.name]), d.language, v => write('language', 'lang', v)), 140),
     '日志级别', w(mkSelect([['info', 'info'], ['error', 'error'], ['debug', 'debug']], d.logLevel, v => write('loglevel', 'level', v)), 120),
@@ -127,7 +127,7 @@ async function renderSettings() {
   // 图床存储：作品卡封面改由图床直供。媒体库多放在 HDD 上，翻一页卡片要逐张唤醒磁盘随机读，
   // 封面搬到图床后浏览器直接向图床要 ?w= 缩略图，本机硬盘只在真正播放作品时才转。
   // 排布同桌面端：启用+项目 一行 / 服务地址 一行 / API Token 与「测试连接」「迁移封面」同一行
-  s = el('div', 'sec'); s.appendChild(el('h3', null, '图床存储'));
+  s = el('div', 'sec'); s.appendChild(helpHeading('图床存储', '14.2'));
   const ihProj = w(mkInput(d.imageHost.project, v => write('image_host', 'project', v)), 180);
   ihProj.placeholder = '项目标识（slug）';
   s.appendChild(frow(
@@ -159,7 +159,7 @@ async function renderSettings() {
   pollImageHost();
 
   // 外部访问（只读，三项同一行，同桌面端那一行 外部访问 / 端口 / 访问密码）
-  s = el('div', 'sec'); s.appendChild(el('h3', null, '外部访问'));
+  s = el('div', 'sec'); s.appendChild(helpHeading('外部访问', '15.1'));
   s.appendChild(frow(
     '外部访问', el('div', 'ro', d.web.enabled ? '已开启' : '已关闭'),
     '端口', el('div', 'ro', String(d.web.port)),
@@ -186,7 +186,7 @@ function pollImageHost() {
 // ---------- 媒体库管理（设置页内）----------
 let _libScanPoll = null;
 async function renderMediaLibSection(host) {
-  const sec = el('div', 'sec'); sec.appendChild(el('h3', null, '媒体库'));
+  const sec = el('div', 'sec'); sec.appendChild(helpHeading('媒体库', '3'));
   const bar = el('div', 'toolbar inline');
   // 按钮文案同桌面端 MediaLibSettingDialog.BuildSection
   const addLibBtn = el('button', 'icon-btn', '新建媒体库');

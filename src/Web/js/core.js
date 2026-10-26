@@ -253,7 +253,8 @@ function syncStickyBars() {
   // 顶栏里一样东西都不显示时（搜索/下载页：标题为空、按钮全收起）整条藏掉，不留一道空白条。
   // 不能用 offsetParent 判断子元素是否可见：顶栏藏起来后子元素的 offsetParent 全是 null，会永远出不来。
   if (head) {
-    const empty = !Array.from($('topbar').children).some(c =>
+    // ? 帮助按钮不算内容：只剩它时顶栏照样收起（那几页的 ? 放在页内工具栏上）
+    const empty = !Array.from($('topbar').children).some(c => c.id !== 'helpBtn' &&
       !c.hidden && getComputedStyle(c).display !== 'none' && (c.tagName !== 'SPAN' || c.textContent.trim()));
     if (head.hidden !== empty) head.hidden = empty;
   }
@@ -303,6 +304,8 @@ function selectSection(key, noRender) {
   $('sort').hidden = true;
   $('libToggle').hidden = true;   // 媒体库的「显示作品/显示社团」只属于卡片区，换分区必须收起（否则会跟到搜索/下载页上）
   $('back').hidden = true;
+  // 顶栏无内容的几页（作品搜索 / 下载管理 / 作家监控）把 ? 放在页内工具栏上，顶栏这颗就收起，免得窄屏出两颗
+  $('helpBtn').hidden = ['search', 'download', 'watch'].includes(key);
   $('count').textContent = '';
   $('content').innerHTML = '';
   $('search').value = '';
@@ -418,6 +421,7 @@ async function popView() {
   return true;
 }
 window.addEventListener('popstate', () => {
+  if (HELP.isOpen) { hideHelp(); return; }   // 帮助面板同看图：返回手势只关掉它
   if (GS.isOpen) { GS.hide(); return; }   // 串流页同看图：返回手势只关掉它
   if (LB.isOpen) { LB.hide(); return; }   // 看图层先退：返回手势只关看图，不离开当前页
   if (section === 'search') return;   // 搜索分区内不压历史层级（来源/查询词只 replace）

@@ -21,6 +21,7 @@
       <button id="libToggle" class="icon-btn" hidden></button>
       <select id="sort" hidden></select>
       <div id="detailActions" class="topbar-actions" hidden></div>
+      <button id="helpBtn" class="icon-btn help-btn" title="使用帮助" aria-label="使用帮助">?</button>
     </div>
   </header>
   <main>
@@ -39,6 +40,22 @@
 <div id="picker" class="overlay"><div class="card2" id="pickerBox"></div></div>
 
 <div id="modal" class="overlay"><div class="card2" id="modalBox"></div></div>
+
+<!-- 使用帮助：各页面的 ? 按钮从右侧拉出，显示使用手册对应章节（help.js） -->
+<div id="helpBackdrop" class="help-backdrop" onclick="closeHelp()"></div>
+<aside id="helpPanel" class="help-panel" aria-label="使用帮助">
+  <div class="help-head">
+    <span class="help-title">? 使用帮助</span>
+    <select id="helpChapter" class="grow"></select>
+    <select id="helpLang"></select>
+    <button class="icon-btn" onclick="closeHelp()" title="关闭">✕</button>
+  </div>
+  <div id="helpBody" class="help-body"></div>
+  <div class="help-foot">
+    <button id="helpPrev" class="icon-btn">‹ 上一章</button>
+    <button id="helpNext" class="icon-btn">下一章 ›</button>
+  </div>
+</aside>
 
 <div id="videoOverlay" class="voverlay">
   <div class="vtop">
@@ -107,6 +124,7 @@
 <script src="/js/accounts.js"></script>
 <script src="/js/viewer.js"></script>
 <script src="/js/stream.js"></script>
+<script src="/js/help.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>

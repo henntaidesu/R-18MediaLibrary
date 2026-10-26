@@ -359,6 +359,14 @@ public partial class SearchPage : UserControl
         FanboxHost.Content = FanboxView;
         EhentaiHost.Content = EhentaiView;
         PixivHost.Content = PixivView;
+        // ? 按当前来源打开使用手册对应章节（同 Web help.js 的 helpTopic）
+        HelpSlot.Content = HelpPanel.Button(() => _source switch
+        {
+            SourceFanbox or SourceFanboxCc => "9",
+            SourceEhentai => "10.1",
+            SourcePixiv => "10.2",
+            _ => "7",
+        });
 
         // FANBOX 结果区的计数与「返回作家列表」按钮由本页的搜索栏统一呈现
         FanboxView.StatusChanged += text =>

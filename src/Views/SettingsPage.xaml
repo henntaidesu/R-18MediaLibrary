@@ -20,7 +20,11 @@
     </Grid.RowDefinitions>
     <!-- 页顶标题横条（Web 顶栏 #title =「系统设置」），常驻在滚动区之外 -->
     <Border Style="{StaticResource ToolbarCard}">
-        <TextBlock x:Name="PageTitle" Text="系统设置" FontSize="16" FontWeight="SemiBold" />
+        <DockPanel>
+            <!-- ? 使用帮助（Web 顶栏 #helpBtn），按钮由代码挂上（HelpPanel.Button） -->
+            <ContentControl x:Name="HelpSlot" DockPanel.Dock="Right" Margin="8,0,0,0" />
+            <TextBlock x:Name="PageTitle" Text="系统设置" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </DockPanel>
     </Border>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
         <StackPanel HorizontalAlignment="Stretch" MaxWidth="1100" Margin="0,0,8,0">

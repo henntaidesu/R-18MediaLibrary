@@ -404,6 +404,9 @@ public static class WebServer
                 case "/api/fanbox/post": await ApiFanboxPostAsync(stream, req); break;
                 case "/api/fanbox/enqueue": await ApiFanboxEnqueueAsync(stream, req); break;
                 case "/api/fanbox/image": await ApiFanboxImageAsync(stream, req); break;
+                // 使用帮助（各页面的 ? 按钮）：按章节拆好的使用手册 + 其中的截图
+                case "/api/help": ApiHelp(stream, req); break;
+                case "/api/help/img": ApiHelpImage(stream, req); break;
                 // 账号访问（FANBOX / pixiv / E-Hentai 的登录 cookie）
                 case "/api/accounts": ApiAccounts(stream); break;
                 case "/api/account/save": ApiAccountSave(stream, req); break;
@@ -2989,6 +2992,34 @@ public static class WebServer
         {
             WriteBytes(stream, 404, "Not Found", "text/plain", []);
         }
+    }
+
+    // ---------- API：使用帮助 ----------
+
+    /// <summary>
+    /// 整本手册按章节回给前端（lang 缺省时跟随程序界面语言）。正文已在服务端转成 HTML（文字均已转义），
+    /// 与桌面端共用 HelpManual 的同一个解析器；整本几十 KB，前端每种语言只取一次。
+    /// </summary>
+    private static void ApiHelp(NetworkStream stream, Request req)
+    {
+        var lang = HelpManual.NormalizeLang(req.Query.GetValueOrDefault("lang"));
+        WriteJson(stream, 200, new
+        {
+            lang,
+            languages = HelpManual.Languages.Select(l => new { code = l.Code, name = l.Name }),
+            chapters = HelpManual.Chapters(lang).Select(c => new { no = c.No, title = c.Title, html = HelpManual.RenderHtml(c) }),
+        });
+    }
+
+    private static void ApiHelpImage(NetworkStream stream, Request req)
+    {
+        var bytes = HelpManual.Image(req.Query.GetValueOrDefault("name") ?? "");
+        if (bytes == null)
+        {
+            WriteJson(stream, 404, new { error = "not found" });
+            return;
+        }
+        WriteBytes(stream, 200, "OK", "image/png", bytes, ("Cache-Control", "max-age=86400"));
     }
 
     // ---------- API：账号访问 ----------

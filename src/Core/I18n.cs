@@ -73,6 +73,12 @@ public static class I18n
     // 简体中文原文 -> {语言代码: 译文}
     private static readonly Dictionary<string, Dictionary<string, string>> Translations = new()
     {
+        // ---------- 使用帮助（各页面的 ? 按钮 / HelpPanel）----------
+        ["使用帮助"] = new() { ["zh_TW"] = "使用說明", ["ja"] = "ヘルプ", ["en"] = "Help" },
+        ["关闭帮助"] = new() { ["zh_TW"] = "關閉說明", ["ja"] = "ヘルプを閉じる", ["en"] = "Close help" },
+        ["‹ 上一章"] = new() { ["zh_TW"] = "‹ 上一章", ["ja"] = "‹ 前の章", ["en"] = "‹ Previous" },
+        ["下一章 ›"] = new() { ["zh_TW"] = "下一章 ›", ["ja"] = "次の章 ›", ["en"] = "Next ›" },
+        ["帮助加载失败"] = new() { ["zh_TW"] = "說明載入失敗", ["ja"] = "ヘルプを読み込めませんでした", ["en"] = "Failed to load help" },
         // ---------- E-Hentai 数据源 ----------
         ["站点未提供逐页缩略图（登录后可在站点把画廊版式设为大缩略图），此处只显示封面。"] = new()
         {

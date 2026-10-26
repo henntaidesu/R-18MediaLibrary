@@ -32,7 +32,7 @@ function renderDownloadSection() {
   // 可用性由每秒轮询的 /api/downloads 回填（见 loadDownloads），初始先禁用，避免空列表时点了没反应
   cd.id = 'clearDoneBtn'; cn.id = 'clearNoLinkBtn'; ca.id = 'clearAllBtn'; ra.id = 'reparseAllBtn';
   cd.disabled = cn.disabled = ca.disabled = ra.disabled = true;
-  bar.append(dled, cd, cn, ca, startBtn, ra, usage);
+  bar.append(dled, cd, cn, ca, startBtn, ra, usage, helpButton());
   host.appendChild(bar);
   host.appendChild(el('div', null)).id = 'dlList';
   loadDownloads(); loadUsage();
@@ -195,7 +195,7 @@ function renderDownloaded() {
   let deb = null;
   search.oninput = () => { clearTimeout(deb); deb = setTimeout(() => { dledKw = search.value.trim(); drawDownloaded(); }, 250); };
   filter.onchange = () => { dledState = filter.value; drawDownloaded(); };
-  bar.append(back, refresh, search, filter);
+  bar.append(back, refresh, search, filter, helpButton());
   host.appendChild(bar);
   const wrap = el('div'); wrap.id = 'dledWrap'; host.appendChild(wrap);
   loadDownloaded();

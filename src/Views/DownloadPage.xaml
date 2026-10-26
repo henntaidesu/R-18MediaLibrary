@@ -105,6 +105,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <!-- "已下载"为本分区第二视图入口（对齐 Web 下载管理工具栏首位）；搜索已移到独立的"DLsite 搜索"导航 -->
                 <Button x:Name="ShowDownloadedButton"
@@ -133,6 +134,8 @@
                         <ProgressBar x:Name="UsageBar" Height="6" Margin="0,6,0,0" Foreground="#a78bfa" />
                     </StackPanel>
                 </Border>
+                <!-- ? 使用帮助（Web 工具栏末尾的 helpButton），按钮由代码挂上 -->
+                <ContentControl x:Name="HelpSlot" Grid.Column="8" Margin="8,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
 

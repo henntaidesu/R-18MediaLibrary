@@ -185,6 +185,7 @@ public partial class DownloadPage : UserControl
     public DownloadPage()
     {
         InitializeComponent();
+        HelpSlot.Content = HelpPanel.Button("11");
         GroupList.ItemsSource = _groups;
         _refreshTimer.Tick += (_, _) => Refresh();
         _usageTimer.Tick += (_, _) => _ = FetchUsageAsync();

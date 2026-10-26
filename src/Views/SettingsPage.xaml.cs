@@ -25,6 +25,7 @@ public partial class SettingsPage : UserControl
     {
         InitializeComponent();
         BuildCombos();
+        HelpSlot.Content = HelpPanel.Button("14");
         RetranslateUi();
         ReadConf();
         // 媒体库管理内联进设置页（对齐 Web 设置页），构建一次；扫描状态在页面切换间保持
@@ -153,24 +154,25 @@ public partial class SettingsPage : UserControl
     private void RetranslateUi()
     {
         _loading = true;
+        // 各分区标题右端带 ?，打开使用手册对应章节（同 Web settings.js 的 helpHeading）
         PageTitle.Text = I18n.Tr("系统设置");
-        DownloadGroup.Header = I18n.Tr("下载");
-        ProxyGroup.Header = I18n.Tr("代理");
-        DebridGroup.Header = I18n.Tr("Debrid-Link 下载中转站");
-        SearchSourceGroup.Header = I18n.Tr("作品类型优先搜索");
-        AsmrGroup.Header = "ASMR.ONE";
+        DownloadGroup.Header = HelpPanel.Header(I18n.Tr("下载"), "11.3");
+        ProxyGroup.Header = HelpPanel.Header(I18n.Tr("代理"), "14.1");
+        DebridGroup.Header = HelpPanel.Header(I18n.Tr("Debrid-Link 下载中转站"), "7.2");
+        SearchSourceGroup.Header = HelpPanel.Header(I18n.Tr("作品类型优先搜索"), "8");
+        AsmrGroup.Header = HelpPanel.Header("ASMR.ONE", "8");
         AsmrUserLabel.Text = I18n.Tr("账号");
         AsmrPassLabel.Text = I18n.Tr("密码");
         AsmrMirrorLabel.Text = I18n.Tr("镜像站");
         AsmrFileTypeLabel.Text = I18n.Tr("下载文件类型");
         AsmrTestButton.Content = I18n.Tr("登录测试");
-        EhentaiGroup.Header = "E-Hentai";
+        EhentaiGroup.Header = HelpPanel.Header("E-Hentai", "10.1");
         EhHostLabel.Text = I18n.Tr("站点");
         EhOriginalLabel.Text = I18n.Tr("图片画质");
         EhTestButton.Content = I18n.Tr("连接测试");
         EhHint.Text = I18n.Tr("登录（访问里站、下载原图）请到左侧「账号访问」页。");
         BuildEhOriginalCombo();
-        PixivGroup.Header = "pixiv";
+        PixivGroup.Header = HelpPanel.Header("pixiv", "10.2");
         PxOriginalLabel.Text = I18n.Tr("图片画质");
         PxModeLabel.Text = I18n.Tr("搜索分级");
         PxMatchLabel.Text = I18n.Tr("匹配方式");
@@ -178,8 +180,8 @@ public partial class SettingsPage : UserControl
         PxHint.Text = I18n.Tr(
             "未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 pixiv。");
         BuildPixivCombos();
-        SystemGroup.Header = I18n.Tr("系统");
-        MediaLibGroup.Header = I18n.Tr("媒体库");
+        SystemGroup.Header = HelpPanel.Header(I18n.Tr("系统"), "14.1");
+        MediaLibGroup.Header = HelpPanel.Header(I18n.Tr("媒体库"), "3");
         PathLabel.Text = I18n.Tr("缓存路径");
         PathChooseButton.Content = I18n.Tr("保存");
         AutoDownloadLabel.Text = I18n.Tr("自动下载");
@@ -199,14 +201,14 @@ public partial class SettingsPage : UserControl
         LogLevelLabel.Text = I18n.Tr("日志级别");
         EncodingLabel.Text = I18n.Tr("解压编码");
         CloseActionLabel.Text = I18n.Tr("关闭按钮");
-        ImageHostGroup.Header = I18n.Tr("图床存储");
+        ImageHostGroup.Header = HelpPanel.Header(I18n.Tr("图床存储"), "14.2");
         ImageHostEnableLabel.Text = I18n.Tr("启用");
         ImageHostProjectLabel.Text = I18n.Tr("项目");
         ImageHostUrlLabel.Text = I18n.Tr("服务地址");
         ImageHostTokenLabel.Text = "API Token";
         ImageHostTestButton.Content = I18n.Tr("测试连接");
         ImageHostMigrateButton.Content = I18n.Tr("迁移封面");
-        TranslateGroup.Header = I18n.Tr("图片翻译");
+        TranslateGroup.Header = HelpPanel.Header(I18n.Tr("图片翻译"), "17");
         TransEnableLabel.Text = I18n.Tr("启用");
         TransTierLabel.Text = I18n.Tr("模型档位");
         TransDeviceLabel.Text = I18n.Tr("推理设备");
@@ -217,7 +219,7 @@ public partial class SettingsPage : UserControl
         TransCancelButton.Content = I18n.Tr("取消下载");
         TransRemoveButton.Content = I18n.Tr("删除依赖");
         TransFontBox.ToolTip = I18n.Tr("留空使用系统默认中文字体");
-        WebGroup.Header = I18n.Tr("外部访问");
+        WebGroup.Header = HelpPanel.Header(I18n.Tr("外部访问"), "15.1");
         WebEnableLabel.Text = I18n.Tr("外部访问");
         WebPortLabel.Text = I18n.Tr("端口");
         WebPasswordLabel.Text = I18n.Tr("访问密码");
@@ -235,7 +237,7 @@ public partial class SettingsPage : UserControl
         ImageHostEnableCombo.Items[1] = I18n.Tr("关闭");
         SsoEnableCombo.Items[0] = I18n.Tr("开启");
         SsoEnableCombo.Items[1] = I18n.Tr("关闭");
-        SsoGroup.Header = I18n.Tr("门户单点登录");
+        SsoGroup.Header = HelpPanel.Header(I18n.Tr("门户单点登录"), "15.2");
         SsoEnableLabel.Text = I18n.Tr("启用");
         SsoPortalUrlLabel.Text = I18n.Tr("门户地址");
         SsoInternalUrlLabel.Text = I18n.Tr("内网地址");

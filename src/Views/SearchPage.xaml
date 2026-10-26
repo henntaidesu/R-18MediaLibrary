@@ -25,6 +25,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <ComboBox x:Name="SourceBox" MinWidth="104" Margin="0,0,8,0" VerticalContentAlignment="Center"
                           SelectionChanged="SourceBox_SelectionChanged" />
@@ -51,6 +52,8 @@
                         Click="PixivDownload_Click" Content="下载" />
                 <Button x:Name="PixivBackButton" Grid.Column="9" Margin="8,0,0,0"
                         Visibility="Collapsed" Click="PixivBack_Click" Content="返回" />
+                <!-- ? 使用帮助（Web 工具栏末尾的 helpButton），按当前来源打开对应章节；按钮由代码挂上 -->
+                <ContentControl x:Name="HelpSlot" Grid.Column="10" Margin="8,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
 
