@@ -122,7 +122,8 @@
                 </StackPanel>
             </GroupBox>
 
-            <!-- E-Hentai（桌面独有配置，Web 设置页不暴露；排版随 ASMR.ONE 分区） -->
+            <!-- E-Hentai（桌面独有配置，Web 设置页不暴露；排版随 ASMR.ONE 分区）。
+                 账号登录与三个 cookie 已挪到一级导航「账号访问」（AccountPage），这里只留站点与画质 -->
             <GroupBox x:Name="EhentaiGroup" Header="E-Hentai">
                 <StackPanel>
                     <!-- 站点 + 下载原图 同一行 -->
@@ -137,37 +138,13 @@
                         <Button x:Name="EhTestButton" Content="连接测试" Margin="16,0,0,0"
                                 Click="EhTestButton_Click" />
                     </StackPanel>
-                    <!-- 账号登录：成功后自动填好下面三个 cookie（密码只用一次、不保存） -->
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <TextBlock x:Name="EhUserLabel" Text="账号" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="EhUserBox" Width="200" VerticalContentAlignment="Center"
-                                 LostFocus="EhUserBox_LostFocus" />
-                        <TextBlock x:Name="EhPassLabel" Text="密码" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
-                        <PasswordBox x:Name="EhPassBox" Width="200" VerticalContentAlignment="Center" />
-                        <Button x:Name="EhLoginButton" Content="登录并获取 Cookie" Margin="16,0,0,0"
-                                Style="{StaticResource AccentButton}" Click="EhLoginButton_Click" />
-                        <Button x:Name="EhLogoutButton" Content="退出登录" Margin="8,0,0,0"
-                                Click="EhLogoutButton_Click" />
-                    </StackPanel>
-                    <!-- 登录 cookie 三项同一行 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <TextBlock x:Name="EhMemberLabel" Text="member_id" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="EhMemberBox" Width="140" VerticalContentAlignment="Center"
-                                 LostFocus="EhMemberBox_LostFocus" />
-                        <TextBlock x:Name="EhHashLabel" Text="pass_hash" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
-                        <TextBox x:Name="EhHashBox" Width="280" VerticalContentAlignment="Center"
-                                 LostFocus="EhHashBox_LostFocus" />
-                        <TextBlock x:Name="EhIgneousLabel" Text="igneous" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
-                        <TextBox x:Name="EhIgneousBox" Width="200" VerticalContentAlignment="Center"
-                                 LostFocus="EhIgneousBox_LostFocus" />
-                    </StackPanel>
+                    <TextBlock x:Name="EhHint" TextWrapping="Wrap" Margin="120,6,0,0"
+                               Style="{StaticResource CaptionText}"
+                               Text="登录（访问里站、下载原图）请到左侧「账号访问」页。" />
                 </StackPanel>
             </GroupBox>
 
-            <!-- pixiv（桌面独有配置，Web 设置页不暴露；排版随 E-Hentai 分区） -->
+            <!-- pixiv（桌面独有配置，Web 设置页不暴露；排版随 E-Hentai 分区）。PHPSESSID 已挪到「账号访问」 -->
             <GroupBox x:Name="PixivGroup" Header="pixiv">
                 <StackPanel>
                     <!-- 画质 + 分级 + 匹配方式 同一行 -->
@@ -186,15 +163,9 @@
                         <Button x:Name="PxTestButton" Content="连接测试" Margin="16,0,0,0"
                                 Click="PxTestButton_Click" />
                     </StackPanel>
-                    <!-- 登录 cookie：站点的登录带人机验证，程序里走不通，只能从浏览器复制 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <TextBlock x:Name="PxSessionLabel" Text="PHPSESSID" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="PxSessionBox" Width="420" VerticalContentAlignment="Center"
-                                 LostFocus="PxSessionBox_LostFocus" />
-                    </StackPanel>
                     <TextBlock x:Name="PxHint" TextWrapping="Wrap" Margin="120,6,0,0"
                                Style="{StaticResource CaptionText}"
-                               Text="留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请在浏览器登录 pixiv 后从 Cookie 里复制 PHPSESSID 填在这里。" />
+                               Text="未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 pixiv。" />
                 </StackPanel>
             </GroupBox>
 

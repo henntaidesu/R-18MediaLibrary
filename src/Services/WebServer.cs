@@ -350,6 +350,7 @@ public static class WebServer
                 case "/api/libs": ApiLibs(stream); break;
                 case "/api/makers": ApiMakers(stream, req); break;
                 case "/api/makeralias": ApiMakerAlias(stream, req); break;
+                case "/api/makersettings": ApiMakerSettings(stream, req); break;
                 case "/api/works": ApiWorks(stream, req); break;
                 case "/api/genreworks": ApiGenreWorks(stream, req); break;
                 case "/api/libworks": ApiLibWorks(stream, req); break;
@@ -403,6 +404,12 @@ public static class WebServer
                 case "/api/fanbox/post": await ApiFanboxPostAsync(stream, req); break;
                 case "/api/fanbox/enqueue": await ApiFanboxEnqueueAsync(stream, req); break;
                 case "/api/fanbox/image": await ApiFanboxImageAsync(stream, req); break;
+                // 账号访问（FANBOX / pixiv / E-Hentai 的登录 cookie）
+                case "/api/accounts": ApiAccounts(stream); break;
+                case "/api/account/save": ApiAccountSave(stream, req); break;
+                case "/api/account/check": await ApiAccountCheckAsync(stream, req); break;
+                case "/api/account/login": await ApiAccountLoginAsync(stream, req); break;
+                case "/api/account/logout": ApiAccountLogout(stream, req); break;
                 // FANBOX 作家监控（有新投稿就自动下载）
                 case "/api/fanbox/watches": ApiFanboxWatches(stream); break;
                 case "/api/fanbox/watch/add": await ApiFanboxWatchAddAsync(stream, req); break;
@@ -724,9 +731,13 @@ public static class WebServer
                 : fanboxId.Length > 0 ? "/api/fanbox/image?url=" + Uri.EscapeDataString(source)
                 : source;
             var maker = r[0] as string ?? "";
+            var home = MakerHomeService.Get(maker);
             return new
             {
                 maker,
+                // 社团主页（FANBOX 官方站 / pawchive），卡片上显示成外链；没有为空串
+                fanboxUrl = home.Fanbox,
+                pawchiveUrl = home.Pawchive,
                 // 显示名：设过别名就用别名。分组/筛选一律仍按真名 maker，别名只进界面
                 display = MakerAliasService.Display(maker),
                 count = Convert.ToInt64(r[1]),
@@ -758,6 +769,33 @@ public static class WebServer
         }
         MakerAliasService.Set(maker, ReadStringField(req.Body, "alias"));
         WriteJson(stream, 200, new { ok = true, display = MakerAliasService.Display(maker) });
+    }
+
+    /// <summary>
+    /// 社团设置（社团卡右上角 🖊）：显示名 + FANBOX 主页 + pawchive 主页一次存。
+    /// 先校验主页地址，不合法则什么都不写（免得显示名存了、主页没存）。
+    /// </summary>
+    private static void ApiMakerSettings(NetworkStream stream, Request req)
+    {
+        if (req.Method != "POST")
+        {
+            WriteJson(stream, 405, new { error = "method not allowed" });
+            return;
+        }
+        var maker = ReadStringField(req.Body, "maker");
+        if (maker.Length == 0)
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        if (MakerHomeService.Set(maker, ReadStringField(req.Body, "fanbox"),
+                ReadStringField(req.Body, "pawchive")) is { } err)
+        {
+            WriteJson(stream, 400, new { error = err });
+            return;
+        }
+        MakerAliasService.Set(maker, ReadStringField(req.Body, "alias"));
+        WriteJson(stream, 200, new { ok = true });
     }
 
     private static void ApiWorks(NetworkStream stream, Request req)
@@ -2767,105 +2805,117 @@ public static class WebServer
 
     // ---------- API：FANBOX（pawchive）----------
 
-    /// <summary>搜索作家：站点无服务端搜索接口，由 PawchiveApi 在本地缓存的作家表上过滤。</summary>
+    /// <summary>
+    /// 请求是否针对 fanbox.cc 官方站（作品搜索里的「FANBOX（账号名）」来源）：查询串或请求体里 site=cc。
+    /// 没登录时一律当 pawchive 处理——来源下拉里本来也不会出现官方站这一项。
+    /// </summary>
+    private static bool FanboxOfficial(Request req) =>
+        ((req.Query.GetValueOrDefault("site") ?? "") == "cc" ||
+         (req.Body.Length > 0 && ReadStringField(req.Body, "site") == "cc")) &&
+        FanboxSource.OfficialAvailable;
+
+    /// <summary>
+    /// 搜索作家。pawchive 站点无服务端搜索接口，由 PawchiveApi 在本地缓存的作家表上过滤；
+    /// 官方站走站点自己的作家搜索，关键字为空时列出「我赞助的 + 我关注的」作家。
+    /// </summary>
     private static async Task ApiFanboxArtistsAsync(NetworkStream stream, Request req)
     {
+        var official = FanboxOfficial(req);
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
-        if (keyword.Length == 0)
+        if (keyword.Length == 0 && !official)
         {
             WriteJson(stream, 200, new { artists = Array.Empty<object>() });
             return;
         }
-        var list = await PawchiveApi.SearchArtistsAsync(keyword);
+        var (list, error) = await FanboxSource.SearchArtistsAsync(official, keyword);
         WriteJson(stream, 200, new
         {
             artists = list.Select(a => new
             {
                 id = a.Id, service = a.Service, name = a.Name, publicId = a.PublicId,
                 favorited = a.Favorited,
-                icon = PawchiveApi.IconUrl(a.Service, a.Id),
-                banner = PawchiveApi.BannerUrl(a.Service, a.Id),
+                icon = a.IconUrl,
             }),
-            cachedAt = PawchiveApi.CreatorsCachedAt?.ToString("yyyy-MM-dd HH:mm") ?? "",
+            error,
+            mine = official && keyword.Length == 0,
+            cachedAt = official ? "" : PawchiveApi.CreatorsCachedAt?.ToString("yyyy-MM-dd HH:mm") ?? "",
         });
     }
 
-    /// <summary>作家主页的一页作品（站点固定每页 50 条），附带本地已下载/下载中状态。</summary>
+    /// <summary>作家主页的一批作品（pawchive 每页 50 条，官方站一次拼几页），附带本地已下载/下载中状态。</summary>
     private static async Task ApiFanboxPostsAsync(NetworkStream stream, Request req)
     {
+        var official = FanboxOfficial(req);
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
-        var service = FanboxServiceParam(req);
-        if (!IsPlainId(artistId))
+        if (!FanboxSource.IsArtistKey(official, artistId))
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
         var offset = GetInt(req, "o");
-        var posts = await PawchiveApi.GetPostsAsync(service, artistId, offset);
+        var (posts, hasMore, error) = await FanboxSource.GetPostsAsync(official, artistId, offset);
         if (posts is null)
         {
-            WriteJson(stream, 502, new { error = "获取作品列表失败" });
+            WriteJson(stream, 502, new { error = error ?? "获取作品列表失败" });
             return;
         }
         // 首页顺带带上作家信息，供标题与入队时落库使用
         object? artist = null;
-        if (offset == 0 && await PawchiveApi.GetArtistAsync(service, artistId) is { } a)
+        if (offset == 0 && await FanboxSource.GetArtistAsync(official, artistId) is { } a)
             artist = new { id = a.Id, service = a.Service, name = a.Name, publicId = a.PublicId };
 
-        var states = FanboxService.PostStates(artistId);
+        var states = await FanboxSource.PostStatesAsync(official, artistId);
         WriteJson(stream, 200, new
         {
             artist,
-            // 作家主页的「+ 监控作家 / ✓ 已监控」按钮据此定文案
-            watched = FanboxWatchService.IsWatched(artistId),
+            // 作家主页的「+ 监控作家 / ✓ 已监控」按钮据此定文案（监控只走 pawchive，官方站来源不显示该按钮）
+            watched = !official && FanboxWatchService.IsWatched(artistId),
             posts = posts.Select(p => new
             {
                 id = p.Id, title = p.Title, published = p.Published, tags = p.Tags,
                 files = p.Files.Count,
                 // 正文里的谷歌网盘链接数：作品本体常常只在网盘上，卡片要标出来
                 drive = GoogleDriveClient.LinksIn(p.Links).Count,
-                cover = p.CoverPath.Length > 0 ? PawchiveApi.ThumbUrl(p.CoverPath) : "",
+                cover = p.CoverUrl,
                 state = states.GetValueOrDefault(p.Id, ""),
+                // 官方站：当前账号的赞助档位看不到这篇（卡片置灰、不可选），fee 是所需金额
+                locked = p.Locked, fee = p.FeeRequired,
             }),
-            hasMore = posts.Count >= PawchiveApi.PageSize,
+            hasMore,
         });
     }
 
     /// <summary>
     /// 单篇作品详情（「查看内容」用）：正文 + 图片清单 + 非图片附件清单。
     ///
-    /// 图片一律给出 thumb（800px 预览）与 full（原图）两个地址，都经 /api/fanbox/image 代理——
-    /// 浏览器直连 pawchive 会被防护网关按浏览器 UA 403（见 PawchiveApi.UserAgent）。
-    /// 原图对"只归档了预览"的投稿会 404，前端据此回退到 thumb。
+    /// 图片给出 thumb（预览：pawchive 800px / 官方站 thumbnailUrl），经 /api/fanbox/image 代理——
+    /// 浏览器直连 pawchive 会被防护网关按浏览器 UA 403（见 PawchiveApi.UserAgent），官方站则要登录 cookie。
     /// </summary>
     private static async Task ApiFanboxPostAsync(NetworkStream stream, Request req)
     {
+        var official = FanboxOfficial(req);
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         var postId = (req.Query.GetValueOrDefault("post") ?? "").Trim();
-        var service = FanboxServiceParam(req);
-        if (!IsPlainId(artistId) || !IsPlainId(postId))
+        if (!FanboxSource.IsArtistKey(official, artistId) || !IsPlainId(postId))
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
-        var post = await PawchiveApi.GetPostAsync(service, artistId, postId);
+        var (post, error) = await FanboxSource.GetPostAsync(official, artistId, postId);
         if (post is null)
         {
-            WriteJson(stream, 502, new { error = "获取作品详情失败" });
+            WriteJson(stream, 502, new { error = error ?? "获取作品详情失败" });
             return;
         }
         var images = post.Files.Where(f => PawchiveApi.IsImageName(f.Name)).ToList();
+        var states = await FanboxSource.PostStatesAsync(official, artistId);
         WriteJson(stream, 200, new
         {
             id = post.Id, title = post.Title, published = post.Published,
             tags = post.Tags, content = post.Content, files = post.Files.Count,
-            state = FanboxService.PostStates(artistId).GetValueOrDefault(post.Id, ""),
-            images = images.Select(f => new
-            {
-                name = f.Name,
-                thumb = PawchiveApi.ThumbUrl(f.Path),
-                full = PawchiveApi.FileUrl(f.Path, f.Name),
-            }),
+            state = states.GetValueOrDefault(post.Id, ""),
+            locked = post.Locked, fee = post.FeeRequired,
+            images = images.Select(f => new { name = f.Name, thumb = f.Thumb }),
             // 压缩包 / PDF / 视频等：只报名字，下载走入队
             others = post.Files.Where(f => !PawchiveApi.IsImageName(f.Name)).Select(f => new { name = f.Name }),
             // 正文里的谷歌网盘链接：入队时会一并下载（文件夹展开成逐个文件），下完照常解压
@@ -2878,35 +2928,24 @@ public static class WebServer
 
     /// <summary>
     /// 把选中的作品加入下载队列。请求只带作品号，作品详情由服务端重新拉取
-    /// （逐页翻到选中的作品都凑齐为止），避免信任前端提交的文件清单。
+    /// （pawchive 逐页翻到选中的作品都凑齐为止，官方站逐篇取详情），避免信任前端提交的文件清单。
     /// </summary>
     private static async Task ApiFanboxEnqueueAsync(NetworkStream stream, Request req)
     {
+        var official = FanboxOfficial(req);
         var artistId = ReadStringField(req.Body, "id").Trim();
-        var service = ReadStringField(req.Body, "service").Trim();
-        if (service.Length == 0)
-            service = PawchiveApi.FanboxService;
-        var wanted = new HashSet<string>(ReadStringArray(req.Body, "posts"));
+        var wanted = ReadStringArray(req.Body, "posts").Where(IsPlainId).Distinct().ToList();
         var lib = ReadStringField(req.Body, "lib");
         var folder = ReadStringField(req.Body, "folder");
-        if (!IsPlainId(artistId) || service != PawchiveApi.FanboxService || wanted.Count == 0)
+        if (!FanboxSource.IsArtistKey(official, artistId) || wanted.Count == 0)
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
 
-        var artist = await PawchiveApi.GetArtistAsync(service, artistId)
-                     ?? new PawchiveArtist { Id = artistId, Service = service };
-        var picked = new List<PawchivePost>();
-        for (var page = 0; page < 200 && picked.Count < wanted.Count; page++)
-        {
-            var batch = await PawchiveApi.GetPostsAsync(service, artistId, page * PawchiveApi.PageSize);
-            if (batch is null || batch.Count == 0)
-                break;
-            picked.AddRange(batch.Where(p => wanted.Contains(p.Id)));
-            if (batch.Count < PawchiveApi.PageSize)
-                break;
-        }
+        var artist = await FanboxSource.GetArtistAsync(official, artistId)
+                     ?? new PawchiveArtist { Id = artistId, Service = PawchiveApi.FanboxService };
+        var picked = await FanboxSource.ResolveForEnqueueAsync(official, artistId, wanted);
         if (picked.Count == 0)
         {
             WriteJson(stream, 404, new { error = "未找到选中的作品" });
@@ -2927,25 +2966,20 @@ public static class WebServer
     }
 
     /// <summary>
-    /// 站上图片（作家头像/未下载作品的缩略图）代理：浏览器直连站点会受跨域与代理设置影响，
-    /// 统一由本服务按配置的代理取回。只允许当前配置的 pawchive 域名及其 file./img. 子域。
+    /// 站上图片（作家头像/未下载作品的缩略图）代理：浏览器直连站点会受跨域、防盗链与代理设置影响，
+    /// 统一由本服务按配置的代理取回。只放行 pawchive 域名及其子域、fanbox.cc 与 pximg.net。
     /// </summary>
     private static async Task ApiFanboxImageAsync(NetworkStream stream, Request req)
     {
         var url = req.Query.GetValueOrDefault("url") ?? "";
-        if (!IsPawchiveUrl(url) || !IsSafeFetchUrl(url))
+        if (!FanboxSource.IsImageUrl(url) || !IsSafeFetchUrl(url))
         {
             WriteBytes(stream, 400, "Bad Request", "text/plain", []);
             return;
         }
         try
         {
-            // 同下载路径：pawchive 的防护网关拦浏览器 UA，统一用中性 UA
-            using var client = Http.CreateClient(TimeSpan.FromSeconds(20), PawchiveApi.UserAgent);
-            using var resp = await client.GetAsync(url);
-            resp.EnsureSuccessStatusCode();
-            var bytes = await resp.Content.ReadAsByteArrayAsync();
-            var type = resp.Content.Headers.ContentType?.MediaType ?? "";
+            var (bytes, type) = await FanboxSource.GetImageAsync(url);
             // 站点的头像/横幅不带扩展名且常返回 application/octet-stream，按图片交付浏览器才会渲染
             if (!type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 type = ContentType(url);
@@ -2955,6 +2989,69 @@ public static class WebServer
         {
             WriteBytes(stream, 404, "Not Found", "text/plain", []);
         }
+    }
+
+    // ---------- API：账号访问 ----------
+
+    /// <summary>
+    /// 各站点的登录状态。只回「登没登、账号名」，cookie 本身一律不回给浏览器——
+    /// 外部访问可能没设密码，凭据不该经网页再流出去。
+    /// </summary>
+    private static void ApiAccounts(NetworkStream stream)
+    {
+        WriteJson(stream, 200, new
+        {
+            accounts = AccountService.All().Select(a => new
+            {
+                site = a.Site, title = a.Title, loggedIn = a.LoggedIn, account = a.Account, note = a.Note,
+            }),
+            ehUsername = AppConfig.EhentaiUsername,
+        });
+    }
+
+    /// <summary>保存手工填写的 cookie（只写不读）。</summary>
+    private static void ApiAccountSave(NetworkStream stream, Request req)
+    {
+        var site = ReadStringField(req.Body, "site");
+        if (Array.IndexOf(AccountService.Sites, site) < 0)
+        {
+            WriteJson(stream, 400, new { ok = false, message = "未知站点" });
+            return;
+        }
+        var values = new Dictionary<string, string>();
+        foreach (var key in new[] { "sessid", "php_sessid", "member_id", "pass_hash", "igneous" })
+        {
+            var v = ReadStringField(req.Body, key).Trim();
+            if (v.Length > 0)
+                values[key] = v;
+        }
+        AccountService.SaveCookies(site, values);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    private static async Task ApiAccountCheckAsync(NetworkStream stream, Request req)
+    {
+        var (ok, message) = await AccountService.CheckAsync(ReadStringField(req.Body, "site"));
+        WriteJson(stream, 200, new { ok, message });
+    }
+
+    /// <summary>E-Hentai 账号密码登录（密码只用这一次，不落库）。</summary>
+    private static async Task ApiAccountLoginAsync(NetworkStream stream, Request req)
+    {
+        if (ReadStringField(req.Body, "site") != AccountService.Ehentai)
+        {
+            WriteJson(stream, 400, new { ok = false, message = "该站点只能填写 Cookie 登录" });
+            return;
+        }
+        var result = await AccountService.LoginEhentaiAsync(
+            ReadStringField(req.Body, "username"), ReadStringField(req.Body, "password"));
+        WriteJson(stream, 200, new { ok = result.Ok, message = result.Message, captcha = result.Captcha });
+    }
+
+    private static void ApiAccountLogout(NetworkStream stream, Request req)
+    {
+        AccountService.Logout(ReadStringField(req.Body, "site"));
+        WriteJson(stream, 200, new { ok = true });
     }
 
     // ---------- API：FANBOX 作家监控 ----------
@@ -3486,26 +3583,9 @@ public static class WebServer
         return roots.Any(r => host == r || host.EndsWith("." + r, StringComparison.Ordinal));
     }
 
-    /// <summary>URL 是否指向当前配置的 pawchive 站点（主域或其 file./img. 子域）。</summary>
-    private static bool IsPawchiveUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-            return false;
-        var host = uri.Host;
-        var baseHost = AppConfig.PawchiveHost;
-        return string.Equals(host, baseHost, StringComparison.OrdinalIgnoreCase) ||
-               host.EndsWith("." + baseHost, StringComparison.OrdinalIgnoreCase);
-    }
-
     /// <summary>pawchive 的作家号/作品号都是纯数字；用作 SQL/URL 参数前先校验。</summary>
     private static bool IsPlainId(string id) =>
         id.Length is > 0 and <= 32 && id.All(char.IsAsciiDigit);
-
-    private static string FanboxServiceParam(Request req)
-    {
-        var service = (req.Query.GetValueOrDefault("service") ?? "").Trim();
-        return service == PawchiveApi.FanboxService ? service : PawchiveApi.FanboxService;
-    }
 
     // ---------- 请求体解析 ----------
 

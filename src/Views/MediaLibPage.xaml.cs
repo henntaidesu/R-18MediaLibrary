@@ -590,9 +590,10 @@ public partial class MediaLibPage : UserControl
     /// 是否留出左侧头像位。社团卡一律传 true：没有头像的社团那一格空着，
     /// 同一行里的卡片版式才对得齐（名称起始位置一致）。
     /// </param>
+    /// <param name="links">社团主页外链（FANBOX / pawchive），作品数下面一行小按钮，点了用浏览器打开。</param>
     private Border MakeClickCard(string title, string caption, Action onClick,
         string iconUrl = "", string iconHostUrl = "", Action? onEdit = null, bool avatarSlot = false,
-        string editIcon = "🖊", string? editTip = null)
+        string editIcon = "🖊", string? editTip = null, IReadOnlyList<(string Label, string Url)>? links = null)
     {
         // 尺寸交给网格：卡片拉伸填满单元格（宽由 CardGrid 算、高为 ClickCardH），间距也由网格排
         var card = new Border
@@ -618,6 +619,36 @@ public partial class MediaLibPage : UserControl
             Text = caption, Style = (Style)FindResource("CaptionText"), Margin = new Thickness(0, 6, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
+        if (links is { Count: > 0 })
+        {
+            // 对齐 Web 的 .glinks：描边小标签，悬停提亮。Button 自己吞掉 MouseLeftButtonUp，点它不会进入该社团
+            var linkRow = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+            foreach (var (label, url) in links)
+            {
+                var link = new Button
+                {
+                    Content = label, ToolTip = url, FontSize = 12, Cursor = Cursors.Hand,
+                    Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 6, 0),
+                    Background = Brushes.Transparent, BorderThickness = new Thickness(1),
+                    BorderBrush = (Brush)FindResource("BorderBrush"),
+                    Foreground = (Brush)FindResource("CaptionBrush"),
+                };
+                link.Click += (_, e) =>
+                {
+                    e.Handled = true;
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"打开社团主页失败 {url}: {ex.Message}");
+                    }
+                };
+                linkRow.Children.Add(link);
+            }
+            info.Children.Add(linkRow);
+        }
         if (avatarSlot)
         {
             // 左头像 | 右信息，按 2:8 分栏（对齐 Web 的 .group-card.has-icon）。
@@ -683,25 +714,46 @@ public partial class MediaLibPage : UserControl
     }
 
     /// <summary>
-    /// 右上角 🖊：自定义该社团的显示名称。只写映射表，works.maker_name 这个真名不动，
-    /// 分组与筛选继续按真名走（见 <see cref="MakerAliasService"/>）。
+    /// 右上角 🖊：社团设置——显示名称 + FANBOX / pawchive 主页（对齐 Web library.js 的 editMaker）。
+    /// 显示名只写映射表，works.maker_name 这个真名不动，分组与筛选继续按真名走
+    /// （见 <see cref="MakerAliasService"/> / <see cref="MakerHomeService"/>）。
     /// </summary>
-    private void EditMakerAlias(string maker)
+    private void EditMaker(string maker)
     {
-        var current = MakerAliasService.Display(maker);
-        var input = InAppDialog.Prompt(
-            this,
-            I18n.Format(I18n.Tr("社团「{maker}」的显示名称（留空恢复原名，不会改动作品数据）"),
-                ("maker", maker)),
-            I18n.Tr("自定义社团名称"),
-            current == maker ? "" : current);
-        if (input == null)
+        var display = MakerAliasService.Display(maker);
+        var home = MakerHomeService.Get(maker);
+        var values = InAppDialog.Form(this, I18n.Tr("社团设置"),
+            I18n.Format(I18n.Tr("社团「{maker}」（不会改动作品数据）"), ("maker", maker)),
+            [
+                (I18n.Tr("显示名称（留空恢复原名）"), display == maker ? "" : display),
+                (I18n.Tr("FANBOX 主页"), home.Fanbox),
+                (I18n.Tr("pawchive 主页"), home.Pawchive),
+            ]);
+        if (values == null)
             return;   // 取消
-        MakerAliasService.Set(maker, input);
+        // 先存主页（会校验地址），不合法就什么都不写，免得显示名存了、主页没存
+        if (MakerHomeService.Set(maker, values[1], values[2]) is { } err)
+        {
+            InAppDialog.Info(this, I18n.Tr(err), I18n.Tr("社团设置"));
+            return;
+        }
+        MakerAliasService.Set(maker, values[0]);
         if (_level == "all_makers")
             ShowAllMakers();
         else
             ShowMakers();
+    }
+
+    /// <summary>社团卡上的主页外链（FANBOX / pawchive），没有设置的不显示。</summary>
+    private static List<(string Label, string Url)> MakerLinks(string maker)
+    {
+        var home = MakerHomeService.Get(maker);
+        var links = new List<(string, string)>();
+        if (home.Fanbox.Length > 0)
+            links.Add(("FANBOX", home.Fanbox));
+        if (home.Pawchive.Length > 0)
+            links.Add(("pawchive", home.Pawchive));
+        return links;
     }
 
     /// <summary>
@@ -812,8 +864,8 @@ public partial class MediaLibPage : UserControl
                     _currentMaker = maker.Length > 0 ? maker : UnknownMaker;
                     ShowWorks();
                 }, icon, iconHost,
-                maker.Length > 0 ? () => EditMakerAlias(maker) : null,
-                avatarSlot: true),
+                maker.Length > 0 ? () => EditMaker(maker) : null,
+                avatarSlot: true, editTip: I18n.Tr("社团设置"), links: MakerLinks(maker)),
                 // 搜索过滤同时匹配真名与显示名
                 $"{maker} {display}".ToLowerInvariant());
         }).ToList();
@@ -856,8 +908,8 @@ public partial class MediaLibPage : UserControl
                     _currentMaker = maker.Length > 0 ? maker : UnknownMaker;
                     ShowWorks();
                 }, icon, iconHost,
-                maker.Length > 0 ? () => EditMakerAlias(maker) : null,
-                avatarSlot: true),
+                maker.Length > 0 ? () => EditMaker(maker) : null,
+                avatarSlot: true, editTip: I18n.Tr("社团设置"), links: MakerLinks(maker)),
                 // 搜索过滤同时匹配真名与显示名
                 $"{maker} {display}".ToLowerInvariant());
         }).ToList();

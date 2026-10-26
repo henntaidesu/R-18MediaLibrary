@@ -169,6 +169,92 @@ public static class InAppDialog
         return shown == true ? value : null;
     }
 
+    /// <summary>
+    /// 多字段表单（程序内覆盖层，对齐 Web 的 uiForm）：每个字段一行标签 + 一行输入框。
+    /// 确定返回各字段的值（与 <paramref name="fields"/> 同序），取消返回 null。
+    /// 回车在最后一个输入框上即确定，其余输入框上跳到下一个。
+    /// </summary>
+    public static string[]? Form(DependencyObject? owner, string title, string message,
+        (string Label, string Value)[] fields, string? okText = null)
+    {
+        var inputs = fields.Select(f => new TextBox { Text = f.Value }).ToArray();
+        var shown = OverlayHost.ShowModal(owner, close =>
+        {
+            var dim = new Grid { Background = new SolidColorBrush(Color.FromArgb(0x9A, 0, 0, 0)), Focusable = true };
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock
+            {
+                Text = title, FontWeight = FontWeights.SemiBold, FontSize = 16,
+                Foreground = Res("TextBrush", Brushes.White), TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            if (message.Length > 0)
+                panel.Children.Add(new TextBlock
+                {
+                    Text = message, TextWrapping = TextWrapping.Wrap,
+                    Foreground = Res("TextBrush", Brushes.White), Margin = new Thickness(0, 14, 0, 0),
+                });
+            for (var i = 0; i < fields.Length; i++)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = fields[i].Label, Foreground = Res("CaptionBrush", Brushes.Gray),
+                    Margin = new Thickness(0, 12, 0, 4),
+                });
+                var input = inputs[i];
+                var next = i + 1 < inputs.Length ? inputs[i + 1] : null;
+                input.KeyDown += (_, e) =>
+                {
+                    if (e.Key != Key.Enter)
+                        return;
+                    if (next != null)
+                        next.Focus();
+                    else
+                        close(true);
+                    e.Handled = true;
+                };
+                panel.Children.Add(input);
+            }
+            if (inputs.Length > 0)
+                inputs[0].Loaded += (_, _) => { inputs[0].Focus(); inputs[0].SelectAll(); };
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 20, 0, 0),
+            };
+            var cancel = MakeButton(I18n.Tr("取消"), primary: false);
+            cancel.Click += (_, _) => close(false);
+            buttons.Children.Add(cancel);
+            var ok = MakeButton(okText ?? I18n.Tr("保存"), primary: true);
+            ok.Margin = new Thickness(10, 0, 0, 0);
+            ok.Click += (_, _) => close(true);
+            buttons.Children.Add(ok);
+            panel.Children.Add(buttons);
+
+            dim.Children.Add(new Border
+            {
+                Background = Res("CardBrush", Brushes.Black),
+                BorderBrush = Res("BorderBrush", Brushes.Gray),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(24, 20, 24, 18),
+                Width = 480,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = panel,
+            });
+            dim.KeyDown += (_, e) =>
+            {
+                if (e.Key != Key.Escape)
+                    return;
+                close(false);
+                e.Handled = true;
+            };
+            return dim;
+        });
+        return shown == true ? inputs.Select(t => t.Text).ToArray() : null;
+    }
+
     private static FrameworkElement BuildPrompt(
         string title, string message, string defaultValue, Action<string> onAccept, Action<bool> close)
     {

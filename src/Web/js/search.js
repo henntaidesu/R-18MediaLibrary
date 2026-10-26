@@ -1,18 +1,31 @@
 // search.js ——「作品搜索」分区（独立一级导航）：搜索前用下拉选数据源。
 //   dlsite  —— 作品号/社团号/目录页搜索、AS 论坛扫描、加入下载队列（本文件）
 //   fanbox  —— pawchive 作家搜索与作品下载（fanbox.js）
+//   fanboxcc—— 同上，但直连 fanbox.cc 官方站（「账号访问」里登录了 FANBOX 才出现，标签为「FANBOX（账号名）」）
 //   ehentai —— E-Hentai 画廊搜索与下载（ehentai.js）
 //   pixiv   —— pixiv 作品搜索与下载（pixiv.js）
 // 各来源共用同一条工具栏（来源下拉 + 输入框 + 查询），各自的结果面板并存、按来源切换显示。
 
-// 当前搜索来源；SEARCH_SOURCES 的顺序即下拉框顺序
+// 当前搜索来源；SEARCH_SOURCES 的顺序即下拉框顺序。
+// needs = 该来源要先在「账号访问」里登录对应站点才出现（见 searchSources）
 const SEARCH_SOURCES = [
   { key: 'dlsite', label: 'DLsite', placeholder: '作品号(RJ/BJ/VJ)、社团号(RG) 或 DLsite 链接' },
   { key: 'fanbox', label: 'FANBOX', placeholder: '作家名 / 作家 ID，或 pawchive 作家链接' },
+  { key: 'fanboxcc', label: 'FANBOX', needs: 'fanbox',
+    placeholder: '作家名 / 作家 ID，或 fanbox.cc 主页链接；留空直接查询 = 我赞助 / 关注的作家' },
   { key: 'ehentai', label: 'E-Hentai', placeholder: '关键字 / 标签（如 artist:xxx），或 E-Hentai 画廊链接' },
   { key: 'pixiv', label: 'pixiv', placeholder: '关键字 / 标签，或 pixiv 作品链接 / 作品号' },
 ];
 let searchSrc = 'dlsite';
+
+// 当前可用的来源：未登录 FANBOX 时没有官方站那一项；登录了则写成「FANBOX（账号名）」，
+// 与未登录的「FANBOX」（pawchive 归档）并列
+function searchSources() {
+  return SEARCH_SOURCES
+    .filter(s => !s.needs || (typeof accounts !== 'undefined' && accounts[s.needs] && accounts[s.needs].loggedIn))
+    .map(s => s.needs ? { ...s, label: `${s.label}（${accounts[s.needs].account}）` } : s);
+}
+const isFanboxSrc = (key) => key === 'fanbox' || key === 'fanboxcc';
 
 // 分区入口：搭好共用工具栏 + 两套结果面板
 function renderSearchArea() {
@@ -25,7 +38,9 @@ function renderSearchArea() {
   const bar = el('div', 'toolbar');
   // 来源下拉：放在输入框之前，切换即换占位文案与结果面板
   const src = el('select'); src.id = 'srcSel'; src.className = 'src-sel';
-  SEARCH_SOURCES.forEach(s => { const o = el('option', null, s.label); o.value = s.key; src.appendChild(o); });
+  // 已选着官方站来源却退出了登录：退回 pawchive 那一项
+  if (!searchSources().some(s => s.key === searchSrc)) searchSrc = isFanboxSrc(searchSrc) ? 'fanbox' : 'dlsite';
+  searchSources().forEach(s => { const o = el('option', null, s.label); o.value = s.key; src.appendChild(o); });
   src.value = searchSrc;
   src.onchange = () => setSearchSource(src.value);
 
@@ -74,7 +89,7 @@ function renderSearchArea() {
 
 // 切来源：换占位文案、显示对应结果面板、隐藏另一来源的工具栏按钮
 function setSearchSource(key) {
-  if (!SEARCH_SOURCES.some(s => s.key === key)) key = 'dlsite';
+  if (!searchSources().some(s => s.key === key)) key = isFanboxSrc(key) ? 'fanbox' : 'dlsite';
   searchSrc = key;
   applySearchSource();
   syncSearchHash();
@@ -83,7 +98,9 @@ function setSearchSource(key) {
 function applySearchSource() {
   const meta = SEARCH_SOURCES.find(s => s.key === searchSrc) || SEARCH_SOURCES[0];
   const inp = $('sId'); if (inp) inp.placeholder = meta.placeholder;
-  const dl = searchSrc === 'dlsite', fbOn = searchSrc === 'fanbox', ehOn = searchSrc === 'ehentai';
+  const dl = searchSrc === 'dlsite', fbOn = isFanboxSrc(searchSrc), ehOn = searchSrc === 'ehentai';
+  // 两个 FANBOX 来源共用一套面板：换了站点就清空，免得 pawchive 的结果留在官方站来源下（反之亦然）
+  if (fbOn) fbSetSite(searchSrc === 'fanboxcc' ? 'cc' : '');
   const pxOn = searchSrc === 'pixiv';
   // 四套结果面板互斥显示
   const res = $('searchResult'); if (res) res.style.display = dl ? '' : 'none';
@@ -108,7 +125,7 @@ function applySearchSource() {
 // 查询入口：按当前来源分流
 function runSearchAny() {
   syncSearchHash();   // 把来源与查询词写入地址栏（只 replace 不累积历史）
-  if (searchSrc === 'fanbox') return fbRunSearch();
+  if (isFanboxSrc(searchSrc)) return fbRunSearch();
   if (searchSrc === 'ehentai') return ehRunSearch();
   if (searchSrc === 'pixiv') return pxRunSearch();
   return runSearch();

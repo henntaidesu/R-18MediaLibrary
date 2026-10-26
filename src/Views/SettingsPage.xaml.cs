@@ -164,24 +164,16 @@ public partial class SettingsPage : UserControl
         EhentaiGroup.Header = "E-Hentai";
         EhHostLabel.Text = I18n.Tr("站点");
         EhOriginalLabel.Text = I18n.Tr("图片画质");
-        EhUserLabel.Text = I18n.Tr("账号");
-        EhPassLabel.Text = I18n.Tr("密码");
-        EhLoginButton.Content = I18n.Tr("登录并获取 Cookie");
-        EhLogoutButton.Content = I18n.Tr("退出登录");
-        EhMemberLabel.Text = "member_id";
-        EhHashLabel.Text = "pass_hash";
-        EhIgneousLabel.Text = "igneous";
         EhTestButton.Content = I18n.Tr("连接测试");
+        EhHint.Text = I18n.Tr("登录（访问里站、下载原图）请到左侧「账号访问」页。");
         BuildEhOriginalCombo();
         PixivGroup.Header = "pixiv";
         PxOriginalLabel.Text = I18n.Tr("图片画质");
         PxModeLabel.Text = I18n.Tr("搜索分级");
         PxMatchLabel.Text = I18n.Tr("匹配方式");
-        PxSessionLabel.Text = "PHPSESSID";
         PxTestButton.Content = I18n.Tr("连接测试");
         PxHint.Text = I18n.Tr(
-            "留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉。" +
-            "要看 R-18，请在浏览器登录 pixiv 后从 Cookie 里复制 PHPSESSID 填在这里。");
+            "未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 pixiv。");
         BuildPixivCombos();
         SystemGroup.Header = I18n.Tr("系统");
         MediaLibGroup.Header = I18n.Tr("媒体库");
@@ -313,11 +305,6 @@ public partial class SettingsPage : UserControl
         var ehHost = Array.IndexOf(EhHosts, AppConfig.EhentaiHost);
         EhHostCombo.SelectedIndex = ehHost >= 0 ? ehHost : 0;
         EhOriginalCombo.SelectedIndex = AppConfig.EhentaiOriginal ? 0 : 1;
-        EhUserBox.Text = AppConfig.EhentaiUsername;
-        EhMemberBox.Text = AppConfig.EhentaiMemberId;
-        EhHashBox.Text = AppConfig.EhentaiPassHash;
-        EhIgneousBox.Text = AppConfig.EhentaiIgneous;
-        PxSessionBox.Text = AppConfig.PixivSessionId;
         PxOriginalCombo.SelectedIndex = AppConfig.PixivOriginal ? 0 : 1;
         PxModeCombo.SelectedIndex = Math.Max(0, Array.IndexOf(PixivModes, AppConfig.PixivSearchMode));
         PxMatchCombo.SelectedIndex = Math.Max(0, Array.IndexOf(PixivMatches, AppConfig.PixivTagMatch));
@@ -550,100 +537,9 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("ehentai", "original", EhOriginalCombo.SelectedIndex == 0 ? "True" : "False");
     }
 
-    private void EhUserBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_loading)
-            return;
-        AppConfig.Write("ehentai", "username", EhUserBox.Text.Trim());
-    }
-
-    /// <summary>
-    /// 账号密码登录：由 <see cref="EhentaiApi.LoginAsync"/> 取回三个 cookie 并落库，
-    /// 这里只负责回填输入框——登录成功后用户应当能在下面看到取到了什么。
-    /// </summary>
-    private async void EhLoginButton_Click(object sender, RoutedEventArgs e)
-    {
-        var user = EhUserBox.Text.Trim();
-        var pass = EhPassBox.Password;
-        if (user.Length == 0 || pass.Length == 0)
-        {
-            InAppDialog.Warn(this, I18n.Tr("请先填写账号与密码"), I18n.Tr("登录"));
-            return;
-        }
-
-        AppConfig.Write("ehentai", "username", user);
-        EhLoginButton.IsEnabled = false;
-        EhLoginButton.Content = I18n.Tr("登录中…");
-        try
-        {
-            var result = await EhentaiApi.LoginAsync(user, pass);
-            if (result.Ok)
-            {
-                // 拿到的 cookie 要显示出来：用户据此知道里站权限到底有没有拿到
-                _loading = true;
-                EhMemberBox.Text = AppConfig.EhentaiMemberId;
-                EhHashBox.Text = AppConfig.EhentaiPassHash;
-                EhIgneousBox.Text = AppConfig.EhentaiIgneous;
-                _loading = false;
-                EhPassBox.Clear();   // 密码不留在界面上，也不写进配置
-                InAppDialog.Info(this, result.Message, I18n.Tr("登录成功"));
-            }
-            else
-            {
-                InAppDialog.Warn(this, result.Message, I18n.Tr("登录失败"));
-            }
-        }
-        finally
-        {
-            EhLoginButton.IsEnabled = true;
-            EhLoginButton.Content = I18n.Tr("登录并获取 Cookie");
-        }
-    }
-
-    /// <summary>退出登录：清掉三个 cookie（账号名留着，方便下次再登）。</summary>
-    private void EhLogoutButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!InAppDialog.Confirm(
-                this, I18n.Tr("确定要清除 E-Hentai 登录信息吗？清除后将无法访问 exhentai(里站)。"),
-                I18n.Tr("退出登录")))
-            return;
-
-        AppConfig.Write("ehentai", "member_id", "");
-        AppConfig.Write("ehentai", "pass_hash", "");
-        AppConfig.Write("ehentai", "igneous", "");
-        EhentaiApi.Invalidate();
-        _loading = true;
-        EhMemberBox.Text = "";
-        EhHashBox.Text = "";
-        EhIgneousBox.Text = "";
-        _loading = false;
-        EhPassBox.Clear();
-    }
-
-    private void EhMemberBox_LostFocus(object sender, RoutedEventArgs e) =>
-        SaveEhCookie("member_id", EhMemberBox.Text);
-
-    private void EhHashBox_LostFocus(object sender, RoutedEventArgs e) =>
-        SaveEhCookie("pass_hash", EhHashBox.Text);
-
-    private void EhIgneousBox_LostFocus(object sender, RoutedEventArgs e) =>
-        SaveEhCookie("igneous", EhIgneousBox.Text);
-
-    private void SaveEhCookie(string key, string value)
-    {
-        if (_loading)
-            return;
-        AppConfig.Write("ehentai", key, value.Trim());
-        EhentaiApi.Invalidate();
-    }
-
     private async void EhTestButton_Click(object sender, RoutedEventArgs e)
     {
-        // 先保存当前输入，再用其连接
-        AppConfig.Write("ehentai", "member_id", EhMemberBox.Text.Trim());
-        AppConfig.Write("ehentai", "pass_hash", EhHashBox.Text.Trim());
-        AppConfig.Write("ehentai", "igneous", EhIgneousBox.Text.Trim());
-        EhentaiApi.Invalidate();
+        // 登录 cookie 在「账号访问」页填写，这里只测当前配置能不能连上
         EhTestButton.IsEnabled = false;
         try
         {
@@ -718,19 +614,9 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("pixiv", "s_mode", PixivMatches[PxMatchCombo.SelectedIndex]);
     }
 
-    private void PxSessionBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_loading)
-            return;
-        AppConfig.Write("pixiv", "php_sessid", PxSessionBox.Text.Trim());
-        PixivApi.Invalidate();   // cookie 变了要重建客户端
-    }
-
     private async void PxTestButton_Click(object sender, RoutedEventArgs e)
     {
-        // 先保存当前输入，再用其连接
-        AppConfig.Write("pixiv", "php_sessid", PxSessionBox.Text.Trim());
-        PixivApi.Invalidate();
+        // 登录 cookie 在「账号访问」页填写，这里只测当前配置能不能连上
         PxTestButton.IsEnabled = false;
         try
         {

@@ -73,7 +73,12 @@ public static class AppConfig
         ["pixiv"] = new()
         {
             ["php_sessid"] = "", ["mode"] = "all", ["s_mode"] = "s_tag", ["original"] = "True",
+            ["username"] = "",
         },
+        // FANBOX 官方站（fanbox.cc）登录：浏览器里复制的 FANBOXSESSID。
+        // 未填时 FANBOX 只走 pawchive 归档；填了则作品搜索多出一个「FANBOX（账号名）」来源，直连官方 API。
+        // username 只是检测登录时顺手记下的显示名，鉴权只认 sessid。
+        ["fanbox"] = new() { ["sessid"] = "", ["username"] = "" },
         // 图床存储（自建 Image_hosting 服务）：开启后作品卡封面由图床直供，不再逐张唤醒 HDD
         ["image_host"] = new()
         {
@@ -508,6 +513,20 @@ public static class AppConfig
     /// 与 E-Hentai 不同，pixiv 的原图不需要登录（只有 R-18 作品本身才需要）。
     /// </summary>
     public static bool PixivOriginal => Read("pixiv", "original", "True") != "False";
+
+    /// <summary>检测登录时记下的 pixiv 显示名（只用于「账号访问」页与来源下拉的展示，鉴权只认 PHPSESSID）。</summary>
+    public static string PixivUsername => (Read("pixiv", "username", "") ?? "").Trim();
+
+    // ---------- FANBOX 官方站（fanbox.cc）----------
+
+    /// <summary>
+    /// 登录 cookie 的 FANBOXSESSID（浏览器登录 fanbox.cc 后从 Cookie 里复制，形如 <c>12345678_abcdef…</c>）。
+    /// 留空即不登录：FANBOX 只能经 pawchive 归档访问。
+    /// </summary>
+    public static string FanboxSessionId => (Read("fanbox", "sessid", "") ?? "").Trim();
+
+    /// <summary>检测登录时记下的 FANBOX 显示名（来源下拉写成「FANBOX（显示名）」）。</summary>
+    public static string FanboxUsername => (Read("fanbox", "username", "") ?? "").Trim();
 
     // ---------- 图床存储（自建 Image_hosting）----------
 

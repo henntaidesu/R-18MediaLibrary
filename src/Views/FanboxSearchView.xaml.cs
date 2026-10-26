@@ -57,13 +57,15 @@ public class FanboxCardItem : ObservableBase
     public bool Selectable { get; init; }
     /// <summary>卡片来源：artist=作家卡（无操作按钮）/ post=作家主页作品。</summary>
     public string Kind { get; init; } = "post";
+    /// <summary>官方站：当前账号的赞助档位看不到这篇时的提示（「🔒 ¥500」），空表示看得到。</summary>
+    public string LockText { get; init; } = "";
 
     public Visibility TagVisibility => TagText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     public Visibility MetaVisibility => MetaText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-    /// <summary>状态文案：已品悦在界面上一律显示为「已下载」。</summary>
-    public string StateText => State == "已品悦" ? I18n.Tr("已下载") : State;
-    public Visibility StateVisibility => State.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    /// <summary>状态文案：已品悦在界面上一律显示为「已下载」；未下载但看不到（未赞助）的显示锁标。</summary>
+    public string StateText => State == "已品悦" ? I18n.Tr("已下载") : State.Length > 0 ? State : LockText;
+    public Visibility StateVisibility => StateText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
     // 卡内按钮行二选一：未下载的作品可 选择/下载；已下载或下载中则是禁用的状态按钮。作家卡不带按钮。
     public Visibility SelectVisibility =>
@@ -143,6 +145,9 @@ public partial class FanboxSearchView : UserControl
 
     // 作家主页分页（站点固定每页 50 条）
     private readonly List<PawchivePost> _posts = [];
+    // 数据源：false = pawchive 归档，true = fanbox.cc 官方站（来源下拉里的「FANBOX（账号名）」）。
+    // 两边的作家键不通用（pawchive 是纯数字作家号，官方站是 creatorId），换站即清空，见 SetOfficial
+    private bool _official;
     private int _offset;
     private bool _hasMore;
     private bool _loadingMore;
@@ -157,6 +162,7 @@ public partial class FanboxSearchView : UserControl
     private const double DetailLookahead = 1.0;    // 视口上下各预取一屏
     private string _detailPostId = "";
     private string _detailState = "";
+    private bool _detailLocked;     // 官方站：当前账号看不到这篇（未赞助到该档位），「下载」转成禁用的锁标
     private int _detailGen;     // 详情请求代际：与 _generation 分开，看详情不该作废主页的分页
 
     // 作家监控（列表与间隔在系统设置里，这里只管作家主页那颗按钮）
@@ -190,11 +196,11 @@ public partial class FanboxSearchView : UserControl
     {
         "已品悦" => I18n.Tr("已下载"),
         "下载中" or "已下载" => _detailState,
-        _ => I18n.Tr("下载"),
+        _ => _detailLocked ? "🔒 " + I18n.Tr("需赞助") : I18n.Tr("下载"),
     };
 
-    /// <summary>已入库/下载中的作品不必再下。</summary>
-    public bool DetailDownloadEnabled => _detailState is not ("已品悦" or "下载中" or "已下载");
+    /// <summary>已入库/下载中的作品不必再下；看不到的（未赞助）下不了。</summary>
+    public bool DetailDownloadEnabled => _detailState is not ("已品悦" or "下载中" or "已下载") && !_detailLocked;
 
     /// <summary>宿主搜索栏的「下载」：入队当前详情这一篇。</summary>
     public void DownloadDetail()
@@ -233,6 +239,30 @@ public partial class FanboxSearchView : UserControl
     /// <summary>输入框的占位提示（宿主切到本来源时取用）。</summary>
     public static string InputHint => I18n.Tr("作家名 / 作家 ID，或粘贴 pawchive 作家链接");
 
+    /// <summary>官方站来源的占位提示（对齐 Web 的 SEARCH_SOURCES.fanboxcc）。</summary>
+    public static string OfficialInputHint =>
+        I18n.Tr("作家名 / 作家 ID，或 fanbox.cc 主页链接；留空直接查询 = 我赞助 / 关注的作家");
+
+    /// <summary>
+    /// 切换数据源（宿主切来源时调用）：pawchive 与官方站的结果互不通用，换站即作废在途请求、清空结果。
+    /// </summary>
+    public void SetOfficial(bool official)
+    {
+        if (official == _official)
+            return;
+        _official = official;
+        ++_generation;
+        ++_detailGen;
+        _cards.Clear();
+        _artistCards = [];
+        _posts.Clear();
+        _artistId = _artistName = _publicId = "";
+        _fromArtists = false;
+        LoadingOverlay.Visibility = Visibility.Collapsed;
+        ShowLevel("artists");
+        SetStatus("");
+    }
+
     /// <summary>当前结果计数/提示文案；宿主切回本来源时用它恢复计数行。</summary>
     public string CurrentStatus { get; private set; } = "";
 
@@ -260,6 +290,12 @@ public partial class FanboxSearchView : UserControl
     public async Task RunSearchAsync(string raw)
     {
         raw = (raw ?? "").Trim();
+        // 官方站：留空查询 = 列出我赞助 / 关注的作家；作家链接与 creatorId 由 FanboxOfficialApi 认
+        if (_official)
+        {
+            await SearchArtistsAsync(raw);
+            return;
+        }
         if (raw.Length == 0)
             return;
 
@@ -284,15 +320,19 @@ public partial class FanboxSearchView : UserControl
         ShowLevel("artists");
         _cards.Clear();
         SetStatus("");
-        LoadingText.Text = PawchiveApi.CreatorsReady
-            ? I18n.Tr("正在搜索作家…")
-            : I18n.Tr("正在下载站点作家索引（约 15MB），首次搜索稍慢…");
+        LoadingText.Text = _official ? I18n.Tr("正在查询 fanbox.cc…")
+            : PawchiveApi.CreatorsReady
+                ? I18n.Tr("正在搜索作家…")
+                : I18n.Tr("正在下载站点作家索引（约 15MB），首次搜索稍慢…");
         LoadingOverlay.Visibility = Visibility.Visible;
 
         List<PawchiveArtist> artists;
+        string? error;
+        // 官方站留空查询列的是「我赞助 / 关注的作家」：只有一位也要让人看到列表，不直接跳进去
+        var mine = _official && keyword.Length == 0;
         try
         {
-            artists = await PawchiveApi.SearchArtistsAsync(keyword);
+            (artists, error) = await FanboxSource.SearchArtistsAsync(_official, keyword);
         }
         finally
         {
@@ -303,14 +343,14 @@ public partial class FanboxSearchView : UserControl
             return;
 
         // 只有一个结果 → 直接进入该作家主页（对齐 Web：免去多余一次点击）
-        if (artists.Count == 1)
+        if (artists.Count == 1 && !mine)
         {
             await OpenArtistAsync(artists[0].Id, artists[0].Name, artists[0].PublicId, fromArtists: false);
             return;
         }
         if (artists.Count == 0)
         {
-            SetStatus(I18n.Tr("没有匹配的作家"));
+            SetStatus(error ?? (mine ? I18n.Tr("还没有赞助或关注任何作家") : I18n.Tr("没有匹配的作家")));
             return;
         }
 
@@ -319,17 +359,19 @@ public partial class FanboxSearchView : UserControl
             Kind = "artist",
             Id = a.Id,
             Title = a.Name.Length > 0 ? a.Name : a.PublicId,
-            ThumbUrl = PawchiveApi.IconUrl(a.Service, a.Id),
+            ThumbUrl = a.IconUrl,
             TagText = a.PublicId,
             MetaText = a.Favorited > 0 ? $"♥ {a.Favorited}" : "",
         }).ToList();
         foreach (var card in _artistCards)
             _cards.Add(card);
 
-        var cachedAt = PawchiveApi.CreatorsCachedAt;
-        SetStatus(I18n.Format(I18n.Tr("搜索到 {n} 位作家"), ("n", artists.Count)) +
-            (cachedAt is { } t ? "　" + I18n.Format(I18n.Tr("索引更新于 {time}"),
-                ("time", t.ToString("yyyy-MM-dd HH:mm"))) : ""));
+        var cachedAt = _official ? null : PawchiveApi.CreatorsCachedAt;
+        SetStatus(mine
+            ? I18n.Format(I18n.Tr("我赞助 / 关注的作家 {n} 位"), ("n", artists.Count))
+            : I18n.Format(I18n.Tr("搜索到 {n} 位作家"), ("n", artists.Count)) +
+              (cachedAt is { } t ? "　" + I18n.Format(I18n.Tr("索引更新于 {time}"),
+                  ("time", t.ToString("yyyy-MM-dd HH:mm"))) : ""));
         _ = LoadThumbnailsAsync(generation);
     }
 
@@ -364,7 +406,9 @@ public partial class FanboxSearchView : UserControl
         _loadingMore = false;
         ShowLevel("posts");
         UpdateSelectInfo();
-        _watched = FanboxWatchService.IsWatched(artistId);
+        // 监控只走 pawchive（后台轮询不该拿着登录 cookie 反复敲官方站），官方站来源不给这颗按钮
+        _watched = !_official && FanboxWatchService.IsWatched(artistId);
+        WatchToggleButton.Visibility = _official ? Visibility.Collapsed : Visibility.Visible;
         UpdateWatchButton();
         SetStatus("");
         LoadingText.Text = I18n.Tr("正在获取作品…");
@@ -372,7 +416,7 @@ public partial class FanboxSearchView : UserControl
 
         // 作家名未知（直接输入作家号/链接进来）时补一次作家信息
         if (_artistName.Length == 0 &&
-            await PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistId) is { } profile)
+            await FanboxSource.GetArtistAsync(_official, artistId) is { } profile)
         {
             if (generation != _generation)
                 return;
@@ -385,7 +429,7 @@ public partial class FanboxSearchView : UserControl
             LoadingOverlay.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>取下一页作品并追加到网格；每页 50 条，取不满一页即到底。</summary>
+    /// <summary>取下一批作品并追加到网格（pawchive 每页 50 条，官方站一次拼几页）。</summary>
     private async Task LoadMorePostsAsync(int generation)
     {
         if (_loadingMore || !_hasMore)
@@ -393,20 +437,20 @@ public partial class FanboxSearchView : UserControl
         _loadingMore = true;
         try
         {
-            var batch = await PawchiveApi.GetPostsAsync(PawchiveApi.FanboxService, _artistId, _offset);
+            var (batch, hasMore, error) = await FanboxSource.GetPostsAsync(_official, _artistId, _offset);
             if (generation != _generation)
                 return;
             if (batch is null)
             {
-                SetStatus(I18n.Tr("获取作品列表失败"));
+                SetStatus(error ?? I18n.Tr("获取作品列表失败"));
                 _hasMore = false;
                 return;
             }
             _offset += batch.Count;
-            _hasMore = batch.Count >= PawchiveApi.PageSize;
+            _hasMore = hasMore;
             _posts.AddRange(batch);
 
-            var states = await Task.Run(() => FanboxService.PostStates(_artistId));
+            var states = await FanboxSource.PostStatesAsync(_official, _artistId);
             if (generation != _generation)
                 return;
             foreach (var p in batch)
@@ -419,12 +463,15 @@ public partial class FanboxSearchView : UserControl
                     Kind = "post",
                     Id = p.Id,
                     Title = p.Title.Length > 0 ? p.Title : p.Id,
-                    ThumbUrl = p.CoverPath.Length > 0 ? PawchiveApi.ThumbUrl(p.CoverPath) : "",
+                    ThumbUrl = p.CoverUrl,
                     TagText = drive > 0 ? I18n.Tr("☁ 网盘") : "",
                     MetaText = p.Files.Count > 0
                         ? I18n.Format(I18n.Tr("{n} 文件"), ("n", p.Files.Count)) : "",
                     State = state,
-                    Selectable = state.Length == 0 && (p.Files.Count > 0 || drive > 0),
+                    // 官方站：当前账号的赞助档位看不到这篇（对齐 Web 的 🔒 角标与禁用按钮）
+                    LockText = p.Locked
+                        ? "🔒 " + (p.FeeRequired > 0 ? $"¥{p.FeeRequired}" : I18n.Tr("需赞助")) : "",
+                    Selectable = FanboxSource.IsSelectable(p, state),
                 });
             }
             SetStatus(ArtistLineText());
@@ -483,6 +530,7 @@ public partial class FanboxSearchView : UserControl
         var generation = ++_detailGen;
         _detailPostId = card.Id;
         _detailState = card.State;
+        _detailLocked = card.LockText.Length > 0;
         ShowLevel("detail");
         SetStatus("");   // 标题就在下面的详情里，计数行不再重复一遍
 
@@ -504,13 +552,13 @@ public partial class FanboxSearchView : UserControl
         DetailPane.ScrollToTop();
         LoadingOverlay.Visibility = Visibility.Visible;
 
-        var post = await PawchiveApi.GetPostAsync(PawchiveApi.FanboxService, _artistId, card.Id);
+        var (post, error) = await FanboxSource.GetPostAsync(_official, _artistId, card.Id);
         if (generation != _detailGen || _level != "detail")
             return;
         LoadingOverlay.Visibility = Visibility.Collapsed;
         if (post is null)
         {
-            DetailNoImage.Text = I18n.Tr("获取作品详情失败");
+            DetailNoImage.Text = error ?? I18n.Tr("获取作品详情失败");
             DetailNoImage.Visibility = Visibility.Visible;
             return;
         }
@@ -522,7 +570,7 @@ public partial class FanboxSearchView : UserControl
     private void RenderDetail(PawchivePost post)
     {
         var done = _detailState == "已品悦";
-        var busy = _detailState is "下载中" or "已下载";
+        _detailLocked = post.Locked;
 
         DetailTitle.Text = post.Title.Length > 0 ? post.Title : post.Id;
         DetailDownloadChanged?.Invoke();   // 「下载」按钮在宿主搜索栏上，由它重新取文案/可用性
@@ -539,7 +587,12 @@ public partial class FanboxSearchView : UserControl
             I18n.Format(I18n.Tr("{n} 个（图片 {m}）"), ("n", post.Files.Count), ("m", images.Count)) +
             (links.Count > 0 ? "　" + I18n.Format(I18n.Tr("网盘 {n} 条"), ("n", links.Count)) : ""));
         AddDetailField(I18n.Tr("状态"), done ? I18n.Tr("已下载")
-            : _detailState.Length > 0 ? _detailState : I18n.Tr("未下载"));
+            : _detailState.Length > 0 ? _detailState
+            : post.Locked
+                ? "🔒 " + (post.FeeRequired > 0
+                    ? I18n.Format(I18n.Tr("需赞助 ¥{fee} 档位才能查看"), ("fee", post.FeeRequired))
+                    : I18n.Tr("需赞助才能查看"))
+                : I18n.Tr("未下载"));
 
         if (post.Content.Length > 0)
         {
@@ -559,7 +612,7 @@ public partial class FanboxSearchView : UserControl
             _detailImages.Add(new FanboxImageItem
             {
                 Name = f.Name,
-                ThumbUrl = PawchiveApi.ThumbUrl(f.Path),
+                ThumbUrl = f.Thumb,
             });
         if (images.Count == 0)
         {
@@ -718,14 +771,12 @@ public partial class FanboxSearchView : UserControl
         _detailPumping = true;
         try
         {
-            // pawchive 的防护网关拦浏览器 UA，取预览图同样要用中性 UA
-            using var client = Http.CreateClient(TimeSpan.FromSeconds(20), PawchiveApi.UserAgent);
             while (_detailPending.Count > 0)
             {
                 if (generation != _detailGen)
                     return;
                 var item = _detailPending.Dequeue();
-                await LoadDetailImageAsync(client, item, generation);
+                await LoadDetailImageAsync(item, generation);
             }
         }
         finally
@@ -734,11 +785,12 @@ public partial class FanboxSearchView : UserControl
         }
     }
 
-    private async Task LoadDetailImageAsync(HttpClient client, FanboxImageItem item, int generation)
+    private async Task LoadDetailImageAsync(FanboxImageItem item, int generation)
     {
         try
         {
-            var bytes = await client.GetByteArrayAsync(item.ThumbUrl);
+            // 两个来源的取图请求头正好相反（pawchive 要中性 UA，官方站要 cookie + Referer），由 FanboxSource 分流
+            var (bytes, _) = await FanboxSource.GetImageAsync(item.ThumbUrl);
             if (generation != _detailGen)
                 return;
             var image = new BitmapImage();
@@ -811,8 +863,7 @@ public partial class FanboxSearchView : UserControl
     private async Task EnqueueAsync(IReadOnlyList<string> ids)
     {
         var wanted = ids.ToHashSet();
-        var posts = _posts.Where(p => wanted.Contains(p.Id)).ToList();
-        if (posts.Count == 0)
+        if (wanted.Count == 0)
             return;
 
         // 有媒体库配置时先选下载目标（与 DLsite 搜索的入队流程一致）
@@ -830,12 +881,17 @@ public partial class FanboxSearchView : UserControl
         LoadingText.Text = I18n.Tr("正在加入下载队列…");
         LoadingOverlay.Visibility = Visibility.Visible;
 
-        var artist = new PawchiveArtist
+        // 官方站的作家信息要带上 pixiv 用户号（入库的 maker_id），由 creatorId 现取（有缓存）；
+        // 列表项也只是摘要，入队前要逐篇取详情。pawchive 的列表项本身就是全的，直接用
+        var artist = await FanboxSource.GetArtistAsync(_official, _artistId) ?? new PawchiveArtist
         {
             Id = _artistId, Service = PawchiveApi.FanboxService,
             Name = _artistName, PublicId = _publicId,
         };
-        var result = await FanboxService.EnqueuePostsAsync(artist, posts, targetFolder, targetLib);
+        var posts = await FanboxSource.ResolveForEnqueueAsync(_official, _artistId, wanted, _posts);
+        var result = posts.Count == 0
+            ? new FanboxEnqueueResult { Error = I18n.Tr("未找到选中的作品") }
+            : await FanboxService.EnqueuePostsAsync(artist, posts, targetFolder, targetLib);
         LoadingOverlay.Visibility = Visibility.Collapsed;
 
         if (!result.Ok)
@@ -974,8 +1030,6 @@ public partial class FanboxSearchView : UserControl
     /// <summary>后台下载卡片缩略图（作家头像 / 作品封面），新一轮请求即作废旧加载。</summary>
     private async Task LoadThumbnailsAsync(int generation)
     {
-        // pawchive 的防护网关拦浏览器 UA，取头像/缩略图同样要用中性 UA
-        using var client = Http.CreateClient(TimeSpan.FromSeconds(20), PawchiveApi.UserAgent);
         foreach (var card in _cards.ToList())
         {
             if (generation != _generation)
@@ -984,7 +1038,8 @@ public partial class FanboxSearchView : UserControl
                 continue;
             try
             {
-                var bytes = await client.GetByteArrayAsync(card.ThumbUrl);
+                // pawchive 要中性 UA、官方站要 cookie + Referer，由 FanboxSource 分流
+                var (bytes, _) = await FanboxSource.GetImageAsync(card.ThumbUrl);
                 if (generation != _generation)
                     return;
                 var image = new BitmapImage();

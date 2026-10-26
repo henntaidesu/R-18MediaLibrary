@@ -26,7 +26,7 @@ async function renderLibView(ctx) {
     setSort(MAKER_SORTS, makerSort, v => { makerSort = v; render(); });
     const d = await api(`/api/makers?lib=${enc(ctx.lib)}&sort=${makerSort}`);
     curItems = d.makers.map(m => ({ ...m, _key: `${m.maker} ${m.display || ''}`.trim().toLowerCase() || '未知社团' }));
-    drawGroups(curItems, m => ({ title: makerLabel(m), caption: `${m.count} 个作品`, icon: m.iconUrl || m.icon || '', iconFallback: m.iconUrl ? m.icon : '', avatar: true, onEdit: m.maker ? () => editMakerAlias(m) : null, onClick: () => pushView('works', { lib: ctx.lib, maker: m.maker, label: makerLabel(m) }) }), '个社团');
+    drawGroups(curItems, m => makerGroup(m, () => pushView('works', { lib: ctx.lib, maker: m.maker, label: makerLabel(m) })), '个社团');
     prependLibToggle('▦ 显示作品', 'works');
   }
 }
@@ -53,7 +53,7 @@ async function renderAllMakers() {
   setSort(MAKER_SORTS, makerSort, v => { makerSort = v; render(); });
   const d = await api('/api/makers?sort=' + makerSort);
   curItems = d.makers.map(m => ({ ...m, _key: `${m.maker} ${m.display || ''}`.trim().toLowerCase() || '未知社团' }));
-  drawGroups(curItems, m => ({ title: makerLabel(m), caption: `${m.count} 个作品`, icon: m.iconUrl || m.icon || '', iconFallback: m.iconUrl ? m.icon : '', avatar: true, onEdit: m.maker ? () => editMakerAlias(m) : null, onClick: () => pushView('works', { maker: m.maker, label: makerLabel(m) }) }), '个社团');
+  drawGroups(curItems, m => makerGroup(m, () => pushView('works', { maker: m.maker, label: makerLabel(m) })), '个社团');
 }
 async function renderMakers(ctx) {
   $('title').textContent = ctx.genre || ctx.type || ctx.lib || '作品社团';
@@ -63,18 +63,37 @@ async function renderMakers(ctx) {
   q.set('sort', makerSort);
   const d = await api('/api/makers?' + q);
   curItems = d.makers.map(m => ({ ...m, _key: `${m.maker} ${m.display || ''}`.trim().toLowerCase() || '未知社团' }));
-  drawGroups(curItems, m => ({ title: makerLabel(m), caption: `${m.count} 个作品`, icon: m.iconUrl || m.icon || '', iconFallback: m.iconUrl ? m.icon : '', avatar: true, onEdit: m.maker ? () => editMakerAlias(m) : null, onClick: () => pushView('works', { ...ctx, maker: m.maker, label: makerLabel(m) }) }), '个社团');
+  drawGroups(curItems, m => makerGroup(m, () => pushView('works', { ...ctx, maker: m.maker, label: makerLabel(m) })), '个社团');
 }
 // 社团显示名：设过别名用别名，否则真名；两者都空是"未知社团"
 function makerLabel(m) { return m.display || m.maker || '未知社团'; }
 
-// 右上角 🖊：自定义该社团的显示名称。只改映射，作品库里的真名不动
-async function editMakerAlias(m) {
-  const current = m.display && m.display !== m.maker ? m.display : '';
-  const v = await uiPrompt(
-    `社团「${m.maker}」的显示名称（留空恢复原名，不会改动作品数据）`, current, '自定义社团名称');
+// 社团卡：头像 + 名称 + 作品数 + 主页外链（FANBOX / pawchive），右上角 🖊 打开社团设置
+function makerGroup(m, onClick) {
+  const links = [];
+  if (m.fanboxUrl) links.push({ label: 'FANBOX', url: m.fanboxUrl });
+  if (m.pawchiveUrl) links.push({ label: 'pawchive', url: m.pawchiveUrl });
+  return {
+    title: makerLabel(m), caption: `${m.count} 个作品`, links,
+    icon: m.iconUrl || m.icon || '', iconFallback: m.iconUrl ? m.icon : '', avatar: true,
+    onEdit: m.maker ? () => editMaker(m) : null, editTitle: '社团设置', onClick,
+  };
+}
+
+// 右上角 🖊：社团设置——显示名称 + 主页。只改映射，作品库里的真名不动
+async function editMaker(m) {
+  const v = await uiForm({
+    title: '社团设置',
+    message: `社团「${m.maker}」（不会改动作品数据）`,
+    fields: [
+      { key: 'alias', label: '显示名称（留空恢复原名）', value: m.display && m.display !== m.maker ? m.display : '', placeholder: m.maker },
+      { key: 'fanbox', label: 'FANBOX 主页', value: m.fanboxUrl || '', placeholder: 'https://xxx.fanbox.cc/' },
+      { key: 'pawchive', label: 'pawchive 主页', value: m.pawchiveUrl || '', placeholder: 'https://pawchive.pw/fanbox/user/…' },
+    ],
+  });
   if (v === null) return;
-  await apiPost('/api/makeralias', { maker: m.maker, alias: v });
+  const r = await apiPost('/api/makersettings', { maker: m.maker, ...v });
+  if (r && r.error) { await uiAlert(r.error, '社团设置'); return; }
   render();
 }
 

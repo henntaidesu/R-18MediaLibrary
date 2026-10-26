@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private MediaLibPage? _favoritePage;
     private SettingsPage? _settingsPage;
     private WatchPage? _watchPage;
+    private AccountPage? _accountPage;
 
     private SearchPage SearchPage => _searchPage ??= new SearchPage();
 
@@ -123,6 +124,7 @@ public partial class MainWindow : Window
         NavTypeLabel.Text = I18n.Tr("作品形式");
         NavMakerLabel.Text = I18n.Tr("作品社团");
         NavFavoriteLabel.Text = I18n.Tr("我的收藏");
+        NavAccountsLabel.Text = I18n.Tr("账号访问");
         NavSettingLabel.Text = I18n.Tr("系统设置");
         if (_trayIcon != null)
             _trayIcon.Text = I18n.Tr("R18媒体库");
@@ -145,6 +147,7 @@ public partial class MainWindow : Window
             "type" => _typePage ??= new MediaLibPage(MediaLibRoot.WorkType),
             "maker" => _makerPage ??= new MediaLibPage(MediaLibRoot.Maker),
             "favorite" => _favoritePage ??= new MediaLibPage(MediaLibRoot.Favorite),
+            "accounts" => _accountPage ??= new AccountPage(),
             "setting" => _settingsPage ??= new SettingsPage(),
             _ => (object)_mediaLibPage,
         };

@@ -1031,15 +1031,22 @@ public static class DownloadEngine
 
                 // pawchive 的防护网关会拦截浏览器 UA 的请求，取附件须换成中性 UA（见 PawchiveApi.UserAgent）；
                 // 同属 fanbox 作品但托管在谷歌网盘的文件不在此列，照常用默认 UA
-                var userAgent = source == FanboxService.SourceName && !isDrive ? PawchiveApi.UserAgent : null;
+                // fanbox.cc 官方站（登录后的「FANBOX（账号名）」来源）正相反：要浏览器 UA + 登录 cookie + fanbox 的 Referer，
+                // 附件只对赞助到该档位的账号开放
+                var isFanboxOfficial = source == FanboxService.SourceName && FanboxOfficialApi.IsOfficialUrl(directUrl);
+                var userAgent = source == FanboxService.SourceName && !isDrive && !isFanboxOfficial
+                    ? PawchiveApi.UserAgent : null;
                 // E-Hentai 的原图走站点自己的 fullimg 接口，要带登录 cookie（里站更是整站都要）
-                var cookie = isEhentai ? EhentaiApi.CookieHeader : null;
+                var cookie = isEhentai ? EhentaiApi.CookieHeader
+                    : isFanboxOfficial ? FanboxOfficialApi.CookieHeader : null;
                 // pixiv 的图片服务器带防盗链：没有 pixiv 的 Referer 一律 403（与 cookie 无关，
                 // 匿名也能取图，只要带上它）
-                var referer = source == PixivApi.SourceName ? PixivApi.ImageReferer : null;
+                var referer = source == PixivApi.SourceName ? PixivApi.ImageReferer
+                    : isFanboxOfficial ? FanboxOfficialApi.Referer : null;
                 // E-Hentai 的每一条都是图片，响应不是图片就说明站点回了错误页（见 notimage 分支）
-                var result = DownloadFile(client, directUrl, filePath, filename, key, workId, userAgent, cookie,
-                    referer, expectImage: isEhentai);
+                // 官方站不能走下载线程共用的 client：它的 cookie 罐会让 Cloudflare 403（见 FanboxOfficialApi.Build）
+                var result = DownloadFile(isFanboxOfficial ? FanboxOfficialApi.DownloadClient() : client,
+                    directUrl, filePath, filename, key, workId, userAgent, cookie, referer, expectImage: isEhentai);
                 DownloadProgress.TryRemove(key, out _);
                 // pawchive 对只归档了预览的投稿（has_full=false）原图一律 404，但 img.<host> 上
                 // 800px 的预览图是有的。原图没有就存预览图，总好过整篇空手而归；

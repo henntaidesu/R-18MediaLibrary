@@ -202,6 +202,16 @@ public static class Db
                         PRIMARY KEY ("maker_name")
                     );
 
+                    -- 社团主页（FANBOX 官方主页 / pawchive 主页），社团卡上显示成两个外链。按真名记，同 maker_alias。
+                    -- fanbox 作家下载时自动记上；两个地址都是空串的行表示"用户清掉了"，自动补齐不再填回去。
+                    CREATE TABLE IF NOT EXISTS "maker_home" (
+                        "maker_name" text NOT NULL,
+                        "fanbox_url" text,
+                        "pawchive_url" text,
+                        "up_time" text,
+                        PRIMARY KEY ("maker_name")
+                    );
+
                     -- FANBOX 作家监控：按作家轮询 pawchive，发现新投稿就自动入队下载。
                     -- last_published 是"已处理到哪一篇"的水位线：站上投稿的 published 是 ISO 字符串
                     -- （2026-08-29T23:53:10），按字典序比较即按时间比较，比它新的才算新作品。

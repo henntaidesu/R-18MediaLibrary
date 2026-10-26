@@ -86,6 +86,38 @@ function uiChoice({ title, message, choices }) {
     ov.classList.add('show');
   });
 }
+// 多字段表单：fields = [{ key, label, value, placeholder }]，确定返回 { key: 值 }，取消返回 null。
+// 回车在最后一个输入框上即确定，其余输入框上跳到下一个
+function uiForm({ title, message, fields, okText = '保存' }) {
+  return new Promise(resolve => {
+    const ov = $('modal'), box = $('modalBox');
+    box.innerHTML = '';
+    const inputs = [];
+    const collect = () => Object.fromEntries(fields.map((f, i) => [f.key, inputs[i].value]));
+    const done = (v) => { _modalCancel = null; ov.classList.remove('show'); document.removeEventListener('keydown', onKey); resolve(v); };
+    if (title) box.appendChild(el('h3', null, title));
+    if (message) box.appendChild(el('div', 'modal-msg', message));
+    fields.forEach((f, i) => {
+      box.appendChild(el('label', 'modal-label', f.label));
+      const inp = el('input', 'modal-input'); inp.value = f.value || ''; inp.placeholder = f.placeholder || '';
+      inp.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        if (i < fields.length - 1) inputs[i + 1].focus(); else done(collect());
+      });
+      inputs.push(inp); box.appendChild(inp);
+    });
+    const btns = el('div', 'modal-btns');
+    const c = el('button', 'icon-btn', '取消'); c.onclick = () => done(null); btns.appendChild(c);
+    const ok = el('button', 'icon-btn primary', okText); ok.onclick = () => done(collect()); btns.appendChild(ok);
+    box.appendChild(btns);
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); done(null); } }
+    _modalCancel = () => done(null);
+    document.addEventListener('keydown', onKey);
+    ov.classList.add('show');
+    (inputs[0] || ok).focus();
+  });
+}
 function uiAlert(message, title) { return uiModal({ title: title || '提示', message, okText: '确定' }); }
 function uiConfirm(message, opts = {}) { return uiModal({ title: opts.title || '确认', message, okText: opts.okText || '确定', cancelText: opts.cancelText || '取消', danger: opts.danger }); }
 function uiPrompt(message, defaultValue, title) { return uiModal({ title: title || '输入', message, input: true, defaultValue, cancelText: '取消' }); }
@@ -100,6 +132,7 @@ const SECTIONS = [
   { key: 'maker',    label: '作品社团', root: 'allmakers', icon: '🏢' },
   { key: 'type',     label: '作品形式', root: 'types',   icon: '🎬' },
   { key: 'favorite', label: '我的收藏', root: 'favorites', icon: '♥' },
+  { key: 'accounts', label: '账号访问',                     icon: '🔑' },
   { key: 'settings', label: '系统设置',                     icon: '⚙' },
 ];
 const MAKER_SORTS = ['作品数 多→少', '作品数 少→多', '社团名 A→Z'];
@@ -282,6 +315,7 @@ function selectSection(key, noRender) {
   else if (key === 'search') renderSearchArea();
   else if (key === 'download') renderDownloadArea();
   else if (key === 'watch') renderWatchPage();
+  else if (key === 'accounts') renderAccountsPage();
   else if (key === 'settings') renderSettings();
 }
 
@@ -292,7 +326,7 @@ function encodeHash() {
   const s = SECTIONS.find(x => x.key === section);
   if (section === 'search') return encodeSearchHash();       // 作品搜索把来源与查询词编进地址栏
   if (section === 'download') return encodeDlHash();         // 下载管理有两视图，走独立编码
-  if (!s || !s.root) return '#/' + section;             // 其它叶子分区（作家监控 / 设置）
+  if (!s || !s.root) return '#/' + section;             // 其它叶子分区（作家监控 / 账号访问 / 设置）
   const segs = stack.slice(1).map(e => {
     const ctx = { ...e.ctx }; delete ctx.nodes; delete ctx.open;   // nodes 文件树缓存过大、open 详情折叠态是运行时状态，均不入 URL
     const c = Object.keys(ctx).length ? '~' + encodeURIComponent(JSON.stringify(ctx)) : '';
@@ -453,6 +487,16 @@ function drawGroups(items, mapFn, unit) {
     // 右侧信息块：名称 + 作品数竖排
     const info = el('div', 'ginfo');
     info.append(el('div', 'gt', m.title), el('div', 'gc', m.caption));
+    // 社团主页外链：新标签页打开，别让点击冒泡成"进入该分组"
+    if (m.links && m.links.length) {
+      const lk = el('div', 'glinks');
+      for (const l of m.links) {
+        const a = el('a', null, l.label); a.href = l.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.title = l.url; a.onclick = (ev) => ev.stopPropagation();
+        lk.appendChild(a);
+      }
+      info.appendChild(lk);
+    }
     c.appendChild(info);
     // 右上角按钮（社团卡 🖊 改显示名、媒体库卡 ⚙ 设置）：别让点击冒泡成"进入该分组"
     if (m.onEdit) {

@@ -80,6 +80,14 @@
                         <TextBlock x:Name="NavFavoriteLabel" Text="我的收藏" VerticalAlignment="Center" />
                     </StackPanel>
                 </RadioButton>
+                <RadioButton x:Name="NavAccounts" Style="{StaticResource NavButton}" GroupName="nav"
+                             Checked="Nav_Checked" Tag="accounts">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🔑" FontFamily="Segoe UI Emoji" FontSize="15" Width="26"
+                                   TextAlignment="Center" VerticalAlignment="Center" />
+                        <TextBlock x:Name="NavAccountsLabel" Text="账号访问" VerticalAlignment="Center" />
+                    </StackPanel>
+                </RadioButton>
                 <RadioButton x:Name="NavSetting" Style="{StaticResource NavButton}" GroupName="nav"
                              Checked="Nav_Checked" Tag="setting">
                     <StackPanel Orientation="Horizontal">

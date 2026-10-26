@@ -284,13 +284,18 @@ public partial class SearchPage : UserControl
     private bool _autoLoadingPages;
 
     // 当前搜索来源："dlsite"（作品号/社团号/目录页）、"fanbox"（pawchive 作家）、
+    // "fanboxcc"（fanbox.cc 官方站，「账号访问」里登录了 FANBOX 才有，下拉里写成「FANBOX（账号名）」）、
     // "ehentai"（画廊）或 "pixiv"（插画/漫画/动图）。
     // 各来源共用同一条搜索栏，结果区互斥显示（对齐 Web 端 renderSearchArea 的来源下拉）。
     private string _source = SourceDlsite;
     private const string SourceDlsite = "dlsite";
     private const string SourceFanbox = "fanbox";
+    private const string SourceFanboxCc = "fanboxcc";
     private const string SourceEhentai = "ehentai";
     private const string SourcePixiv = "pixiv";
+    // 两个 FANBOX 来源共用同一个结果区（FanboxView），只是取数的站点不同
+    private bool IsFanbox => _source is SourceFanbox or SourceFanboxCc;
+    private bool _buildingSources;   // 重建来源下拉期间不把选中项变化当成用户切来源
     // DLsite 侧最后停在哪个子视图（""=还没搜过 / "results"=帖子结果 / "maker"=社团作品网格），
     // 切到 FANBOX 再切回来时按它原样恢复
     private string _dlsiteLevel = "";
@@ -327,7 +332,7 @@ public partial class SearchPage : UserControl
         {
             FanboxBackButton.Content = FanboxView.BackLabel;
             FanboxBackButton.Visibility =
-                available && _source == SourceFanbox ? Visibility.Visible : Visibility.Collapsed;
+                available && IsFanbox ? Visibility.Visible : Visibility.Collapsed;
         };
         // 详情页的「下载」也在本页的搜索栏上，文案/可用性随作品状态变
         FanboxView.DetailDownloadChanged += SyncFanboxDownloadButton;
@@ -366,32 +371,52 @@ public partial class SearchPage : UserControl
         BuildSourceBox();
         RetranslateUi();
         I18n.LanguageChanged += RetranslateUi;
+        // 在「账号访问」里登录/退出 FANBOX、或检测到了新的账号名：来源下拉随之增减/改名
+        AccountService.Changed += () => Dispatcher.BeginInvoke(new Action(BuildSourceBox));
     }
 
-    /// <summary>来源下拉的选项（顺序即显示顺序，对齐 Web 的 SEARCH_SOURCES）。</summary>
+    /// <summary>
+    /// 来源下拉的选项（顺序即显示顺序，对齐 Web 的 SEARCH_SOURCES / searchSources）。
+    /// 登录了 FANBOX 才多出「FANBOX（账号名）」一项，与未登录的「FANBOX」（pawchive 归档）并列；
+    /// 正选着它时退出了登录，就退回「FANBOX」。
+    /// </summary>
     private void BuildSourceBox()
     {
+        _buildingSources = true;
         SourceBox.Items.Clear();
         SourceBox.Items.Add(new ComboBoxItem { Content = "DLsite", Tag = SourceDlsite });
         SourceBox.Items.Add(new ComboBoxItem { Content = "FANBOX", Tag = SourceFanbox });
+        if (FanboxSource.OfficialAvailable)
+            SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.OfficialLabel, Tag = SourceFanboxCc });
         SourceBox.Items.Add(new ComboBoxItem { Content = "E-Hentai", Tag = SourceEhentai });
         SourceBox.Items.Add(new ComboBoxItem { Content = "pixiv", Tag = SourcePixiv });
-        SourceBox.SelectedIndex = _source switch
-        {
-            SourceFanbox => 1,
-            SourceEhentai => 2,
-            SourcePixiv => 3,
-            _ => 0,
-        };
+        _buildingSources = false;
+        if (!SelectSource(_source) && _source == SourceFanboxCc)
+            SelectSource(SourceFanbox);   // 触发 SelectionChanged → 换回 pawchive
+    }
+
+    /// <summary>在下拉里选中某个来源（会触发 SelectionChanged）；下拉里没有这一项时返回 false。</summary>
+    private bool SelectSource(string key)
+    {
+        foreach (var item in SourceBox.Items)
+            if (item is ComboBoxItem { Tag: string tag } box && tag == key)
+            {
+                SourceBox.SelectedItem = box;
+                return true;
+            }
+        return false;
     }
 
     private void SourceBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (SourceBox.SelectedItem is not ComboBoxItem item || item.Tag is not string key)
+        if (_buildingSources || SourceBox.SelectedItem is not ComboBoxItem item || item.Tag is not string key)
             return;
         if (key == _source)
             return;
         _source = key;
+        // 两个 FANBOX 来源共用一个结果区：换了站点就清空（作家键两边不通用）
+        if (IsFanbox)
+            FanboxView.SetOfficial(_source == SourceFanboxCc);
         ApplySource();
     }
 
@@ -464,7 +489,7 @@ public partial class SearchPage : UserControl
         FanboxDownloadButton.Content = FanboxView.DetailDownloadLabel;
         FanboxDownloadButton.IsEnabled = FanboxView.DetailDownloadEnabled;
         FanboxDownloadButton.Visibility =
-            _source == SourceFanbox && FanboxView.CanDownloadDetail
+            IsFanbox && FanboxView.CanDownloadDetail
                 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -482,6 +507,7 @@ public partial class SearchPage : UserControl
     private static string SourceHint(string source) => source switch
     {
         SourceFanbox => FanboxSearchView.InputHint,
+        SourceFanboxCc => FanboxSearchView.OfficialInputHint,
         SourceEhentai => EhentaiSearchView.InputHint,
         SourcePixiv => PixivSearchView.InputHint,
         _ => I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接"),
@@ -526,7 +552,7 @@ public partial class SearchPage : UserControl
     /// <summary>查询入口：按当前来源分流到 DLsite / FANBOX / E-Hentai / pixiv 的搜索。</summary>
     private Task RunSearchAnyAsync() => _source switch
     {
-        SourceFanbox => FanboxView.RunSearchAsync(InputBox.Text),
+        SourceFanbox or SourceFanboxCc => FanboxView.RunSearchAsync(InputBox.Text),
         SourceEhentai => EhentaiView.RunSearchAsync(InputBox.Text),
         SourcePixiv => PixivView.RunSearchAsync(InputBox.Text),
         _ => RunSearchAsync(),
@@ -544,15 +570,14 @@ public partial class SearchPage : UserControl
     /// <summary>搜索栏「下载」：入队 FANBOX 详情页当前这一篇。</summary>
     private void FanboxDownload_Click(object sender, RoutedEventArgs e) => FanboxView.DownloadDetail();
 
-    /// <summary>由系统设置页的监控卡「打开主页」触发：切到 FANBOX 来源并直接进这位作家的主页。</summary>
+    /// <summary>
+    /// 由作家监控页的「打开主页」触发：切到 FANBOX 来源并直接进这位作家的主页。
+    /// 监控只走 pawchive，故固定切到「FANBOX」那一项（不是官方站）。
+    /// </summary>
     public void OpenFanboxArtist(string artistId, string artistName)
     {
         if (_source != SourceFanbox)
-        {
-            SourceBox.SelectedIndex = 1;   // 触发 SelectionChanged → ApplySource
-            _source = SourceFanbox;
-            ApplySource();
-        }
+            SelectSource(SourceFanbox);   // 触发 SelectionChanged → SetOfficial(false) + ApplySource
         FanboxView.OpenArtist(artistId, artistName);
     }
 

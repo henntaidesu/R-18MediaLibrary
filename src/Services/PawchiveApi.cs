@@ -20,6 +20,25 @@ public class PawchiveArtist
     public int Favorited { get; init; }
     /// <summary>站上最后更新时间（unix 秒，0 表示未知）。</summary>
     public long UpdatedUnix { get; init; }
+
+    /// <summary>
+    /// 作家的 pixiv 用户号（纯数字）。pawchive 的作家号就是它，故 pawchive 条目留空即可；
+    /// fanbox.cc 官方站的作家以 creatorId（形如 <c>abc123</c> 的字符串）寻址，此时 <see cref="Id"/> 是 creatorId、
+    /// 这里才是用户号。
+    /// </summary>
+    public string UserId { get; init; } = "";
+
+    /// <summary>官方站给出的头像地址；pawchive 条目留空（头像由作家号拼出）。</summary>
+    public string Icon { get; init; } = "";
+
+    /// <summary>
+    /// 入库时写进 works.maker_id 的值：一律是 pixiv 用户号。两个来源下到的同一位作家的作品才归得到一起，
+    /// 社团卡的头像（按 pawchive 作家号拼地址）也才对得上。
+    /// </summary>
+    public string MakerId => UserId.Length > 0 ? UserId : Id;
+
+    /// <summary>头像地址（官方站给的优先，否则按 pawchive 作家号拼）。</summary>
+    public string IconUrl => Icon.Length > 0 ? Icon : PawchiveApi.IconUrl(Service, MakerId);
 }
 
 /// <summary>作品内的单个文件：站上哈希路径 + 原始文件名。</summary>
@@ -27,6 +46,16 @@ public class PawchiveFile
 {
     public string Name { get; init; } = "";
     public string Path { get; init; } = "";
+
+    /// <summary>fanbox.cc 官方站的下载直链；pawchive 文件留空（直链由 <see cref="Path"/> 拼出）。</summary>
+    public string Url { get; init; } = "";
+
+    /// <summary>官方站给出的预览图地址；pawchive 文件留空（预览由 <see cref="Path"/> 拼出）。</summary>
+    public string PreviewUrl { get; init; } = "";
+
+    /// <summary>详情页看图用的预览图地址（两个来源统一取这一个）。</summary>
+    public string Thumb => PreviewUrl.Length > 0 ? PreviewUrl
+        : Path.Length > 0 ? PawchiveApi.ThumbUrl(Path) : "";
 }
 
 /// <summary>pawchive 上的一篇作品（fanbox post）。</summary>
@@ -49,6 +78,25 @@ public class PawchivePost
     /// 其中的谷歌网盘链接由 <see cref="GoogleDriveClient"/> 认出来并一并下载。
     /// </summary>
     public List<string> Links { get; init; } = [];
+
+    /// <summary>官方站给出的封面地址；pawchive 作品留空（封面由 <see cref="CoverPath"/> 拼出）。</summary>
+    public string CoverImage { get; init; } = "";
+
+    /// <summary>卡片封面地址（两个来源统一取这一个）。</summary>
+    public string CoverUrl => CoverImage.Length > 0 ? CoverImage
+        : CoverPath.Length > 0 ? PawchiveApi.ThumbUrl(CoverPath) : "";
+
+    /// <summary>
+    /// 只是列表摘要、没带附件清单（官方站的列表接口不给正文与附件，要逐篇取详情）。
+    /// 此时 <see cref="Files"/> 为空不代表「没有文件」，入队前必须先取详情。
+    /// </summary>
+    public bool Partial { get; init; }
+
+    /// <summary>官方站：当前账号的赞助档位看不到这篇（正文与附件都拿不到，下不了）。</summary>
+    public bool Locked { get; init; }
+
+    /// <summary>官方站：查看这篇所需的赞助金额（日元，0 = 免费公开）。</summary>
+    public int FeeRequired { get; init; }
 }
 
 /// <summary>

@@ -110,7 +110,7 @@ public static class FanboxService
                 "\"source\" = excluded.\"source\", \"meta_scanned\" = '1', " +
                 "\"down_time\" = excluded.\"down_time\", " +
                 "\"folder\" = NULL, \"target\" = NULL, \"target_lib\" = NULL, \"cover\" = NULL",
-                ("@w", workId), ("@n", post.Title), ("@mi", artist.Id), ("@mn", artist.Name),
+                ("@w", workId), ("@n", post.Title), ("@mi", artist.MakerId), ("@mn", artist.Name),
                 ("@t", WorkTypeName), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
                 ("@d", FormatPublished(post.Published)), ("@src", SourceName), ("@time", now));
 
@@ -163,6 +163,8 @@ public static class FanboxService
 
         Logger.Info($"fanbox {artist.Name} 已加入下载队列：{postCount} 篇作品 / {fileCount} 个文件");
         DownloadEngine.Start();
+        // 新作家：记下它的 FANBOX / pawchive 主页与 FANBOX 上的显示名（已有记录的作家不动）
+        MakerHomeService.Remember(artist);
         return new FanboxEnqueueResult { PostCount = postCount, FileCount = fileCount, Skipped = skipped };
     }
 
@@ -226,6 +228,9 @@ public static class FanboxService
     /// </summary>
     private static string DownloadUrl(PawchiveFile file, string postId)
     {
+        // fanbox.cc 官方站的直链路径里本来就带着投稿号（/images/post/<投稿号>/…），不会撞主键，原样用
+        if (file.Url.Length > 0)
+            return file.Url;
         var url = PawchiveApi.FileUrl(file.Path, file.Name);
         return url + (url.Contains('?') ? "&" : "?") + "pcid=" + postId;
     }
