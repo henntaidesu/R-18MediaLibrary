@@ -41,9 +41,19 @@ public class AccountPage : UserControl
         [AccountService.Pixiv] = ("https://www.pixiv.net/", "pixiv.net"),
     };
 
+    private readonly TextBlock _title = new() { FontSize = 16, FontWeight = FontWeights.SemiBold };
+
     public AccountPage()
     {
-        Content = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _panel };
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        // 顶栏只有标题（Web accounts.js：$('title') = '账号访问'），样式同其它页的页顶横条
+        root.Children.Add(new Border { Style = Res<Style>("ToolbarCard"), Child = _title });
+        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _panel };
+        Grid.SetRow(scroll, 1);
+        root.Children.Add(scroll);
+        Content = root;
         IsVisibleChanged += (_, e) =>
         {
             if ((bool)e.NewValue)
@@ -57,6 +67,7 @@ public class AccountPage : UserControl
     public void Refresh()
     {
         AppConfig.Reload();
+        _title.Text = I18n.Tr("账号访问");
         _panel.Children.Clear();
         _statusOf.Clear();
         foreach (var site in AccountService.Sites)
@@ -67,7 +78,7 @@ public class AccountPage : UserControl
     {
         var body = new StackPanel();
 
-        var result = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0),
+        var result = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
             TextWrapping = TextWrapping.Wrap, FontSize = 13 };
         void Say(bool ok, string message)
         {
@@ -78,15 +89,15 @@ public class AccountPage : UserControl
         // E-Hentai：账号密码登录（成功即写好下面三个 cookie）。账号密码都存库，进页即回填
         if (a.Site == AccountService.Ehentai)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
             row.Children.Add(Label(I18n.Tr("账号")));
             var user = new TextBox { Width = 180, Text = AppConfig.EhentaiUsername, VerticalContentAlignment = VerticalAlignment.Center };
             var passLabel = Label(I18n.Tr("密码"));
             passLabel.MinWidth = 0;
-            passLabel.Margin = new Thickness(24, 0, 12, 0);
+            passLabel.Margin = new Thickness(24, 0, 10, 0);
             var pass = new PasswordBox { Width = 200, Password = AppConfig.EhentaiPassword,
                 VerticalContentAlignment = VerticalAlignment.Center };
-            var login = new Button { Content = I18n.Tr("登录并获取 Cookie"), Margin = new Thickness(8, 0, 0, 0),
+            var login = new Button { Content = I18n.Tr("登录并获取 Cookie"), Margin = new Thickness(10, 0, 0, 0),
                 Style = Res<Style>("AccentButton") };
             login.Click += async (_, _) =>
             {
@@ -126,7 +137,7 @@ public class AccountPage : UserControl
         var inputs = new Dictionary<string, PasswordBox>();
         foreach (var (key, label) in Fields[a.Site])
         {
-            var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
             var name = Label(label);
             DockPanel.SetDock(name, Dock.Left);
             row.Children.Add(name);
@@ -135,7 +146,7 @@ public class AccountPage : UserControl
             inputs[key] = box;
             body.Children.Add(row);
         }
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(132, 6, 0, 0) };
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(130, 0, 0, 0) };
         var save = new Button { Content = I18n.Tr("保存并检测"), Style = Res<Style>("AccentButton") };
         save.Click += async (_, _) =>
         {
@@ -170,7 +181,7 @@ public class AccountPage : UserControl
         };
         actions.Children.Add(save);
 
-        var check = new Button { Content = I18n.Tr("检测"), Margin = new Thickness(8, 0, 0, 0), IsEnabled = a.LoggedIn };
+        var check = new Button { Content = I18n.Tr("检测"), Margin = new Thickness(10, 0, 0, 0), IsEnabled = a.LoggedIn };
         check.Click += async (_, _) =>
         {
             check.IsEnabled = false;
@@ -192,7 +203,7 @@ public class AccountPage : UserControl
         };
         actions.Children.Add(check);
 
-        var logout = new Button { Content = I18n.Tr("退出登录"), Margin = new Thickness(8, 0, 0, 0), IsEnabled = a.LoggedIn };
+        var logout = new Button { Content = I18n.Tr("退出登录"), Margin = new Thickness(10, 0, 0, 0), IsEnabled = a.LoggedIn };
         logout.Click += (_, _) =>
         {
             if (!InAppDialog.Confirm(this,
@@ -210,7 +221,7 @@ public class AccountPage : UserControl
         {
             var (url, domain) = where;
             var tip = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0),
-                Style = Res<Style>("CaptionText") };
+                FontSize = 12.5, Foreground = Res<Brush>("CaptionBrush") };
             tip.Inlines.Add(new Run(I18n.Tr("获取方法：在浏览器登录 ")));
             var link = new Hyperlink(new Run(url))
             {
@@ -231,7 +242,7 @@ public class AccountPage : UserControl
         {
             Margin = new Thickness(12, 0, 0, 0), Padding = new Thickness(10, 1, 10, 1),
             CornerRadius = new CornerRadius(999), BorderThickness = new Thickness(1),
-            Child = new TextBlock { FontSize = 12.5, FontWeight = FontWeights.Normal },
+            Child = new TextBlock { FontSize = 13, FontWeight = FontWeights.Normal },
         };
         SetStatus(status, a);
         header.Children.Add(status);
@@ -261,7 +272,8 @@ public class AccountPage : UserControl
     /// <summary>表单标签：120px 定宽在控件左侧（同设置页的 FieldLabel）。</summary>
     private static TextBlock Label(string text) => new()
     {
-        Text = text, MinWidth = 120, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center,
+        Text = text, MinWidth = 120, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
+        FontSize = 13.5, Foreground = Res<Brush>("CaptionBrush"),
     };
 
     private static T? Res<T>(string key) where T : class =>

@@ -47,14 +47,14 @@ public sealed class LibSettingsDialog
     private FrameworkElement Build(Action<bool> close)
     {
         _close = close;
-        var dim = new Grid { Background = new SolidColorBrush(Color.FromArgb(0x9A, 0, 0, 0)), Focusable = true };
+        var dim = new Grid { Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)), Focusable = true };
         var card = new Border
         {
             Background = Res<Brush>("CardBrush") ?? Brushes.Black,
             BorderBrush = Res<Brush>("BorderBrush") ?? Brushes.Gray,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(24, 20, 24, 18),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20),
             Width = 640,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -158,7 +158,7 @@ public sealed class LibSettingsDialog
         delete.Click += (_, _) => DeleteLib();
         DockPanel.SetDock(delete, Dock.Left);
         bottom.Children.Add(delete);
-        var closeButton = new Button { Content = I18n.Tr("关闭"), Style = Res<Style>("AccentButton"), MinWidth = 72 };
+        var closeButton = new Button { Content = I18n.Tr("关闭"), Style = Res<Style>("AccentButton") };
         closeButton.Click += (_, _) => _close?.Invoke(true);
         DockPanel.SetDock(closeButton, Dock.Right);
         bottom.Children.Add(closeButton);
@@ -168,12 +168,13 @@ public sealed class LibSettingsDialog
     /// <summary>一行：120px 标签 + 控件区（同设置页的 FieldLabel 栅格）。</summary>
     private static Grid Row(string label, FrameworkElement control, bool stretch = false, bool top = false)
     {
-        var row = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 10) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.Children.Add(new TextBlock
         {
-            Text = label, Style = Res<Style>("CaptionText"),
+            // Web .frow > label：muted 13.5px
+            Text = label, FontSize = 13.5, Foreground = Res<Brush>("CaptionBrush"),
             VerticalAlignment = top ? VerticalAlignment.Top : VerticalAlignment.Center,
             Margin = new Thickness(0, top ? 4 : 0, 0, 0),
         });
@@ -201,9 +202,10 @@ public sealed class LibSettingsDialog
 
     private Border FolderCard(string folder)
     {
-        var edit = new Button { Content = I18n.Tr("编辑") };
+        // Web .foldcard .fc-acts：.mini 编辑 / .mini.danger 移除，间距 6
+        var edit = new Button { Content = I18n.Tr("编辑"), Style = Res<Style>("MiniButton") };
         edit.Click += (_, _) => EditFolder(folder);
-        var rm = new Button { Content = I18n.Tr("移除"), Style = Res<Style>("DangerButton"), Margin = new Thickness(6, 0, 0, 0) };
+        var rm = new Button { Content = I18n.Tr("移除"), Style = Res<Style>("MiniDangerButton"), Margin = new Thickness(6, 0, 0, 0) };
         rm.Click += (_, _) => UpdateLib(l => l.Folders.Remove(folder));
         var acts = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         acts.Children.Add(edit);
@@ -250,8 +252,10 @@ public sealed class LibSettingsDialog
         };
         card.Children.Add(border);
         card.Children.Add(content);
+        // Web .foldcard.add:hover：描边 accent-dim、文字 accent
         var accent = Res<Brush>("AccentBrush") ?? Brushes.CornflowerBlue;
-        card.MouseEnter += (_, _) => { border.Stroke = accent; plus.Foreground = label.Foreground = accent; };
+        var accentText = Res<Brush>("AccentLightBrush") ?? Brushes.CornflowerBlue;
+        card.MouseEnter += (_, _) => { border.Stroke = accent; plus.Foreground = label.Foreground = accentText; };
         card.MouseLeave += (_, _) =>
         {
             border.Stroke = Res<Brush>("BorderBrush") ?? Brushes.Gray;

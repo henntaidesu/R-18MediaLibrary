@@ -169,7 +169,10 @@ public partial class MediaLibPage : UserControl
     private bool _previewVideoMode;              // 当前整页预览是否为视频（决定 StepPreview 切换图片还是视频）
     private int _previewIndex;
 
-    private static readonly Brush RowHoverBrush = MakeFrozenBrush(Color.FromArgb(18, 255, 255, 255));
+    private static readonly Brush RowHoverBrush = MakeFrozenBrush(Color.FromRgb(0x26, 0x26, 0x2B));   // Web .trow:hover = surface
+    private static readonly Brush CoverBgBrush = MakeFrozenBrush(Color.FromRgb(0x15, 0x15, 0x1A));    // Web .cover / .fthumb 底色
+    private static readonly Brush BadgeBgBrush = MakeFrozenBrush(Color.FromArgb(158, 0, 0, 0));       // Web .badge rgba(0,0,0,.62)
+    private static readonly Brush BadgeFgBrush = MakeFrozenBrush(Color.FromRgb(0xF3, 0xF3, 0xF3));
 
     private static Brush MakeFrozenBrush(Color color)
     {
@@ -213,7 +216,7 @@ public partial class MediaLibPage : UserControl
     private void RetranslateUi()
     {
         BackButton.Content = I18n.Tr("← 返回");
-        OpenFolderButton.Content = I18n.Tr("打开文件夹");
+        OpenFolderButton.Content = "📂 " + I18n.Tr("打开文件夹");
         // 图标对齐 Web library.js（移动媒体库 📦）
         MoveLibButton.Content = "📦 " + I18n.Tr("移动媒体库");
         DeleteWorkButton.Content = "🗑 " + I18n.Tr("删除作品");
@@ -343,6 +346,7 @@ public partial class MediaLibPage : UserControl
     private void ApplyToggleState(Button btn, bool on)
     {
         btn.Background = (Brush)FindResource(on ? "AccentBrush" : "ButtonBrush");
+        btn.BorderBrush = (Brush)FindResource(on ? "AccentBrush" : "BorderBrush");
         btn.Foreground = on ? Brushes.White : (Brush)FindResource("TextBrush");
     }
 
@@ -362,7 +366,7 @@ public partial class MediaLibPage : UserControl
                     && _level is "lib_works" or "makers";
         LibToggleButton.Visibility = inLib ? Visibility.Visible : Visibility.Collapsed;
         if (inLib)
-            LibToggleButton.Content = _level == "makers" ? I18n.Tr("显示作品") : I18n.Tr("显示社团");
+            LibToggleButton.Content = _level == "makers" ? "▦ " + I18n.Tr("显示作品") : "🏢 " + I18n.Tr("显示社团");
     }
 
     private void OpenFolderButton_Click(object sender, RoutedEventArgs e)
@@ -405,7 +409,7 @@ public partial class MediaLibPage : UserControl
         var (ok, message) = await Task.Run(() =>
             MediaLibraryService.MoveWorkToLibraryAsync(workId, targetLib, targetFolder));
         MoveLibButton.IsEnabled = true;
-        MoveLibButton.Content = I18n.Tr("移动媒体库");
+        MoveLibButton.Content = "📦 " + I18n.Tr("移动媒体库");
         if (ok)
         {
             InAppDialog.Info(this, I18n.Tr("已移动到新媒体库"), I18n.Tr("移动媒体库"));
@@ -535,12 +539,37 @@ public partial class MediaLibPage : UserControl
         LibToggleButton.Visibility = Visibility.Collapsed;   // 仅媒体库内作品/社团视图显示
         SortBox.Visibility = Visibility.Collapsed;            // 仅社团页/作品页显示，由 ApplyCardFilter 重新打开
         SearchBox.Visibility = Visibility.Visible;           // 默认显示搜索框，详情页由 ShowDetail 隐藏
-        RjLabel.Visibility = Visibility.Collapsed;           // RJ 号仅详情页显示
-        RjLabel.Inlines.Clear();
+        DetailActions.Visibility = Visibility.Collapsed;     // 详情操作条仅详情页显示
+        // 顶栏标题（Web #title）：详情页不显示（正文已有大标题，Web .detail-mode #title { display:none }）
+        var title = _level == "detail" ? "" : PageTitle();
+        TitleLabel.Text = title;
+        TitleLabel.Visibility = title.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _currentWorkFolder = null;
         _currentWorkName = null;
         ClosePreview();
     }
+
+    /// <summary>
+    /// 当前层级的顶栏标题，文案对齐 Web library.js 各 render* 写入 #title 的内容：
+    /// 根视图是分区名，进入某库/标签/形式/社团后是它的名字。
+    /// </summary>
+    private string PageTitle() => _level switch
+    {
+        "libs" => I18n.Tr("媒体库"),
+        "lib_works" => _currentLib ?? "",
+        "makers" => _currentGenre ?? _currentType ?? _currentLib ?? I18n.Tr("作品社团"),
+        "all_makers" => I18n.Tr("作品社团"),
+        "genres" => I18n.Tr("作品标签"),
+        "types" => I18n.Tr("作品形式"),
+        "favorites" => I18n.Tr("我的收藏"),
+        "works" => _currentMaker is null or UnknownMaker
+            ? I18n.Tr("未知社团")
+            : MakerAliasService.Display(_currentMaker),
+        "filtered_works" => _filterCol == "age_category"
+            ? I18n.Tr(AgeMap.GetValueOrDefault(_filterVal ?? "", _filterVal ?? ""))
+            : _filterVal ?? "",
+        _ => "",
+    };
 
     /// <summary>切到卡片视图：显示虚拟化卡片列表、隐藏详情/文件树容器，并绑定当前层级的卡片数据源。</summary>
     private void ShowCardList()
@@ -598,12 +627,11 @@ public partial class MediaLibPage : UserControl
         // 尺寸交给网格：卡片拉伸填满单元格（宽由 CardGrid 算、高为 ClickCardH），间距也由网格排
         var card = new Border
         {
-            Style = (Style)FindResource("Card"),
+            Style = (Style)FindResource("ClickCard"),
             Padding = new Thickness(14),   // Web .group-card { padding: 14px }
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             ClipToBounds = true,
-            Cursor = Cursors.Hand,
             Tag = title.ToLowerInvariant(),  // 搜索过滤用
         };
         // 右侧信息块：名称 + 作品数竖排（对齐 Web 的 .ginfo）
@@ -627,11 +655,8 @@ public partial class MediaLibPage : UserControl
             {
                 var link = new Button
                 {
-                    Content = label, ToolTip = url, FontSize = 12, Cursor = Cursors.Hand,
-                    Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 6, 0),
-                    Background = Brushes.Transparent, BorderThickness = new Thickness(1),
-                    BorderBrush = (Brush)FindResource("BorderBrush"),
-                    Foreground = (Brush)FindResource("CaptionBrush"),
+                    Content = label, ToolTip = url, Style = (Style)FindResource("LinkChip"),
+                    Margin = new Thickness(0, 0, 6, 0),
                 };
                 link.Click += (_, e) =>
                 {
@@ -700,7 +725,13 @@ public partial class MediaLibPage : UserControl
                 Foreground = (Brush)FindResource("CaptionBrush"),
                 FontSize = 13,
                 Cursor = Cursors.Hand,
+                // Web .gedit：常驻但压暗（.35），悬停卡片时提亮（.9），悬停按钮本身文字转正文色
+                Opacity = 0.35,
             };
+            card.MouseEnter += (_, _) => edit.Opacity = 0.9;
+            card.MouseLeave += (_, _) => edit.Opacity = 0.35;
+            edit.MouseEnter += (_, _) => edit.Foreground = (Brush)FindResource("TextBrush");
+            edit.MouseLeave += (_, _) => edit.Foreground = (Brush)FindResource("CaptionBrush");
             edit.Click += (_, e) =>
             {
                 e.Handled = true;
@@ -1242,7 +1273,7 @@ public partial class MediaLibPage : UserControl
         PopulateSortBox(WorkSortOptions, _workSort);
         ClearCards();
         BackButton.Visibility = ShouldShowBack() ? Visibility.Visible : Visibility.Collapsed;
-        SortBox.Visibility = Visibility.Visible;
+        SortBox.Visibility = Visibility.Collapsed;   // Web scopedWorkSearch：搜索结果不给排序
         UpdateLibToggleButton();
         ShowCardList();
         UpdateGridCountLabel();
@@ -1345,12 +1376,11 @@ public partial class MediaLibPage : UserControl
         // .cover(flex:2) / .wt(flex:1) 分成 2:1 两行；封面满幅无内边距（Web .card 也没有）
         var card = new Border
         {
-            Style = (Style)FindResource("Card"),
+            Style = (Style)FindResource("ClickCard"),
             Padding = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             ClipToBounds = true,
-            Cursor = Cursors.Hand,
             ToolTip = workName.Length > 0 ? workName : workId,
         };
         var panel = new Grid();
@@ -1360,10 +1390,11 @@ public partial class MediaLibPage : UserControl
         // 封面区：满幅拉伸、按比例铺满裁切（Web .cover img { object-fit: cover }），无封面时显示纯色底。
         // 上两角随卡片圆角裁切，下两角为直角（下面紧接标题区）。
         var coverGrid = new Grid { ClipToBounds = true };
+        // Web .cover { background: #15151a }；上角圆角 = 卡片圆角 10 − 描边 1
         var coverFill = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(12, 255, 255, 255)),
-            CornerRadius = new CornerRadius(8, 8, 0, 0),
+            Background = CoverBgBrush,
+            CornerRadius = new CornerRadius(9, 9, 0, 0),
             Tag = cover,
         };
         coverGrid.Children.Add(coverFill);
@@ -1375,15 +1406,15 @@ public partial class MediaLibPage : UserControl
         var badgeBar = new Grid { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(6) };
         badgeBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         badgeBar.ColumnDefinitions.Add(new ColumnDefinition());
-        var badgeStyleBg = new SolidColorBrush(Color.FromArgb(170, 0, 0, 0));
+        var badgeStyleBg = BadgeBgBrush;   // Web .badge { background: rgba(0,0,0,.62); border-radius: 6px }
         var rjBadge = new Border
         {
-            Background = badgeStyleBg, CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 1, 6, 1),
+            Background = badgeStyleBg, CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(7, 1, 7, 1),
             HorizontalAlignment = HorizontalAlignment.Left,
             Child = new TextBlock
             {
-                Text = workId, FontSize = 11, Foreground = Brushes.WhiteSmoke,
+                Text = workId, FontSize = 11, Foreground = BadgeFgBrush,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             },
         };
@@ -1392,13 +1423,13 @@ public partial class MediaLibPage : UserControl
         {
             var typeBadge = new Border
             {
-                Background = badgeStyleBg, CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(6, 1, 6, 1),
+                Background = badgeStyleBg, CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(7, 1, 7, 1),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Margin = new Thickness(6, 0, 0, 0),
                 Child = new TextBlock
                 {
-                    Text = workType, FontSize = 11, Foreground = Brushes.WhiteSmoke,
+                    Text = workType, FontSize = 11, Foreground = BadgeFgBrush,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                 },
             };
@@ -1465,9 +1496,10 @@ public partial class MediaLibPage : UserControl
         ClearCards();
         ShowContentHost();   // 详情用 ContentHost 承载，隐藏卡片列表
         CountLabel.Text = "";
-        // 详情页不显示搜索框；作品号居左显示为可点击跳转作品页的超链接
+        // 详情页不显示搜索框，操作条紧跟返回键（Web .detail-mode）
         SearchBox.Visibility = Visibility.Collapsed;
-        RjLabel.Inlines.Clear();
+        DetailActions.Visibility = Visibility.Visible;
+        // 作品号：字段表第一行，点击在浏览器打开站上的作品页（Web 详情 .fields 的「作品号」）
         var isFanbox = FanboxService.IsFanboxWorkId(workId);
         var isEhentai = EhentaiService.IsEhentaiWorkId(workId);
         var isPixiv = PixivService.IsPixivWorkId(workId);
@@ -1492,8 +1524,8 @@ public partial class MediaLibPage : UserControl
             TextDecorations = null,
         };
         rjLink.Click += (_, _) => Process.Start(new ProcessStartInfo(linkUrl) { UseShellExecute = true });
-        RjLabel.Inlines.Add(rjLink);
-        RjLabel.Visibility = Visibility.Visible;
+        var rjBlock = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        rjBlock.Inlines.Add(rjLink);
         if (workFolder != null && Directory.Exists(workFolder))
         {
             _currentWorkFolder = workFolder;
@@ -1509,10 +1541,11 @@ public partial class MediaLibPage : UserControl
         FavButton.Visibility = Visibility.Visible;
         UpdateReadFavButtons();
 
+        // Web .detail { padding: 16px } + h1 { font-size: 20px; margin: 0 0 12px }
         var root = new Border
         {
             Style = (Style)FindResource("Card"),
-            Padding = new Thickness(20, 16, 20, 16),
+            Padding = new Thickness(16),
         };
         var layout = new StackPanel();
         root.Child = layout;
@@ -1520,7 +1553,8 @@ public partial class MediaLibPage : UserControl
         layout.Children.Add(new TextBlock
         {
             Text = workName.Length > 0 ? workName : workId,
-            FontWeight = FontWeights.SemiBold, FontSize = 18, TextWrapping = TextWrapping.Wrap,
+            FontWeight = FontWeights.SemiBold, FontSize = 20, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6),
         });
 
         // 「▸ 作品详情」折叠块（对齐 Web .dfold）：封面/字段/正文都收在里面，默认收起；
@@ -1536,10 +1570,11 @@ public partial class MediaLibPage : UserControl
             Text = foldBody.Visibility == Visibility.Visible ? "▾" : "▸",
             Width = 14, Foreground = (Brush)FindResource("CaptionBrush"),
         };
+        // Web .dfold-head { padding: 6px 0 }（h1 下 12px 由标题的 6 + 这里的 6 凑出）
         var foldHead = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 8, 0, 0),
+            Margin = new Thickness(0, 6, 0, 6),
             Background = Brushes.Transparent,   // 整行可点，不只是文字
             Cursor = Cursors.Hand,
         };
@@ -1577,11 +1612,12 @@ public partial class MediaLibPage : UserControl
         }
 
         // 字段网格（带可点击链接）：右侧详情先建好，正文/轮播图随后台读盘完成再补
-        var infoPanel = BuildDetailFields(workId, r);
-        var content = new Grid { Margin = new Thickness(0, 10, 0, 0) };
+        var infoPanel = BuildDetailFields(workId, r, rjBlock);
+        // Web .dtop：图 : 字段 = 1 : 1.6，间距 18
+        var content = new Grid();
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        var rightHost = new Grid { Margin = new Thickness(20, 0, 0, 0) };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        var rightHost = new Grid { Margin = new Thickness(18, 0, 0, 0) };
         rightHost.Children.Add(infoPanel);
         Grid.SetColumn(rightHost, 1);
         content.Children.Add(rightHost);
@@ -1709,11 +1745,11 @@ public partial class MediaLibPage : UserControl
     }
 
     /// <summary>详情字段网格：社团/声优等渲染为可点击链接，标签来自 work_genres 表。</summary>
-    private FrameworkElement BuildDetailFields(string workId, object?[] r)
+    private FrameworkElement BuildDetailFields(string workId, object?[] r, FrameworkElement idLink)
     {
         var fields = new (string Label, string? Value)[]
         {
-            ("社团", r[2] as string), ("販売日", r[3] as string),
+            ("作品号", workId), ("社团", r[2] as string), ("販売日", r[3] as string),
             ("系列", r[4] as string), ("剧本", r[5] as string), ("插画", r[6] as string),
             ("声优", r[7] as string), ("年龄分级", r[8]?.ToString()), ("作品形式", r[9] as string),
             ("类型", r[10] as string), ("文件容量", r[11] as string), ("简介", r[12] as string),
@@ -1728,7 +1764,11 @@ public partial class MediaLibPage : UserControl
         foreach (var (label, value) in fields)
         {
             FrameworkElement valueElement;
-            if (label == "类型" && tags is { Count: > 0 })
+            if (label == "作品号")
+            {
+                valueElement = idLink;
+            }
+            else if (label == "类型" && tags is { Count: > 0 })
             {
                 // 标签渲染为可点击链接
                 var tb = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -1798,8 +1838,10 @@ public partial class MediaLibPage : UserControl
             var keyLabel = new TextBlock
             {
                 Text = I18n.Tr(label),
-                Style = (Style)FindResource("CaptionText"),
-                Margin = new Thickness(0, 3, 16, 3),
+                // Web .fields .k：--muted 13px；行距 6、列距 14
+                Foreground = (Brush)FindResource("CaptionBrush"),
+                FontSize = 13,
+                Margin = new Thickness(0, 3, 14, 3),
                 VerticalAlignment = VerticalAlignment.Top,
             };
             Grid.SetRow(keyLabel, row);
@@ -1829,7 +1871,7 @@ public partial class MediaLibPage : UserControl
 
     // ---------- 作品文件（详情页下方，多级折叠列表 / 缩略图墙） ----------
 
-    private const double TreeIndentStep = 22;    // 每深一级的左缩进
+    private const double TreeIndentStep = 18;    // 每深一级的左缩进（Web buildTreeLevel：8 + depth × 18）
     private const double TreeRowBaseIndent = 8;  // 行基础左缩进
     private static readonly FontFamily EmojiFont = new("Segoe UI Emoji");
 
@@ -1915,7 +1957,7 @@ public partial class MediaLibPage : UserControl
 
     // 缩略图墙对齐 Web 的 .fgrid：列宽下限 150、单行最多 10 列、gap 10、缩略图 1:1，
     // 文件名行 ThumbNameH 固定高（Web .fname 单行省略号）。解码宽仍取 2 倍档位，避免随列宽散开。
-    private const double ThumbNameH = 26;
+    private const double ThumbNameH = 31;   // Web .fname：padding 6 ×2 + 12.5px 字一行
     private const int ThumbDecodeWidth = 320;
 
     /// <summary>后台线程：递归收集作品内所有图片（排除 DataSource）并排序（可能上千文件）。</summary>
@@ -2007,12 +2049,11 @@ public partial class MediaLibPage : UserControl
         // 尺寸由 ResponsiveWrapPanel 给：整块拉伸填满单元格，缩略图占正方形那部分、文件名占固定一行
         var tile = new Border
         {
-            Style = (Style)FindResource("Card"),   // Web .fcard：面底色 + 圆角
+            Style = (Style)FindResource("ClickCard"),   // Web .fcard：面底色 + 描边 + 圆角，悬停描边强调
             Padding = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             ClipToBounds = true,
-            Cursor = Cursors.Hand,
             ToolTip = Path.GetFileName(path),
         };
         var panel = new Grid();
@@ -2020,8 +2061,8 @@ public partial class MediaLibPage : UserControl
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(ThumbNameH) });
         var thumb = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(12, 255, 255, 255)),
-            CornerRadius = new CornerRadius(8, 8, 0, 0),
+            Background = CoverBgBrush,
+            CornerRadius = new CornerRadius(9, 9, 0, 0),
             Tag = path,
         };
         thumbs.Add((thumb, path));   // 由 LoadThumbsInOrderAsync 按顺序后台解码
@@ -2029,8 +2070,9 @@ public partial class MediaLibPage : UserControl
         var name = new TextBlock
         {
             Text = Path.GetFileName(path),
-            Style = (Style)FindResource("CaptionText"),
-            Margin = new Thickness(8, 4, 8, 4),
+            FontSize = 12.5,   // Web .fname：12.5px 正文色，padding 6px 8px
+            Margin = new Thickness(8, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         Grid.SetRow(name, 1);
@@ -2102,11 +2144,10 @@ public partial class MediaLibPage : UserControl
             Cursor = Cursors.Hand,
             Background = Brushes.Transparent,
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(TreeRowBaseIndent + depth * TreeIndentStep, 7, 12, 7),
-            Margin = new Thickness(0, 1, 0, 1),
+            Padding = new Thickness(TreeRowBaseIndent + depth * TreeIndentStep, 6, 10, 6),   // Web .trow { padding: 6px 10px }
         };
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });   // 箭头 14 + 间距 8
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -2128,7 +2169,6 @@ public partial class MediaLibPage : UserControl
         var name = new TextBlock
         {
             Text = Path.GetFileName(dir),
-            FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
@@ -2173,9 +2213,8 @@ public partial class MediaLibPage : UserControl
         {
             Background = Brushes.Transparent,
             CornerRadius = new CornerRadius(6),
-            // 文件对齐到同级文件夹名（让出箭头列宽度）
-            Padding = new Thickness(TreeRowBaseIndent + depth * TreeIndentStep + 20, 5, 12, 5),
-            Margin = new Thickness(0, 1, 0, 1),
+            // 文件让出箭头那一格（Web：8 + depth × 18 + 18）
+            Padding = new Thickness(TreeRowBaseIndent + depth * TreeIndentStep + 18, 6, 10, 6),
         };
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -2191,7 +2230,7 @@ public partial class MediaLibPage : UserControl
         var name = new TextBlock
         {
             Text = Path.GetFileName(path),
-            Foreground = (Brush)FindResource(previewable || isAudio ? "TextBrush" : "CaptionBrush"),
+            Foreground = (Brush)FindResource("TextBrush"),   // Web .trow.file .tname 一律正文色
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };

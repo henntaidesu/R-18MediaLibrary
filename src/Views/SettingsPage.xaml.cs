@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using R18MediaLibrary.Core;
 using R18MediaLibrary.Services;
 using R18MediaLibrary.Services.Translate;
@@ -16,7 +18,7 @@ namespace R18MediaLibrary.Views;
 public partial class SettingsPage : UserControl
 {
     private bool _loading;  // 回填控件时不触发保存
-    private readonly List<string> _unzipPwds = new();  // 解压密码库：一条一个输入框
+    private readonly List<string> _unzipPwds = new();  // 解压密码库：一条一张小卡片
     private readonly MediaLibSettingDialog _mediaLibSection = new();  // 内联的媒体库管理区块（常驻，扫描随其存活）
 
     public SettingsPage()
@@ -151,6 +153,7 @@ public partial class SettingsPage : UserControl
     private void RetranslateUi()
     {
         _loading = true;
+        PageTitle.Text = I18n.Tr("系统设置");
         DownloadGroup.Header = I18n.Tr("下载");
         ProxyGroup.Header = I18n.Tr("代理");
         DebridGroup.Header = I18n.Tr("Debrid-Link 下载中转站");
@@ -673,51 +676,103 @@ public partial class SettingsPage : UserControl
     /// 解压密码库：一个输入框一个密码，末尾「＋」新增一条、每行「✕」删除（对齐 Web 设置页）。
     /// 库里仍存老格式（一行一个），故 AppConfig.UnzipPasswords 那边不用改。
     /// </summary>
+    /// <summary>
+    /// 解压密码库（对齐 Web settings.js 的 .pwlist）：一个密码一张小卡片，宽度随内容、排满换行；
+    /// 悬停卡片时右上角出红色 ✕，删除要二次确认；末尾圆形虚线「＋」弹框新增一条。
+    /// </summary>
     private void RebuildUnzipPwdRows()
     {
         UnzipPwdList.Children.Clear();
+        var surface2 = (Brush)FindResource("ButtonBrush");
+        var line = (Brush)FindResource("BorderBrush");
+        var accent = (Brush)FindResource("AccentLightBrush");
         for (var i = 0; i < _unzipPwds.Count; i++)
         {
-            var index = i;   // 行随增删整体重建，故这里捕获的下标始终对得上
-            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-            var remove = new Button
+            var index = i;   // 卡片随增删整体重建，故这里捕获的下标始终对得上
+            var value = _unzipPwds[index];
+            // .pwchip：surface2 底 + line 描边 + 圆角 8，内距 6/12，14px；悬停描边转 accent
+            var chip = new Border
             {
-                Content = "✕", Width = 30, Margin = new Thickness(6, 0, 0, 0),
-                Padding = new Thickness(0, 4, 0, 4), ToolTip = I18n.Tr("删除这条密码"),
-                Style = (Style)FindResource("DangerButton"),
+                Background = surface2, BorderBrush = line, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 6, 12, 6),
+                Child = new TextBlock { Text = value, FontSize = 14 },
             };
-            remove.Click += (_, _) =>
+            // .pwdel：18px 红色圆钮，骑在卡片右上角，悬停卡片才出现
+            var del = new Button
             {
+                Content = "✕", Width = 18, Height = 18, FontSize = 10, Cursor = Cursors.Hand,
+                ToolTip = I18n.Tr("删除这条密码"),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -8, -8, 0), Visibility = Visibility.Hidden,
+                Template = RoundButtonTemplate(new SolidColorBrush(Color.FromRgb(0xE5, 0x48, 0x4D)), null),
+                Foreground = Brushes.White,
+            };
+            del.Click += (_, _) =>
+            {
+                if (!InAppDialog.Confirm(this,
+                        I18n.Format(I18n.Tr("删除密码「{pwd}」？"), ("pwd", value)), I18n.Tr("删除")))
+                    return;
                 _unzipPwds.RemoveAt(index);
                 SaveUnzipPwds();
                 RebuildUnzipPwdRows();
             };
-            DockPanel.SetDock(remove, Dock.Right);
-            row.Children.Add(remove);
-            var box = new TextBox
-            {
-                Text = _unzipPwds[index], VerticalContentAlignment = VerticalAlignment.Center,
-            };
-            box.TextChanged += (_, _) => _unzipPwds[index] = box.Text;
-            box.LostFocus += (_, _) => SaveUnzipPwds();
-            row.Children.Add(box);
-            UnzipPwdList.Children.Add(row);
+            var cell = new Grid { Margin = new Thickness(0, 0, 10, 10) };
+            cell.Children.Add(chip);
+            cell.Children.Add(del);
+            cell.MouseEnter += (_, _) => { chip.BorderBrush = accent; del.Visibility = Visibility.Visible; };
+            cell.MouseLeave += (_, _) => { chip.BorderBrush = line; del.Visibility = Visibility.Hidden; };
+            UnzipPwdList.Children.Add(cell);
         }
 
+        // .pwadd：32px 圆形虚线「＋」，悬停描边与文字转 accent
         var add = new Button
         {
-            Content = "＋", Width = 34, Padding = new Thickness(0, 4, 0, 4),
-            HorizontalAlignment = HorizontalAlignment.Left, ToolTip = I18n.Tr("添加一条密码"),
+            Content = "＋", Width = 32, Height = 32, FontSize = 16, Cursor = Cursors.Hand,
+            Foreground = (Brush)FindResource("CaptionBrush"),
+            ToolTip = I18n.Tr("添加一条密码"), Margin = new Thickness(0, 0, 0, 10),
+            VerticalAlignment = VerticalAlignment.Center,
+            Template = RoundButtonTemplate(surface2, line, dashed: true),
         };
+        add.MouseEnter += (_, _) => add.Foreground = accent;
+        add.MouseLeave += (_, _) => add.Foreground = (Brush)FindResource("CaptionBrush");
         add.Click += (_, _) =>
         {
-            _unzipPwds.Add("");
+            var v = (InAppDialog.Prompt(this, I18n.Tr("输入解压密码"), I18n.Tr("添加密码")) ?? "").Trim();
+            if (v.Length == 0)
+                return;
+            if (_unzipPwds.Contains(v))
+            {
+                InAppDialog.Info(this, I18n.Tr("这个密码已经在密码库里了"), I18n.Tr("添加密码"));
+                return;
+            }
+            _unzipPwds.Add(v);
+            SaveUnzipPwds();
             RebuildUnzipPwdRows();
-            // 新增的那一行直接可以打字
-            (UnzipPwdList.Children[_unzipPwds.Count - 1] as DockPanel)?
-                .Children.OfType<TextBox>().FirstOrDefault()?.Focus();
         };
         UnzipPwdList.Children.Add(add);
+    }
+
+    /// <summary>圆形按钮模板（密码库的 ✕ / ＋）：圆底 + 可选描边（虚线），内容居中。</summary>
+    private static ControlTemplate RoundButtonTemplate(Brush background, Brush? border, bool dashed = false)
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var grid = new FrameworkElementFactory(typeof(Grid));
+        var circle = new FrameworkElementFactory(typeof(System.Windows.Shapes.Ellipse));
+        circle.SetValue(System.Windows.Shapes.Shape.FillProperty, background);
+        if (border != null)
+        {
+            circle.SetValue(System.Windows.Shapes.Shape.StrokeProperty, border);
+            circle.SetValue(System.Windows.Shapes.Shape.StrokeThicknessProperty, 1.0);
+            if (dashed)
+                circle.SetValue(System.Windows.Shapes.Shape.StrokeDashArrayProperty, new DoubleCollection { 3, 2 });
+        }
+        grid.AppendChild(circle);
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        content.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        grid.AppendChild(content);
+        template.VisualTree = grid;
+        return template;
     }
 
     /// <summary>写回密码库：去掉空行与首尾空白，顺序即解压时的尝试顺序。</summary>

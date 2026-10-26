@@ -12,7 +12,7 @@ namespace R18MediaLibrary.Views;
 /// <summary>详情页图片区：大图 + 缩略图切换条（对应 Python 版 ImageSlider，仿 DLsite 作品页）。</summary>
 public class ImageSliderControl : UserControl
 {
-    private const double ThumbW = 64, ThumbH = 48;
+    private const double ThumbW = 72, ThumbH = 54;   // Web .thumbs img { height: 54px }
 
     private readonly List<string> _paths;
     private readonly Image _mainImage = new() { Stretch = Stretch.Uniform };
@@ -26,8 +26,9 @@ public class ImageSliderControl : UserControl
 
         var mainBorder = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)),
-            CornerRadius = new CornerRadius(4),
+            // Web .gallery img.main：圆角 8；双列布局下不垫底色（.dtop > .gallery img.main { background: none }）
+            Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(8),
             MinHeight = 240,
             Child = _mainImage,
         };
@@ -35,7 +36,7 @@ public class ImageSliderControl : UserControl
 
         if (paths.Count > 1)
         {
-            var bar = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+            var bar = new Grid { Margin = new Thickness(0, 8, 0, 0) };
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -50,8 +51,9 @@ public class ImageSliderControl : UserControl
                 var border = new Border
                 {
                     Width = ThumbW, Height = ThumbH,
-                    Margin = new Thickness(2, 0, 2, 0),
+                    Margin = new Thickness(3, 0, 3, 0),   // 间距 6
                     BorderThickness = new Thickness(2),
+                    CornerRadius = new CornerRadius(5),
                     BorderBrush = Brushes.Transparent,
                     Cursor = Cursors.Hand,
                 };
@@ -114,7 +116,11 @@ public class ImageSliderControl : UserControl
         _index = ((index % _paths.Count) + _paths.Count) % _paths.Count;
         _mainImage.Source = TryLoad(_paths[_index]);
         var accent = (Brush)Application.Current.Resources["AccentLightBrush"];
+        // Web .thumbs img：未选 .65 透明度、无描边；选中全亮 + 2px accent 描边
         for (var i = 0; i < _thumbBorders.Count; i++)
+        {
             _thumbBorders[i].BorderBrush = i == _index ? accent : Brushes.Transparent;
+            _thumbBorders[i].Opacity = i == _index ? 1.0 : 0.65;
+        }
     }
 }

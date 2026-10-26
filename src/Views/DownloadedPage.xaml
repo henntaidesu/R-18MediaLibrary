@@ -14,31 +14,32 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-        <!-- 可点击排序的表头 -->
-        <Style x:Key="HeaderCell" TargetType="TextBlock" BasedOn="{StaticResource CaptionText}">
+        <!-- 可点击排序的表头（Web .dt th：muted、500 字重） -->
+        <Style x:Key="HeaderCell" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource CaptionBrush}" />
+            <Setter Property="FontWeight" Value="Medium" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <!-- 行卡片（与下载页的 Card 一致） -->
+        <!-- 表格行（Web .dt td）：无卡片，单元格内距 8/10、行底一道 line 分隔，悬停整行 surface 底 -->
         <Style x:Key="RowCard" TargetType="ListBoxItem">
-            <Setter Property="Margin" Value="0,3" />
-            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="Padding" Value="10,8" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="border" Background="{StaticResource CardBrush}"
-                                CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="border" Background="Transparent"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
+                                Padding="{TemplateBinding Padding}">
                             <ContentPresenter />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#2a3040" />
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource CardBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="border" Property="Background"
-                                        Value="{StaticResource ButtonHoverBrush}" />
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource CardBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -47,62 +48,81 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid TextElement.FontSize="13.5">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- 顶栏：搜索框居左，刷新按钮居右。整条包进 ToolbarCard（对齐 Web 的 .toolbar 悬浮卡片） -->
+        <!-- 顶栏（对齐 Web renderDownloaded 的 .toolbar）：← 下载 · 刷新 · 搜索框（撑满）· 状态筛选 -->
         <Border Grid.Row="0" Style="{StaticResource ToolbarCard}">
-            <Grid>
+            <Grid TextElement.FontSize="14">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="BackButton" Click="BackButton_Click" Content="← 下载" Margin="0,0,8,0" />
-                <TextBox x:Name="SearchBox" Grid.Column="1" MinWidth="220" MaxWidth="320"
+                <Button x:Name="BackButton" Click="BackButton_Click" Content="← 下载" />
+                <Button x:Name="RefreshButton" Grid.Column="1" Margin="8,0,0,0" Click="RefreshButton_Click" Content="刷新" />
+                <TextBox x:Name="SearchBox" Grid.Column="2" Margin="8,0,0,0" MinWidth="140"
                          VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" />
-                <ComboBox x:Name="StateFilter" Grid.Column="2" Margin="8,0,0,0" MinWidth="110"
+                <ComboBox x:Name="StateFilter" Grid.Column="3" Margin="8,0,0,0" MinWidth="110"
                           SelectionChanged="StateFilter_SelectionChanged" />
-                <TextBlock x:Name="CountLabel" Grid.Column="4" VerticalAlignment="Center"
-                           Margin="0,0,12,0" Style="{StaticResource CaptionText}" />
-                <Button x:Name="RefreshButton" Grid.Column="5" Click="RefreshButton_Click" Content="刷新" />
             </Grid>
         </Border>
 
-        <!-- 表头：点击切换排序（与行卡片同列宽，左右留出卡片内边距） -->
-        <Grid Grid.Row="1" Margin="14,0,24,6">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="110" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="150" />
-                <ColumnDefinition Width="130" />
-                <ColumnDefinition Width="90" />
-                <ColumnDefinition Width="160" />
-                <ColumnDefinition Width="100" />
-            </Grid.ColumnDefinitions>
-            <TextBlock x:Name="HdrId" Style="{StaticResource HeaderCell}"
-                       Tag="WorkId" MouseLeftButtonUp="Header_Click" />
-            <TextBlock x:Name="HdrName" Grid.Column="1" Margin="0,0,12,0" Style="{StaticResource HeaderCell}"
-                       Tag="WorkName" MouseLeftButtonUp="Header_Click" />
-            <TextBlock x:Name="HdrMaker" Grid.Column="2" Margin="0,0,12,0" Style="{StaticResource HeaderCell}"
-                       Tag="MakerName" MouseLeftButtonUp="Header_Click" />
-            <TextBlock x:Name="HdrType" Grid.Column="3" Margin="0,0,12,0" Style="{StaticResource HeaderCell}"
-                       Tag="WorkType" MouseLeftButtonUp="Header_Click" />
-            <TextBlock x:Name="HdrState" Grid.Column="4" Style="{StaticResource HeaderCell}"
-                       Tag="StateText" MouseLeftButtonUp="Header_Click" />
-            <TextBlock x:Name="HdrTime" Grid.Column="5" Style="{StaticResource HeaderCell}"
-                       Tag="DownTime" MouseLeftButtonUp="Header_Click" />
-        </Grid>
+        <!-- 计数行（Web .count：muted 13px，margin 4 2 12） -->
+        <TextBlock x:Name="CountLabel" Grid.Row="1" Margin="2,4,2,12" FontSize="13"
+                   Foreground="{StaticResource CaptionBrush}" />
 
-        <!-- 列表：每行一张卡片（与下载页风格一致） -->
-        <ListBox x:Name="WorksList" Grid.Row="2" Background="Transparent" BorderThickness="0"
+        <!-- 表头：点击切换排序（列宽与行一致；左右各留单元格内距 10，右侧再让出滚动条宽） -->
+        <Border Grid.Row="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
+                Padding="10,8,18,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="130" />
+                    <ColumnDefinition Width="90" />
+                    <ColumnDefinition Width="160" />
+                    <ColumnDefinition Width="Auto" MinWidth="190" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="HdrId" Style="{StaticResource HeaderCell}"
+                           Tag="WorkId" MouseLeftButtonUp="Header_Click" />
+                <TextBlock x:Name="HdrName" Grid.Column="1" Margin="0,0,12,0" Style="{StaticResource HeaderCell}"
+                           Tag="WorkName" MouseLeftButtonUp="Header_Click" />
+                <TextBlock x:Name="HdrMaker" Grid.Column="2" Margin="0,0,12,0" Style="{StaticResource HeaderCell}"
+                           Tag="MakerName" MouseLeftButtonUp="Header_Click" />
+                <TextBlock x:Name="HdrType" Grid.Column="3" Margin="0,0,12,0" Style="{StaticResource HeaderCell}"
+                           Tag="WorkType" MouseLeftButtonUp="Header_Click" />
+                <TextBlock x:Name="HdrState" Grid.Column="4" Style="{StaticResource HeaderCell}"
+                           Tag="StateText" MouseLeftButtonUp="Header_Click" />
+                <TextBlock x:Name="HdrTime" Grid.Column="5" Style="{StaticResource HeaderCell}"
+                           Tag="DownTime" MouseLeftButtonUp="Header_Click" />
+            </Grid>
+        </Border>
+
+        <!-- 空态（Web .empty「没有内容」） -->
+        <TextBlock x:Name="EmptyLabel" Grid.Row="3" Text="没有内容" Foreground="{StaticResource CaptionBrush}"
+                   HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,50,0,0" FontSize="15">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasItems, ElementName=WorksList}" Value="False">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <!-- 列表：表格行（Web .dt） -->
+        <ListBox x:Name="WorksList" Grid.Row="3" Background="Transparent" BorderThickness="0"
                  ItemContainerStyle="{StaticResource RowCard}"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  VirtualizingPanel.VirtualizationMode="Recycling"
@@ -120,24 +140,27 @@
                             <ColumnDefinition Width="130" />
                             <ColumnDefinition Width="90" />
                             <ColumnDefinition Width="160" />
-                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="Auto" MinWidth="190" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{Binding WorkId}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding WorkId}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" Text="{Binding WorkName}" Margin="0,0,12,0"
                                    Style="{StaticResource EllipsisCell}" />
                         <TextBlock Grid.Column="2" Text="{Binding MakerName}" Margin="0,0,12,0"
-                                   Foreground="{StaticResource CaptionBrush}"
                                    Style="{StaticResource EllipsisCell}" />
                         <TextBlock Grid.Column="3" Text="{Binding WorkType}" Margin="0,0,12,0"
-                                   Foreground="{StaticResource CaptionBrush}"
                                    Style="{StaticResource EllipsisCell}" />
+                        <!-- 状态（Web .pill）：按状态着色的文字，12px，左右内距 8 -->
                         <TextBlock Grid.Column="4" Text="{Binding StateText}" Foreground="{Binding StateBrush}"
-                                   FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="5" Text="{Binding DownTime}"
-                                   Foreground="{StaticResource CaptionBrush}" VerticalAlignment="Center" />
-                        <!-- 跳转作品：切到媒体库打开该作品详情（对齐 Web 已下载表的行内按钮） -->
-                        <Button Grid.Column="6" Content="{Binding OpenText}" FontSize="12" Padding="10,3"
-                                Margin="8,0,0,0" Click="OpenWork_Click" />
+                                   FontSize="12" Padding="8,1" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="5" Text="{Binding DownTime}" VerticalAlignment="Center" />
+                        <!-- 行操作（Web .mini）：跳转作品；「已下载」状态再给一个标记为已品悦 -->
+                        <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="{Binding OpenText}" Style="{StaticResource MiniButton}"
+                                    Click="OpenWork_Click" />
+                            <Button Content="{Binding MarkText}" Style="{StaticResource MiniButton}"
+                                    Margin="6,0,0,0" Visibility="{Binding MarkVisibility}"
+                                    Click="MarkRow_Click" />
+                        </StackPanel>
                     </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>

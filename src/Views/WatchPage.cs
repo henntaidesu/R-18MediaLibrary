@@ -36,7 +36,7 @@ public class WatchPage : UserControl
     {
         // 操作条：总开关 / 立即检查全部 / 默认间隔（顺序对齐 Web）
         var bar = new StackPanel { Orientation = Orientation.Horizontal };
-        _switchButton = new Button { MinWidth = 124 };
+        _switchButton = new Button();
         _switchButton.Click += (_, _) =>
         {
             AppConfig.FanboxWatchEnabled = !AppConfig.FanboxWatchEnabled;
@@ -46,7 +46,7 @@ public class WatchPage : UserControl
         };
         bar.Children.Add(_switchButton);
 
-        _checkAllButton = new Button { MinWidth = 110, Margin = new Thickness(8, 0, 0, 0) };
+        _checkAllButton = new Button { Margin = new Thickness(8, 0, 0, 0) };
         _checkAllButton.Click += (_, _) =>
         {
             _ = FanboxWatchService.CheckAllAsync();
@@ -58,8 +58,9 @@ public class WatchPage : UserControl
         {
             Text = I18n.Tr("默认间隔"),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(16, 0, 8, 0),
-            Style = Res<Style>("CaptionText"),
+            Margin = new Thickness(8, 0, 8, 0),
+            FontSize = 13,
+            Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
         });
         _defaultIntervalBox = new ComboBox { Width = 110, VerticalContentAlignment = VerticalAlignment.Center };
         _defaultIntervalBox.SelectionChanged += (_, _) =>
@@ -76,11 +77,12 @@ public class WatchPage : UserControl
         _statusBlock = new TextBlock
         {
             Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
+            FontSize = 12.5,
             TextWrapping = TextWrapping.Wrap,
         };
         panel.Children.Add(_statusBlock);
 
-        _cardsPanel = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        _cardsPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 0) };
         panel.Children.Add(_cardsPanel);
 
         // 工具栏卡片常驻页顶（同下载管理），状态与作家卡片在其下滚动
@@ -143,6 +145,8 @@ public class WatchPage : UserControl
                 Text = I18n.Tr("还没有监控任何作家。到「作品搜索 → FANBOX」搜到作家后进入作家主页，点「+ 监控作家」即可添加。"),
                 Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
                 TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 50, 0, 50),
             });
         }
         else
@@ -184,10 +188,11 @@ public class WatchPage : UserControl
         var meta = new TextBlock
         {
             Text = string.Join(" · ", sub),
-            Margin = new Thickness(10, 0, 10, 0),
+            Margin = new Thickness(8, 0, 8, 0),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            Style = Res<Style>("CaptionText"),
+            FontSize = 12.5,
+            Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
         };
         Grid.SetColumn(meta, 1);
         head.Children.Add(meta);
@@ -214,11 +219,11 @@ public class WatchPage : UserControl
         }, danger: true);
 
         // 间隔行：轮询间隔下拉 + 自动下载去向
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
         row.Children.Add(new TextBlock
         {
             Text = I18n.Tr("轮询间隔"), VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0), Style = Res<Style>("CaptionText"),
+            Margin = new Thickness(0, 0, 8, 0),
         });
         var box = new ComboBox { Width = 110, VerticalContentAlignment = VerticalAlignment.Center };
         FillIntervalBox(box, w.IntervalMin);
@@ -237,9 +242,10 @@ public class WatchPage : UserControl
             Text = w.TargetLib.Length > 0
                 ? I18n.Format(I18n.Tr("自动下载到媒体库「{lib}」"), ("lib", w.TargetLib))
                 : I18n.Tr("自动下载到缓存目录"),
-            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
-            Style = Res<Style>("CaptionText"),
+            FontSize = 13,
+            Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
         });
 
         var body = new StackPanel();
@@ -250,14 +256,18 @@ public class WatchPage : UserControl
             {
                 Text = I18n.Format(I18n.Tr("上次结果：{text}"), ("text", w.LastResult)),
                 Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap,
-                Style = Res<Style>("CaptionText"),
+                FontSize = 13,
+                Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
             });
 
         return new Border
         {
-            Style = Res<Style>("Card"),
+            Background = Res<Brush>("ButtonBrush"),
+            BorderBrush = Res<Brush>("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12, 10, 12, 10),
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 8, 0, 0),
             Child = body,
         };
     }
@@ -267,9 +277,8 @@ public class WatchPage : UserControl
         var button = new Button
         {
             Content = text,
-            MinWidth = 76,
             Margin = new Thickness(8, 0, 0, 0),
-            Style = danger ? Res<Style>("DangerButton") : null,
+            Style = Res<Style>(danger ? "MiniDangerButton" : "MiniButton"),
         };
         button.Click += (_, _) => onClick();
         Grid.SetColumn(button, column);
@@ -308,6 +317,7 @@ public class WatchPage : UserControl
     {
         btn.Background = Res<Brush>(on ? "AccentBrush" : "ButtonBrush")
                          ?? (on ? Brushes.DodgerBlue : Brushes.DimGray);
+        btn.BorderBrush = Res<Brush>(on ? "AccentBrush" : "BorderBrush");
         btn.Foreground = on ? Brushes.White : Res<Brush>("TextBrush") ?? Brushes.White;
     }
 

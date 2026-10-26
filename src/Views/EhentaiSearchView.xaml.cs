@@ -21,32 +21,20 @@ public class EhImageItem : ObservableBase
 {
     public int Index { get; init; }
     public string Name { get; init; } = "";
+    /// <summary>逐张缩略图地址（大缩略图版式才有）。</summary>
     public string ThumbUrl { get; init; } = "";
-    /// <summary>缩略图在临时目录里的本地副本路径，空表示还没下下来。</summary>
+    /// <summary>雪碧图地址：20 张拼一张，本格 = 从 (SpriteX, 0) 起 W×H 的那一块。</summary>
+    public string SpriteUrl { get; init; } = "";
+    public int SpriteX { get; init; }
+    /// <summary>格子尺寸（Web .ehthumb 的 width/height，按站点给的单格尺寸）。</summary>
+    public double W { get; init; } = 100;
+    public double H { get; init; } = 140;
+    public string IndexText => Index.ToString();
+    /// <summary>缩略图在临时目录里的本地副本路径，空表示还没下下来（看图窗口按路径翻页）。</summary>
     public string LocalPath { get; set; } = "";
 
-    private BitmapImage? _thumb;
-    public BitmapImage? Thumb { get => _thumb; set => Set(ref _thumb, value); }
-
-    private bool _isSelected;
-    public bool IsSelected
-    {
-        get => _isSelected;
-        set
-        {
-            if (!Set(ref _isSelected, value))
-                return;
-            Raise(nameof(SelBorderBrush));
-            Raise(nameof(SelOpacity));
-        }
-    }
-
-    /// <summary>当前大图对应的缩略图高亮描边（等价 Web 的 .thumbs img.sel）。</summary>
-    public Brush SelBorderBrush => IsSelected
-        ? Application.Current?.TryFindResource("AccentLightBrush") as Brush ?? Brushes.DodgerBlue
-        : Brushes.Transparent;
-
-    public double SelOpacity => IsSelected ? 1.0 : 0.65;
+    private ImageSource? _thumb;
+    public ImageSource? Thumb { get => _thumb; set => Set(ref _thumb, value); }
 }
 
 /// <summary>E-Hentai 搜索结果里的一张画廊卡。</summary>
@@ -80,7 +68,7 @@ public class EhCardItem : ObservableBase
     public Visibility BusyVisibility => Selectable ? Visibility.Collapsed : Visibility.Visible;
 
     /// <summary>已入库/下载中的降亮，与 Web 的 .card.dim 等价。</summary>
-    public double CardOpacity => Selectable ? 1.0 : 0.45;
+    public double CardOpacity => Selectable ? 1.0 : 0.5;   // Web .card.dim
 
     private bool _isPicked;
     public bool IsPicked
@@ -90,17 +78,11 @@ public class EhCardItem : ObservableBase
         {
             if (!Set(ref _isPicked, value))
                 return;
-            Raise(nameof(PickBorderBrush));
             Raise(nameof(PickText));
             Raise(nameof(PickBackground));
             Raise(nameof(PickForeground));
         }
     }
-
-    /// <summary>选中的卡片用强调色描边（等价 Web 的 .card.picked）。</summary>
-    public Brush PickBorderBrush => IsPicked
-        ? Application.Current?.TryFindResource("AccentLightBrush") as Brush ?? Brushes.DodgerBlue
-        : Brushes.Transparent;
 
     /// <summary>选择按钮文案：未选「选择」，已选「已选」（对齐 Web 的 .mcard-actions 按钮）。</summary>
     public string PickText => IsPicked ? I18n.Tr("已选") : I18n.Tr("选择");
@@ -108,7 +90,7 @@ public class EhCardItem : ObservableBase
     /// <summary>已选时按钮转强调色底（等价 Web 的 .mcard-actions button.primary）。</summary>
     public Brush PickBackground => IsPicked
         ? Application.Current?.TryFindResource("AccentBrush") as Brush ?? Brushes.DodgerBlue
-        : Application.Current?.TryFindResource("CardBrush") as Brush ?? Brushes.DimGray;
+        : Application.Current?.TryFindResource("ButtonBrush") as Brush ?? Brushes.DimGray;   // .mcard-actions button：surface2
 
     /// <summary>强调色底上用白字，未选时用常规文字色。</summary>
     public Brush PickForeground => IsPicked
@@ -145,6 +127,12 @@ public partial class EhentaiSearchView : UserControl
 
     // 画廊详情
     private readonly ObservableCollection<EhImageItem> _detailImages = [];
+    // 整本图片网格的分页（Web ehDetail：列表页 p 从 0 起，每页 20 张，下拉到底再取下一页）
+    private EhGalleryRef? _detailRef;
+    private int _detailPage;
+    private bool _detailHasMore;
+    private bool _detailLoadingMore;
+    private readonly Dictionary<string, BitmapSource> _spriteCache = [];
     private EhGallery? _detailGallery;
     private string _detailState = "";
     private int _detailGen;     // 详情请求代际：与 _generation 分开，看详情不该作废网格的分页
@@ -163,7 +151,7 @@ public partial class EhentaiSearchView : UserControl
     public bool CanGoBack => _level == "detail";
 
     /// <summary>返回按钮文案（本来源只有详情一层可返回）。</summary>
-    public string BackLabel => I18n.Tr("← 返回搜索结果");
+    public string BackLabel => I18n.Tr("返回搜索结果");   // Web ehBack：无箭头
 
     /// <summary>宿主的返回按钮：从详情回到画廊网格。</summary>
     public void GoBack()
@@ -178,7 +166,7 @@ public partial class EhentaiSearchView : UserControl
     {
         InitializeComponent();
         CardList.ItemsSource = _cards;
-        DetailThumbs.ItemsSource = _detailImages;
+        DetailPages.ItemsSource = _detailImages;
         RetranslateUi();
         I18n.LanguageChanged += RetranslateUi;
     }
@@ -360,7 +348,8 @@ public partial class EhentaiSearchView : UserControl
     // ---------- 画廊详情 ----------
 
     /// <summary>
-    /// 点画廊卡进入：拉取元数据与缩略图清单并渲染。
+    /// 点画廊卡进入（对齐 Web ehOpenGallery / ehRenderGallery）：上半封面 + 字段，
+    /// 下半「全部图片（N 页）」整本缩略图网格，下拉到底再翻下一列表页。
     ///
     /// 这里只给缩略图：站点每张图的直链都要单独进它的图片页才拿得到，
     /// 为看一眼详情解析几百页既慢又白耗看图额度——要原图就走下载。
@@ -377,19 +366,22 @@ public partial class EhentaiSearchView : UserControl
         DetailTitle.Text = card.Title;
         DetailMainImage.Source = null;
         _detailImages.Clear();
+        _spriteCache.Clear();
         DetailFields.Children.Clear();
-        DetailNote.Visibility = Visibility.Collapsed;
+        DetailPagesHeader.Visibility = Visibility.Collapsed;
+        DetailMore.Text = "";
         DetailNoImage.Visibility = Visibility.Collapsed;
         DetailPane.ScrollToTop();
         LoadingText.Text = I18n.Tr("正在获取画廊内容…");
         LoadingOverlay.Visibility = Visibility.Visible;
 
         var gref = new EhGalleryRef(card.Gid, card.Token);
+        _detailRef = gref;
+        _detailPage = 0;
+        _detailHasMore = false;
+        _detailLoadingMore = false;
         var gallery = _detailGallery ?? await EhentaiApi.GetGalleryAsync(gref);
-        // 详情只看头两页缩略图（约 40 张）：够翻阅了，又不必为此把整本画廊页翻一遍
-        var pages = gallery is null
-            ? []
-            : await EhentaiApi.GetImagePagesAsync(gref, Math.Min(gallery.FileCount, 40), maxPages: 2);
+        var first = gallery is null ? null : await EhentaiApi.GetListingPageAsync(gref, 0);
         if (generation != _detailGen || _level != "detail")
             return;
         LoadingOverlay.Visibility = Visibility.Collapsed;
@@ -400,12 +392,20 @@ public partial class EhentaiSearchView : UserControl
             return;
         }
         _detailGallery = gallery;
-        RenderDetail(gallery, pages, card.ThumbUrl);
-        _ = LoadDetailImagesAsync(generation);
+        RenderDetail(gallery);
+        _ = LoadCoverAsync(card.ThumbUrl.Length > 0 ? card.ThumbUrl : gallery.Thumb, generation);
+
+        if (first is null)
+        {
+            DetailMore.Text = I18n.Tr("获取画廊图片列表失败");
+            return;
+        }
+        _detailHasMore = first.Count >= EhentaiApi.ListingPageSize;
+        _ = AppendPagesAsync(first, generation);
     }
 
-    /// <summary>渲染详情：标题 + 字段 + 预览占位（缩略图随后异步填充）。</summary>
-    private void RenderDetail(EhGallery gallery, IReadOnlyList<EhImagePage> pages, string coverUrl)
+    /// <summary>渲染详情：标题 + 字段 + 「全部图片」小标题（网格随后分批填充）。</summary>
+    private void RenderDetail(EhGallery gallery)
     {
         var done = _detailState == "已品悦";
         var busy = _detailState is "下载中" or "已下载";
@@ -414,6 +414,8 @@ public partial class EhentaiSearchView : UserControl
         DetailDownloadButton.Content = done ? I18n.Tr("已下载")
             : busy ? _detailState : I18n.Tr("下载本篇");
         DetailDownloadButton.IsEnabled = !done && !busy;
+        // Web：可下载时是主按钮，已下载/下载中是普通的禁用按钮
+        DetailDownloadButton.Style = TryFindResource(!done && !busy ? "AccentButton" : typeof(Button)) as Style;
 
         if (gallery.Title.Length > 0 && gallery.Title != gallery.DisplayTitle)
             AddDetailField(I18n.Tr("原名"), gallery.Title);
@@ -426,68 +428,115 @@ public partial class EhentaiSearchView : UserControl
         AddDetailField(I18n.Tr("页数"),
             gallery.FileCount > 0 ? I18n.Format(I18n.Tr("{n} 页"), ("n", gallery.FileCount)) : "");
         if (gallery.Tags.Count > 0)
-            AddDetailField(I18n.Tr("标签"), string.Join(" / ", gallery.Tags));
+            AddDetailField(I18n.Tr("标签"), string.Join("　", gallery.Tags));
         AddDetailField(I18n.Tr("状态"), done ? I18n.Tr("已下载")
             : _detailState.Length > 0 ? _detailState : I18n.Tr("未下载"));
         if (gallery.Expunged)
             AddDetailField(I18n.Tr("提示"), I18n.Tr("该画廊已在站点被删除，内容可能不全"));
 
-        var shots = pages.Where(x => x.Thumb.Length > 0).ToList();
-        if (shots.Count > 0)
-        {
-            foreach (var p in shots)
-                _detailImages.Add(new EhImageItem { Index = p.Index, Name = p.FileName, ThumbUrl = p.Thumb });
-            if (gallery.FileCount > shots.Count)
-            {
-                DetailNote.Text = I18n.Format(
-                    I18n.Tr("仅预览前 {n} 页，共 {m} 页；下载可取全本。"),
-                    ("n", shots.Count), ("m", gallery.FileCount));
-                DetailNote.Visibility = Visibility.Visible;
-            }
-        }
-        else if (coverUrl.Length > 0 || gallery.Thumb.Length > 0)
-        {
-            // 匿名访问时站点只给雪碧图、没有逐张缩略图地址——退回只显示封面，并说明一句
-            _detailImages.Add(new EhImageItem
-            {
-                Index = 1,
-                ThumbUrl = coverUrl.Length > 0 ? coverUrl : gallery.Thumb,
-            });
-            DetailNote.Text = I18n.Tr("站点未提供逐页缩略图（登录后可在站点把画廊版式设为大缩略图），此处只显示封面。");
-            DetailNote.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            DetailNoImage.Text = I18n.Tr("取不到预览图");
-            DetailNoImage.Visibility = Visibility.Visible;
-        }
+        DetailPagesHeader.Text = I18n.Format(I18n.Tr("全部图片（{n} 页）"),
+            ("n", gallery.FileCount > 0 ? gallery.FileCount.ToString() : "?"));
+        DetailPagesHeader.Visibility = Visibility.Visible;
     }
 
+    /// <summary>Web .fields：两列栅格「键 | 值」，键 muted 13px，行距 6、列距 14（键列靠 SharedSizeGroup 对齐）。</summary>
     private void AddDetailField(string key, string value)
     {
         if (value.Length == 0)
             return;
-        DetailFields.Children.Add(new TextBlock
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "ehk" });
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.Children.Add(new TextBlock
         {
             Text = key,
-            Margin = new Thickness(0, 0, 0, 2),
-            Style = TryFindResource("CaptionText") as Style,
+            FontSize = 13,
+            Foreground = TryFindResource("CaptionBrush") as Brush,
+            Margin = new Thickness(0, 1, 14, 0),
         });
-        DetailFields.Children.Add(new TextBlock
-        {
-            Text = value,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 13.5,
-            Margin = new Thickness(0, 0, 0, 12),
-        });
+        var v = new TextBlock { Text = value, TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(v, 1);
+        row.Children.Add(v);
+        DetailFields.Children.Add(row);
     }
 
-    /// <summary>后台下载详情预览的缩略图，同时在临时目录存一份本地副本供看图窗口翻页。</summary>
-    private async Task LoadDetailImagesAsync(int generation)
+    /// <summary>详情上半的封面（Web .gallery img.main：只是张封面，点不开东西）。</summary>
+    private async Task LoadCoverAsync(string url, int generation)
     {
-        var dir = _detailGallery is null
-            ? ""
-            : Path.Combine(PreviewCacheDir, _detailGallery.Gid.ToString());
+        if (url.Length == 0)
+        {
+            DetailNoImage.Text = I18n.Tr("取不到封面");
+            DetailNoImage.Visibility = Visibility.Visible;
+            return;
+        }
+        try
+        {
+            using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
+            var bytes = await EhentaiApi.GetImageBytesAsync(client, url);
+            if (generation != _detailGen)
+                return;
+            DetailMainImage.Source = Decode(bytes);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException
+                                      or NotSupportedException or ArgumentException)
+        {
+            if (generation != _detailGen)
+                return;
+            DetailNoImage.Text = I18n.Tr("取不到封面");
+            DetailNoImage.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>详情页滚到离底部 400 以内时取下一列表页（Web ehSetupDetailPaging 的 rootMargin 400）。</summary>
+    private void DetailPane_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (_level != "detail" || !_detailHasMore || _detailLoadingMore || _detailRef is not { } gref)
+            return;
+        if (DetailPane.VerticalOffset + DetailPane.ViewportHeight < DetailPane.ExtentHeight - 400)
+            return;
+        _ = LoadMorePagesAsync(gref, _detailGen);
+    }
+
+    private async Task LoadMorePagesAsync(EhGalleryRef gref, int generation)
+    {
+        _detailLoadingMore = true;
+        DetailMore.Text = I18n.Tr("正在加载更多…");
+        var pages = await EhentaiApi.GetListingPageAsync(gref, _detailPage + 1);
+        if (generation != _detailGen || _level != "detail")
+            return;
+        if (pages is null)
+        {
+            DetailMore.Text = I18n.Tr("获取画廊图片列表失败");
+            _detailHasMore = false;
+            _detailLoadingMore = false;
+            return;
+        }
+        _detailPage++;
+        _detailHasMore = pages.Count >= EhentaiApi.ListingPageSize;
+        DetailMore.Text = "";
+        await AppendPagesAsync(pages, generation);
+        _detailLoadingMore = false;
+    }
+
+    /// <summary>把一列表页（≤20 张）加进网格，再逐张取缩略图（雪碧图同页共用一张，只取一次）。</summary>
+    private async Task AppendPagesAsync(IReadOnlyList<EhImagePage> pages, int generation)
+    {
+        var batch = pages.Where(x => x.HasThumb).Select(p => new EhImageItem
+        {
+            Index = p.Index,
+            Name = p.FileName,
+            ThumbUrl = p.Thumb,
+            SpriteUrl = p.SpriteUrl,
+            SpriteX = p.SpriteX,
+            W = p.TileW > 0 ? p.TileW : 100,
+            H = p.TileH > 0 ? p.TileH : 140,
+        }).ToList();
+        foreach (var item in batch)
+            _detailImages.Add(item);
+        if (_detailImages.Count == 0 && !_detailHasMore)
+            DetailMore.Text = I18n.Tr("取不到预览图");
+
+        var dir = _detailGallery is null ? "" : Path.Combine(PreviewCacheDir, _detailGallery.Gid.ToString());
         if (dir.Length > 0)
         {
             try { Directory.CreateDirectory(dir); }
@@ -496,39 +545,49 @@ public partial class EhentaiSearchView : UserControl
         }
 
         using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
-        for (var i = 0; i < _detailImages.Count; i++)
+        foreach (var item in batch)
         {
             if (generation != _detailGen)
                 return;
-            var item = _detailImages[i];
             try
             {
-                var bytes = await EhentaiApi.GetImageBytesAsync(client, item.ThumbUrl);
+                BitmapSource image;
+                if (item.ThumbUrl.Length > 0)
+                {
+                    image = Decode(await EhentaiApi.GetImageBytesAsync(client, item.ThumbUrl));
+                }
+                else
+                {
+                    if (!_spriteCache.TryGetValue(item.SpriteUrl, out var sprite))
+                    {
+                        sprite = Decode(await EhentaiApi.GetImageBytesAsync(client, item.SpriteUrl));
+                        _spriteCache[item.SpriteUrl] = sprite;
+                    }
+                    // 按格裁出这一张（坐标是像素，越界时收窄到雪碧图范围内）
+                    var x = Math.Clamp(item.SpriteX, 0, Math.Max(0, sprite.PixelWidth - 1));
+                    var w = Math.Clamp((int)item.W, 1, sprite.PixelWidth - x);
+                    var h = Math.Clamp((int)item.H, 1, sprite.PixelHeight);
+                    var crop = new CroppedBitmap(sprite, new Int32Rect(x, 0, w, h));
+                    crop.Freeze();
+                    image = crop;
+                }
                 if (generation != _detailGen)
                     return;
+                item.Thumb = image;
                 if (dir.Length > 0)
                 {
-                    // 站点缩略图一律是 jpeg，本地副本按页码命名，看图窗口据此按顺序翻页
-                    var local = Path.Combine(dir, item.Index.ToString("D3") + ".jpg");
+                    // 本地副本按页码命名，看图窗口据此按顺序翻页
+                    var local = Path.Combine(dir, item.Index.ToString("D4") + ".jpg");
                     try
                     {
-                        await File.WriteAllBytesAsync(local, bytes);
+                        var enc = new JpegBitmapEncoder { QualityLevel = 92 };
+                        enc.Frames.Add(BitmapFrame.Create(image));
+                        await using (var fs = File.Create(local))
+                            enc.Save(fs);
                         item.LocalPath = local;
                     }
                     catch (IOException) { }
                 }
-                var image = new BitmapImage();
-                using (var ms = new MemoryStream(bytes))
-                {
-                    image.BeginInit();
-                    image.CacheOption = BitmapCacheOption.OnLoad;
-                    image.StreamSource = ms;
-                    image.EndInit();
-                }
-                image.Freeze();
-                item.Thumb = image;
-                if (i == 0)
-                    SelectDetailImage(item);
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException
                                           or NotSupportedException or ArgumentException)
@@ -538,29 +597,31 @@ public partial class EhentaiSearchView : UserControl
         }
     }
 
-    /// <summary>把某张图设为大图，并把缩略图条的高亮挪过去。</summary>
-    private void SelectDetailImage(EhImageItem item)
+    private static BitmapImage Decode(byte[] bytes)
     {
-        foreach (var x in _detailImages)
-            x.IsSelected = ReferenceEquals(x, item);
-        DetailMainImage.Source = item.Thumb;
+        var image = new BitmapImage();
+        using (var ms = new MemoryStream(bytes))
+        {
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.StreamSource = ms;
+            image.EndInit();
+        }
+        image.Freeze();
+        return image;
     }
 
-    private void DetailThumb_Click(object sender, MouseButtonEventArgs e)
+    /// <summary>点网格里的一页：从这一页起用程序内看图窗口翻看已取到的缩略图（对齐 Web 的 LB.open(urls, idx)）。</summary>
+    private void DetailPage_Click(object sender, MouseButtonEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is EhImageItem item)
-            SelectDetailImage(item);
-    }
-
-    /// <summary>点大图：用程序内看图窗口翻看这一本的全部预览图（对齐 Web 的灯箱）。</summary>
-    private void DetailMainImage_Click(object sender, MouseButtonEventArgs e)
-    {
-        var paths = _detailImages.Where(x => x.LocalPath.Length > 0).Select(x => x.LocalPath).ToList();
-        if (paths.Count == 0)
+        if ((sender as FrameworkElement)?.DataContext is not EhImageItem item)
             return;
-        var current = _detailImages.FirstOrDefault(x => x.IsSelected);
-        var index = current is null ? 0 : Math.Max(0, paths.IndexOf(current.LocalPath));
-        new ImageViewerDialog(paths, index) { Owner = Window.GetWindow(this) }.ShowDialog();
+        var loaded = _detailImages.Where(x => x.LocalPath.Length > 0).ToList();
+        if (loaded.Count == 0)
+            return;
+        var index = Math.Max(0, loaded.IndexOf(item));
+        new ImageViewerDialog(loaded.Select(x => x.LocalPath).ToList(), index)
+            { Owner = Window.GetWindow(this) }.ShowDialog();
     }
 
     /// <summary>详情页「在站点打开」：交给系统默认浏览器（桌面固有能力，Web 端是普通超链接）。</summary>

@@ -51,10 +51,10 @@ public class MediaLibSettingDialog
 
         // 工具栏：新建媒体库 / 扫描全部（顺序对齐 Web renderMediaLibSection）
         var bar = new StackPanel { Orientation = Orientation.Horizontal };
-        var createButton = new Button { Content = I18n.Tr("新建媒体库"), MinWidth = 108 };
+        var createButton = new Button { Content = I18n.Tr("新建媒体库") };
         createButton.Click += (_, _) => CreateLib();
         bar.Children.Add(createButton);
-        var scanAllButton = new Button { Content = I18n.Tr("扫描全部数据源"), MinWidth = 120, Margin = new Thickness(8, 0, 0, 0) };
+        var scanAllButton = new Button { Content = I18n.Tr("扫描全部数据源"), Margin = new Thickness(8, 0, 0, 0) };
         scanAllButton.Click += (_, _) => ScanAll();
         bar.Children.Add(scanAllButton);
         panel.Children.Add(bar);
@@ -64,6 +64,7 @@ public class MediaLibSettingDialog
         {
             Text = _statusText,
             Margin = new Thickness(0, 8, 0, 0),
+            FontSize = 12.5,
             Foreground = Res("CaptionBrush", Brushes.Gray),
             TextWrapping = TextWrapping.Wrap,
             Visibility = string.IsNullOrEmpty(_statusText) ? Visibility.Collapsed : Visibility.Visible,
@@ -71,7 +72,7 @@ public class MediaLibSettingDialog
         panel.Children.Add(_statusBlock);
 
         // 媒体库卡片列表
-        _cardsPanel = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        _cardsPanel = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
         panel.Children.Add(_cardsPanel);
 
         RebuildCards();
@@ -102,6 +103,8 @@ public class MediaLibSettingDialog
             _cardsPanel.Children.Add(new TextBlock
             {
                 Text = I18n.Tr("还没有媒体库，点击\"新建媒体库\"创建。"),
+                FontSize = 13,
+                Margin = new Thickness(0, 8, 0, 0),
                 Foreground = Res("CaptionBrush", Brushes.Gray),
             });
             return;
@@ -114,10 +117,12 @@ public class MediaLibSettingDialog
     {
         var card = new Border
         {
-            Background = Res("CardBrush", Brushes.Black),
+            Background = Res("ButtonBrush", Brushes.Black),
+            BorderBrush = Res("BorderBrush", Brushes.Gray),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12, 10, 12, 10),
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 8, 0, 0),
         };
         var panel = new StackPanel();
 
@@ -128,29 +133,30 @@ public class MediaLibSettingDialog
         var headerText = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         headerText.Children.Add(new TextBlock
         {
-            Text = lib.Name, FontWeight = FontWeights.SemiBold, FontSize = 14,
+            Text = lib.Name, FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
         });
         headerText.Children.Add(new TextBlock
         {
             Text = I18n.Format(I18n.Tr("{n} 个文件夹"), ("n", lib.Folders.Count)),
             Foreground = Res("CaptionBrush", Brushes.Gray),
+            FontSize = 12.5,
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         });
         header.Children.Add(headerText);
 
         var headerActions = new StackPanel { Orientation = Orientation.Horizontal };
-        var addButton = new Button { Content = I18n.Tr("添加文件夹") };
+        var addButton = new Button { Content = I18n.Tr("添加文件夹"), Style = (Style)Application.Current.Resources["MiniButton"] };
         addButton.Click += (_, _) => AddFolder(lib.Name);
         headerActions.Children.Add(addButton);
-        var scanButton = new Button { Content = I18n.Tr("扫描元数据"), Margin = new Thickness(6, 0, 0, 0) };
+        var scanButton = new Button { Content = I18n.Tr("扫描元数据"), Margin = new Thickness(8, 0, 0, 0), Style = (Style)Application.Current.Resources["MiniButton"] };
         scanButton.Click += (_, _) => ScanLib(lib.Name, force: false);
         headerActions.Children.Add(scanButton);
-        var rescanButton = new Button { Content = I18n.Tr("重新扫描元数据"), Margin = new Thickness(6, 0, 0, 0) };
+        var rescanButton = new Button { Content = I18n.Tr("重新扫描元数据"), Margin = new Thickness(8, 0, 0, 0), Style = (Style)Application.Current.Resources["MiniButton"] };
         rescanButton.Click += (_, _) => ScanLib(lib.Name, force: true);
         headerActions.Children.Add(rescanButton);
-        var deleteButton = new Button { Content = I18n.Tr("删除"), Margin = new Thickness(6, 0, 0, 0) };
+        var deleteButton = new Button { Content = I18n.Tr("删除"), Margin = new Thickness(8, 0, 0, 0), Style = (Style)Application.Current.Resources["MiniDangerButton"] };
         deleteButton.Click += (_, _) => DeleteLib(lib.Name);
         headerActions.Children.Add(deleteButton);
         Grid.SetColumn(headerActions, 1);
@@ -165,13 +171,14 @@ public class MediaLibSettingDialog
             row.Children.Add(new TextBlock
             {
                 Text = folder,
+                FontSize = 13,
                 Foreground = Res("CaptionBrush", Brushes.Gray),
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
             var removeButton = new Button
             {
-                Content = I18n.Tr("移除"), Width = 56, Padding = new Thickness(4, 2, 4, 2),
+                Content = I18n.Tr("移除"), Margin = new Thickness(8, 0, 0, 0), Style = (Style)Application.Current.Resources["MiniDangerButton"],
             };
             var libName = lib.Name;
             var captured = folder;

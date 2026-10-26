@@ -3,36 +3,48 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              IsVisibleChanged="Page_IsVisibleChanged">
     <UserControl.Resources>
+        <!-- 表单标签（Web .frow > label）：muted 13.5px，定宽 120，与控件间距 10 -->
         <Style x:Key="FieldLabel" TargetType="TextBlock"
                BasedOn="{StaticResource {x:Type TextBlock}}">
             <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,0,12,0" />
+            <Setter Property="Margin" Value="0,0,10,0" />
             <Setter Property="MinWidth" Value="120" />
+            <Setter Property="FontSize" Value="13.5" />
+            <Setter Property="Foreground" Value="{StaticResource CaptionBrush}" />
         </Style>
     </UserControl.Resources>
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <Grid>
+    <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+    <!-- 页顶标题横条（Web 顶栏 #title =「系统设置」），常驻在滚动区之外 -->
+    <Border Style="{StaticResource ToolbarCard}">
+        <TextBlock x:Name="PageTitle" Text="系统设置" FontSize="16" FontWeight="SemiBold" />
+    </Border>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
         <StackPanel HorizontalAlignment="Stretch" MaxWidth="1100" Margin="0,0,8,0">
 
             <!-- 下载 -->
             <GroupBox x:Name="DownloadGroup" Header="下载">
                 <StackPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,5">
                         <TextBlock x:Name="PathLabel" Text="缓存路径" Style="{StaticResource FieldLabel}" DockPanel.Dock="Left" />
                         <Button x:Name="PathChooseButton" Content="保存" Margin="8,0,0,0" DockPanel.Dock="Right"
                                 Click="PathChooseButton_Click" />
                         <TextBox x:Name="PathBox" LostFocus="PathBox_LostFocus" />
                     </DockPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="AutoDownloadLabel" Text="自动下载" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="AutoDownloadCombo" Width="120"
                                   SelectionChanged="AutoDownloadCombo_SelectionChanged" />
                         <TextBlock x:Name="AutoUnzipLabel" Text="自动解压" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="AutoUnzipCombo" Width="120"
                                   SelectionChanged="AutoUnzipCombo_SelectionChanged" />
                     </StackPanel>
                     <!-- 线程 / 速度：Web 端 下载 分区内含此三项（settings.js），故并入「下载」而非独立分区 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="DownProcLabel" Text="单文件线程数" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="DownProcBox" Width="80" SelectionChanged="DownProcBox_SelectionChanged">
                             <ComboBoxItem Content="1" />
@@ -43,18 +55,18 @@
                             <ComboBoxItem Content="6" />
                         </ComboBox>
                         <TextBlock x:Name="MinSpeedLabel" Text="最低速度 (KB/s)" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="MinSpeedBox" Width="80" LostFocus="MinSpeedBox_LostFocus" />
                         <TextBlock x:Name="SpeedLimitLabel" Text="速度限制 (KB/s)" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="SpeedLimitBox" Width="80" LostFocus="SpeedLimitBox_LostFocus" />
                     </StackPanel>
                     <!-- 解压密码库：一个输入框一个密码，末尾「＋」新增一条（对齐 Web settings.js）。
                          行由代码后台的 RebuildUnzipPwdRows 生成，存库时仍是「一行一个」的老格式 -->
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,5">
                         <TextBlock x:Name="UnzipPwdLabel" Text="解压密码库" Style="{StaticResource FieldLabel}"
-                                   DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,6,12,0" />
-                        <StackPanel x:Name="UnzipPwdList" />
+                                   DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,9,10,0" />
+                        <WrapPanel x:Name="UnzipPwdList" Margin="0,4,0,0" />
                     </DockPanel>
                 </StackPanel>
             </GroupBox>
@@ -62,7 +74,7 @@
             <!-- 代理 -->
             <GroupBox x:Name="ProxyGroup" Header="代理">
                 <StackPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,5">
                         <TextBlock x:Name="ProxyStatusLabel" Text="开启" Style="{StaticResource FieldLabel}" DockPanel.Dock="Left" />
                         <ComboBox x:Name="ProxyStatusCombo" Width="120" DockPanel.Dock="Left"
                                   SelectionChanged="ProxyStatusCombo_SelectionChanged" />
@@ -78,7 +90,7 @@
 
             <!-- Debrid-Link -->
             <GroupBox x:Name="DebridGroup" Header="Debrid-Link 下载中转站">
-                <DockPanel Margin="0,4">
+                <DockPanel Margin="0,5">
                     <TextBlock Text="API Key" Style="{StaticResource FieldLabel}" DockPanel.Dock="Left" />
                     <Button x:Name="DebridTestButton" Content="测试" Margin="8,0,0,0" DockPanel.Dock="Right"
                             Click="DebridTestButton_Click" />
@@ -98,12 +110,12 @@
             <GroupBox x:Name="AsmrGroup" Header="ASMR.ONE">
                 <StackPanel>
                     <!-- 账号 + 密码 同一行 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="AsmrUserLabel" Text="账号" Style="{StaticResource FieldLabel}" />
                         <TextBox x:Name="AsmrUserBox" Width="280" VerticalContentAlignment="Center"
                                  LostFocus="AsmrUserBox_LostFocus" />
                         <TextBlock x:Name="AsmrPassLabel" Text="密码" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="AsmrPassBox" Width="280" VerticalContentAlignment="Center"
                                  LostFocus="AsmrPassBox_LostFocus" />
                         <Button x:Name="AsmrTestButton" Content="登录测试" Margin="16,0,0,0"
@@ -116,7 +128,7 @@
                         <ComboBox x:Name="AsmrMirrorCombo" Width="160" VerticalAlignment="Top"
                                   SelectionChanged="AsmrMirrorCombo_SelectionChanged" />
                         <TextBlock x:Name="AsmrFileTypeLabel" Text="下载文件类型" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" VerticalAlignment="Top" />
+                                   MinWidth="0" Margin="24,0,10,0" VerticalAlignment="Top" />
                         <WrapPanel x:Name="FileTypePanel" MaxWidth="400" VerticalAlignment="Top" />
                     </StackPanel>
                 </StackPanel>
@@ -127,12 +139,12 @@
             <GroupBox x:Name="EhentaiGroup" Header="E-Hentai">
                 <StackPanel>
                     <!-- 站点 + 下载原图 同一行 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="EhHostLabel" Text="站点" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="EhHostCombo" Width="160" VerticalContentAlignment="Center"
                                   SelectionChanged="EhHostCombo_SelectionChanged" />
                         <TextBlock x:Name="EhOriginalLabel" Text="图片画质" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="EhOriginalCombo" Width="200" VerticalContentAlignment="Center"
                                   SelectionChanged="EhOriginalCombo_SelectionChanged" />
                         <Button x:Name="EhTestButton" Content="连接测试" Margin="16,0,0,0"
@@ -148,16 +160,16 @@
             <GroupBox x:Name="PixivGroup" Header="pixiv">
                 <StackPanel>
                     <!-- 画质 + 分级 + 匹配方式 同一行 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="PxOriginalLabel" Text="图片画质" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="PxOriginalCombo" Width="200" VerticalContentAlignment="Center"
                                   SelectionChanged="PxOriginalCombo_SelectionChanged" />
                         <TextBlock x:Name="PxModeLabel" Text="搜索分级" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="PxModeCombo" Width="120" VerticalContentAlignment="Center"
                                   SelectionChanged="PxModeCombo_SelectionChanged" />
                         <TextBlock x:Name="PxMatchLabel" Text="匹配方式" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="PxMatchCombo" Width="160" VerticalContentAlignment="Center"
                                   SelectionChanged="PxMatchCombo_SelectionChanged" />
                         <Button x:Name="PxTestButton" Content="连接测试" Margin="16,0,0,0"
@@ -172,16 +184,16 @@
             <!-- 系统（顺序对齐 Web：系统在外部访问之前，settings.js）。关闭按钮为桌面独有项 -->
             <GroupBox x:Name="SystemGroup" Header="系统">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="LanguageLabel" Text="语言" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="LanguageCombo" Width="140"
                                   SelectionChanged="LanguageCombo_SelectionChanged" />
                         <TextBlock x:Name="LogLevelLabel" Text="日志级别" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="LogLevelCombo" Width="120"
                                   SelectionChanged="LogLevelCombo_SelectionChanged" />
                         <TextBlock x:Name="EncodingLabel" Text="解压编码" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="EncodingBox" Width="120" LostFocus="EncodingBox_LostFocus" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
@@ -201,12 +213,12 @@
             <!-- 图床存储（对齐 Web 设置页：位于「媒体库」与「外部访问」之间，settings.js） -->
             <GroupBox x:Name="ImageHostGroup" Header="图床存储">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="ImageHostEnableLabel" Text="启用" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="ImageHostEnableCombo" Width="120"
                                   SelectionChanged="ImageHostEnableCombo_SelectionChanged" />
                         <TextBlock x:Name="ImageHostProjectLabel" Text="项目" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="ImageHostProjectBox" Width="180" LostFocus="ImageHostProjectBox_LostFocus" />
                     </StackPanel>
                     <DockPanel Margin="0,8,0,4">
@@ -214,7 +226,7 @@
                                    DockPanel.Dock="Left" />
                         <TextBox x:Name="ImageHostUrlBox" LostFocus="ImageHostUrlBox_LostFocus" />
                     </DockPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,5">
                         <TextBlock x:Name="ImageHostTokenLabel" Text="API Token" Style="{StaticResource FieldLabel}"
                                    DockPanel.Dock="Left" />
                         <Button x:Name="ImageHostMigrateButton" Content="迁移封面" Margin="8,0,0,0"
@@ -231,16 +243,16 @@
             <!-- 图片翻译（按需功能：模型依赖没下齐之前「启用」不可选） -->
             <GroupBox x:Name="TranslateGroup" Header="图片翻译">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="TransEnableLabel" Text="启用" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="TransEnableCombo" Width="120"
                                   SelectionChanged="TransEnableCombo_SelectionChanged" />
                         <TextBlock x:Name="TransTierLabel" Text="模型档位" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="TransTierCombo" Width="140"
                                   SelectionChanged="TransTierCombo_SelectionChanged" />
                         <TextBlock x:Name="TransDeviceLabel" Text="推理设备" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <ComboBox x:Name="TransDeviceCombo" Width="100"
                                   SelectionChanged="TransDeviceCombo_SelectionChanged" />
                     </StackPanel>
@@ -271,15 +283,15 @@
             <!-- 外部访问 -->
             <GroupBox x:Name="WebGroup" Header="外部访问">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="WebEnableLabel" Text="外部访问" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="WebEnableCombo" Width="120"
                                   SelectionChanged="WebEnableCombo_SelectionChanged" />
                         <TextBlock x:Name="WebPortLabel" Text="端口" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="WebPortBox" Width="90" LostFocus="WebPortBox_LostFocus" />
                         <TextBlock x:Name="WebPasswordLabel" Text="访问密码" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="WebPasswordBox" Width="160" LostFocus="WebPasswordBox_LostFocus" />
                     </StackPanel>
                     <TextBlock x:Name="WebStatusLabel" Margin="0,6,0,0"
@@ -291,12 +303,12 @@
                  本程序这边开了才生效：关着时 /api/sso/* 一律 404，Web 登录页也不画「门户登录」 -->
             <GroupBox x:Name="SsoGroup" Header="门户单点登录">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
                         <TextBlock x:Name="SsoEnableLabel" Text="启用" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="SsoEnableCombo" Width="120"
                                   SelectionChanged="SsoEnableCombo_SelectionChanged" />
                         <TextBlock x:Name="SsoClientIdLabel" Text="Client ID" Style="{StaticResource FieldLabel}"
-                                   MinWidth="0" Margin="24,0,12,0" />
+                                   MinWidth="0" Margin="24,0,10,0" />
                         <TextBox x:Name="SsoClientIdBox" Width="180" LostFocus="SsoBox_LostFocus" Tag="client_id" />
                     </StackPanel>
                     <DockPanel Margin="0,8,0,4">
@@ -304,12 +316,12 @@
                                    DockPanel.Dock="Left" />
                         <TextBox x:Name="SsoPortalUrlBox" LostFocus="SsoBox_LostFocus" Tag="portal_url" />
                     </DockPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,5">
                         <TextBlock x:Name="SsoInternalUrlLabel" Text="内网地址" Style="{StaticResource FieldLabel}"
                                    DockPanel.Dock="Left" />
                         <TextBox x:Name="SsoInternalUrlBox" LostFocus="SsoBox_LostFocus" Tag="internal_url" />
                     </DockPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,5">
                         <TextBlock x:Name="SsoSecretLabel" Text="Client Secret" Style="{StaticResource FieldLabel}"
                                    DockPanel.Dock="Left" />
                         <TextBox x:Name="SsoSecretBox" LostFocus="SsoBox_LostFocus" Tag="client_secret" />
@@ -322,4 +334,5 @@
             </GroupBox>
         </StackPanel>
     </ScrollViewer>
+    </Grid>
 </UserControl>
