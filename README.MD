@@ -1,10 +1,10 @@
 # R-18MediaLibrary · R18 媒体库
 
-**图文系统展示：** [简体中文](系统展示.md) · [日本語](系统展示.ja.md) · [English](系统展示.en.md)
+**图文系统展示：** [简体中文](docs/系统展示.md) · [日本語](docs/系统展示.ja.md) · [English](docs/系统展示.en.md)
 
 Windows 上的本地媒体库与下载管理工具，使用 WPF、C# 和 .NET 10。支持作品导入、元数据补全、多维分类、音视频播放，以及浏览器远程访问。
 
-**[完整使用手册](docs/使用手册.md)** · [日文说明（历史版本）](README.ja.md)
+**[完整使用手册](docs/使用手册.md)** · README：**简体中文** · [日本語](docs/README.ja.md) · [English](docs/README.en.md)
 
 ![媒体库 Web 首页](docs/assets/manual/home.png)
 
@@ -108,6 +108,8 @@ src/
 └─ Web/                  内嵌 Web 前端
 docs/
 ├─ 使用手册.md           分功能步骤、限制与排查
+├─ 系统展示.md           图文功能展示（含 .ja / .en）
+├─ README.ja.md／README.en.md  日文、英文版 README
 └─ assets/manual/        Edge 实际界面截图
 ```
 
