@@ -695,7 +695,8 @@ public static class DownloadEngine
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
             ApplyRequestHeaders(request, userAgent, cookie, referer);
-            using var response = client.Send(request, HttpCompletionOption.ResponseHeadersRead);
+            using var cts = new CancellationTokenSource(ResponseTimeout);
+            using var response = client.Send(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (response.StatusCode == HttpStatusCode.PartialContent)
             {
                 var len = response.Content.Headers.ContentRange?.Length;
@@ -705,7 +706,7 @@ public static class DownloadEngine
             if (response.StatusCode == HttpStatusCode.OK)
                 return (response.Content.Headers.ContentLength ?? 0, false);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { }
         return (0, false);
     }
 
@@ -725,15 +726,24 @@ public static class DownloadEngine
             request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(downloaded, null);
         }
 
+        // 下载线程的 client 不设整体超时（大文件一下就是几十分钟），超时改成两段各自计：
+        // 等响应头最多 ResponseTimeout，之后每次读取最多空等 ReadIdleTimeout。
+        // 不设的话对端不回包时 Send/Read 会永远挂着，那一行就一直停在「下载中」不动。
+        // 失败后的重排/放弃由 WorkerLoop 的 RequeueOrGiveUp 决定（最多自动重试 MaxRetries 次）。
+        using var cts = new CancellationTokenSource(ResponseTimeout);
         HttpResponseMessage response;
         try
         {
-            response = client.Send(request, HttpCompletionOption.ResponseHeadersRead);
+            response = client.Send(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        catch (OperationCanceledException)
+        {
+            Logger.Error($"{filename} 下载请求超时（{ResponseTimeout.TotalSeconds:F0} 秒无响应）");
+            return "failed";
+        }
+        catch (HttpRequestException e)
         {
             Logger.Error($"{filename} 下载请求失败: {e.Message}");
-            SetStatus(key, "0");
             return "failed";
         }
         using (response)
@@ -748,11 +758,15 @@ public static class DownloadEngine
                 // 交由上层按来源决定跳过还是重新解析（见 WorkerLoop 的 missing 分支）
                 if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
                     return "missing";
-                SetStatus(key, "0");
                 // 403/429/503 多为站点限流（如 pawchive 前置的 DDoS-Guard）：5 秒一轮的热重试
                 // 只会让封锁一直续期，交由上层改用长冷却再试
-                return response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
-                    or HttpStatusCode.ServiceUnavailable ? "throttled" : "failed";
+                if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests
+                    or HttpStatusCode.ServiceUnavailable)
+                {
+                    SetStatus(key, "0");
+                    return "throttled";
+                }
+                return "failed";
             }
             // E-Hentai 会把「需要登录」当正常页面回（HTTP 200 + text/html 的登录页），
             // 不认出来就会把登录页当图片存下并标记完成，整本画廊看着成功、实则全是 1.3KB 的 HTML。
@@ -800,12 +814,18 @@ public static class DownloadEngine
                 int read;
                 try
                 {
-                    read = stream.Read(buffer, 0, buffer.Length);
+                    // 每次读取前重新计时：只算对端不给数据的空等，限速的 Sleep 不计在内
+                    cts.CancelAfter(ReadIdleTimeout);
+                    read = stream.ReadAsync(buffer.AsMemory(), cts.Token).AsTask().GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    Logger.Error($"{filename} 下载超时（{ReadIdleTimeout.TotalSeconds:F0} 秒没有收到数据）");
+                    return "failed";
                 }
                 catch (IOException e)
                 {
                     Logger.Error($"{filename} 下载中断: {e.Message}");
-                    SetStatus(key, "0");
                     return "failed";
                 }
                 if (read <= 0)
@@ -905,6 +925,39 @@ public static class DownloadEngine
 
     /// <summary>被站点限流后的冷却时长：期间该线程不再发起请求，让封锁自然解除。</summary>
     private static readonly TimeSpan ThrottleCooldown = TimeSpan.FromSeconds(60);
+
+    /// <summary>发出下载请求后等响应头的上限。</summary>
+    private static readonly TimeSpan ResponseTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>下载过程中单次读取的空等上限：这么久一个字节都没收到即判超时。</summary>
+    private static readonly TimeSpan ReadIdleTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>单个文件在没有人工干预前最多自动重试的次数（超时、连接中断、HTTP 错误都算一次）。</summary>
+    internal const int MaxRetries = 3;
+
+    /// <summary>
+    /// 各分卷已自动重试的次数（按 UUID）。只放内存，放弃时与下载成功时清掉：
+    /// 用户点「全部重新解析」把行放回队列后又能重试 MaxRetries 次；重启程序同样清零。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, int> RetryCounts = new();
+
+    /// <summary>
+    /// 下载失败后的去向：重试次数没用完就放回队列（'0'，断点续传），用完则标记失败（'2' + retryFailed）停下，
+    /// 等用户「全部重新解析」。不设上限的话，一个永远下不动的文件会让线程 5 秒一轮地一直空转。
+    /// </summary>
+    private static void RequeueOrGiveUp(string key, string filename)
+    {
+        var n = RetryCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
+        if (n > MaxRetries)
+        {
+            RetryCounts.TryRemove(key, out _);
+            Logger.Error($"{filename} 已重试 {MaxRetries} 次仍失败，停止自动重试（「全部重新解析」可再试）");
+            SetParseFailed(key, RetryFailedError);
+            return;
+        }
+        Logger.Warning($"{filename} 下载失败，5 秒后第 {n}/{MaxRetries} 次重试");
+        SetStatus(key, "0");
+    }
 
     /// <summary>单个下载线程：不断领取队列任务，通过 debrid-link 中转下载（支持断点续传）。</summary>
     private static void WorkerLoop()
@@ -1110,15 +1163,22 @@ public static class DownloadEngine
                     }
                     // 论坛源的直链是 debrid-link 现场解析出来的，404 多为解析结果过期；
                     // 重新领取会重新解析，因此仍按普通失败重试
-                    SetStatus(key, "0");
+                    RequeueOrGiveUp(key, filename);
                     Thread.Sleep(5000);
                     continue;
                 }
-                if (result is "slow" or "failed")
+                if (result == "failed")
+                {
+                    RequeueOrGiveUp(key, filename);
+                    Thread.Sleep(5000);
+                    continue;
+                }
+                if (result == "slow")
                 {
                     Thread.Sleep(5000);
                     continue;
                 }
+                RetryCounts.TryRemove(key, out _);
 
                 // E-Hentai：站点投递的格式与它登记的原始文件名常常对不上（.png 原图被转成
                 // WebP 等），扩展名以刚下下来的内容为准再核一次
@@ -1141,7 +1201,7 @@ public static class DownloadEngine
                 if (key != null)
                 {
                     DownloadProgress.TryRemove(key, out _);
-                    SetStatus(key, "0");  // 重新排队，下次从断点继续
+                    RequeueOrGiveUp(key, key);  // 重新排队，下次从断点继续（同样计入重试次数）
                 }
                 Thread.Sleep(5000);
             }
@@ -1208,6 +1268,9 @@ public static class DownloadEngine
     /// 补上 cookie 或改用站点显示图后，「全部重新解析」即可重来。
     /// </summary>
     internal const string NotImageError = "notimage";
+
+    /// <summary>分卷"自动重试用尽"标记：超时 / 连接中断等失败已重试 MaxRetries 次，停下等用户「全部重新解析」。</summary>
+    internal const string RetryFailedError = "retryFailed";
 
     /// <summary>
     /// 分卷"存的是预览图"标记：源站没有原图，改存了 800px 预览图（见 WorkerLoop 的 missing 分支）。

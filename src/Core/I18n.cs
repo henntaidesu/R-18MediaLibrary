@@ -374,6 +374,14 @@ public static class I18n
         ["{n} 个解析失败"] = new() { ["zh_TW"] = "{n} 個解析失敗", ["ja"] = "{n} 件解析失敗", ["en"] = "{n} parse failed" },
         ["流量用尽"] = new() { ["zh_TW"] = "流量用盡", ["ja"] = "通信量超過", ["en"] = "Data limit reached" },
         ["文件失效"] = new() { ["zh_TW"] = "檔案失效", ["ja"] = "ファイル失効", ["en"] = "File dead" },
+        // 超时 / 连接中断自动重试 3 次仍失败（DownloadEngine.RetryFailedError）
+        ["重试失败"] = new() { ["zh_TW"] = "重試失敗", ["ja"] = "再試行失敗", ["en"] = "Retries failed" },
+        ["下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）"] = new()
+        {
+            ["zh_TW"] = "下載逾時或連線中斷，已自動重試 3 次仍失敗（可點「全部重新解析」再試）",
+            ["ja"] = "タイムアウトまたは接続切断。自動で 3 回再試行しましたが失敗しました（「すべて再解析」で再試行できます）",
+            ["en"] = "Timed out or connection dropped; failed after 3 automatic retries (use \"Re-parse all\" to try again)",
+        },
         // 直链源（asmr / fanbox）源站 404：文件不存在，跳过后继续下别的文件
         ["已完成（预览图）"] = new()
         {
