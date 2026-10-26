@@ -3,33 +3,30 @@
 //   fanbox  —— pawchive 作家搜索与作品下载（fanbox.js）
 //   fanboxcc:<用户号> —— 同上，但用该 FANBOX 账号直连 fanbox.cc 官方站（每个登录的账号一项「FANBOX（账号名）」）
 //   ehentai —— E-Hentai 画廊搜索与下载（ehentai.js）
-//   pixiv / pixiv:<用户号> —— pixiv 作品搜索与下载（pixiv.js）；有账号时每个账号一项「pixiv（账号名）」，没有时是匿名的 pixiv
-//   pixivfav:<用户号> —— 该 pixiv 账号的收藏列表（每个账号一项「pixiv 收藏（账号名）」），面板与下载同 pixiv
+//   pixiv / pixiv:<用户号> —— Pixiv 作品搜索与下载（pixiv.js）；有账号时每个账号一项「Pixiv（账号名）」，没有时是匿名的「Pixiv」。
+//                            输入框留空直接查询 = 列出该账号的收藏（同一项里搜索与收藏合并，用户指定）
 // 各来源共用同一条工具栏（来源下拉 + 输入框 + 查询），各自的结果面板并存、按来源切换显示。
 
 // 当前搜索来源；SEARCH_SOURCES 的顺序即下拉框顺序。
-// fanboxcc / pixiv / pixivfav 是按账号展开的模板（见 searchSources），下拉里的 key 写成「种类:用户号」
+// fanboxcc / pixiv 是按账号展开的模板（见 searchSources），下拉里的 key 写成「种类:用户号」
 const SEARCH_SOURCES = [
   { key: 'dlsite', label: 'DLsite', placeholder: '作品号(RJ/BJ/VJ)、社团号(RG) 或 DLsite 链接' },
-  { key: 'fanbox', label: 'FANBOX', placeholder: '作家名 / 作家 ID，或 pawchive 作家链接' },
+  { key: 'fanbox', label: 'Pawchive', placeholder: '作家名 / 作家 ID，或 pawchive 作家链接' },
   { key: 'fanboxcc', label: 'FANBOX',
     placeholder: '作家名 / 作家 ID，或 fanbox.cc 主页链接；留空直接查询 = 我赞助 / 关注的作家' },
   { key: 'ehentai', label: 'E-Hentai', placeholder: '关键字 / 标签（如 artist:xxx），或 E-Hentai 画廊链接' },
-  { key: 'pixiv', label: 'pixiv', placeholder: '关键字 / 标签，或 pixiv 作品链接 / 作品号' },
-  { key: 'pixivfav', label: 'pixiv 收藏', placeholder: '收藏标签筛选；留空直接查询 = 全部收藏' },
+  { key: 'pixiv', label: 'Pixiv', placeholder: '关键字 / 标签，或 Pixiv 作品链接 / 作品号；留空直接查询 = 我的收藏' },
 ];
 let searchSrc = 'dlsite';
 
 // 当前可用的来源（多账号并行使用）：每个 FANBOX 账号一项「FANBOX（账号名）」，与「FANBOX」（pawchive 归档）并列；
-// pixiv 有账号时每个账号一项「pixiv（账号名）」，一个都没有时是匿名的「pixiv」
+// Pixiv 有账号时每个账号一项「Pixiv（账号名）」，一个都没有时是匿名的「Pixiv」
 function searchSources() {
   const acc = site => (typeof accounts !== 'undefined' && accounts[site]) || [];
   const out = [];
   SEARCH_SOURCES.forEach(s => {
     if (s.key === 'fanboxcc') acc('fanbox').forEach(a => out.push({ ...s, key: 'fanboxcc:' + a.uid, label: `FANBOX（${a.name}）` }));
-    else if (s.key === 'pixiv' && acc('pixiv').length) acc('pixiv').forEach(a => out.push({ ...s, key: 'pixiv:' + a.uid, label: `pixiv（${a.name}）` }));
-    // 收藏要登录：没有 pixiv 账号时这一项不出现
-    else if (s.key === 'pixivfav') acc('pixiv').forEach(a => out.push({ ...s, key: 'pixivfav:' + a.uid, label: `pixiv 收藏（${a.name}）` }));
+    else if (s.key === 'pixiv' && acc('pixiv').length) acc('pixiv').forEach(a => out.push({ ...s, key: 'pixiv:' + a.uid, label: `Pixiv（${a.name}）` }));
     else out.push(s);
   });
   return out;
@@ -39,7 +36,9 @@ const srcAccount = key => { const i = String(key).indexOf(':'); return i < 0 ? '
 const isFanboxSrc = (key) => srcKind(key) === 'fanbox' || srcKind(key) === 'fanboxcc';
 // 来源不在下拉里了（退出了那个账号 / 地址栏里的旧来源）：退回同类第一项，FANBOX 官方站退回 pawchive
 function fallbackSource(key) {
-  const kind = { fanboxcc: 'fanbox', pixivfav: 'pixiv' }[srcKind(key)] || srcKind(key);
+  // pixivfav 是旧版单独的「收藏」来源（已并入 pixiv），旧地址落到同账号的 pixiv 项
+  if (srcKind(key) === 'pixivfav') key = 'pixiv:' + srcAccount(key);
+  const kind = srcKind(key) === 'fanboxcc' ? 'fanbox' : srcKind(key);
   const hit = searchSources().find(s => s.key === key) || searchSources().find(s => srcKind(s.key) === kind);
   return hit ? hit.key : 'dlsite';
 }
@@ -118,8 +117,8 @@ function applySearchSource() {
   const dl = searchSrc === 'dlsite', fbOn = isFanboxSrc(searchSrc), ehOn = searchSrc === 'ehentai';
   // FANBOX 各来源共用一套面板：换了站点/账号就清空，免得 pawchive 的结果留在官方站来源下（反之亦然）
   if (fbOn) fbSetSite(srcKind(searchSrc) === 'fanboxcc' ? 'cc:' + srcAccount(searchSrc) : '');
-  const pxOn = srcKind(searchSrc) === 'pixiv' || srcKind(searchSrc) === 'pixivfav';
-  if (pxOn) pxSetAccount(srcAccount(searchSrc), srcKind(searchSrc) === 'pixivfav');
+  const pxOn = srcKind(searchSrc) === 'pixiv';
+  if (pxOn) pxSetAccount(srcAccount(searchSrc));
   // 四套结果面板互斥显示
   const res = $('searchResult'); if (res) res.style.display = dl ? '' : 'none';
   const fb = $('fbResult'); if (fb) fb.style.display = fbOn ? '' : 'none';
@@ -145,7 +144,7 @@ function runSearchAny() {
   syncSearchHash();   // 把来源与查询词写入地址栏（只 replace 不累积历史）
   if (isFanboxSrc(searchSrc)) return fbRunSearch();
   if (searchSrc === 'ehentai') return ehRunSearch();
-  if (srcKind(searchSrc) === 'pixiv' || srcKind(searchSrc) === 'pixivfav') return pxRunSearch();
+  if (srcKind(searchSrc) === 'pixiv') return pxRunSearch();
   return runSearch();
 }
 function showMakerPane() { $('makerPane').style.display = ''; $('workPane').style.display = 'none'; const b = $('backListBtn'); if (b) b.style.display = 'none'; const a = $('autoAllBtn'); if (a) a.style.display = makerState ? '' : 'none'; }

@@ -667,22 +667,29 @@ public static class DownloadEngine
         }
     }
 
-    /// <summary>从队列原子地领取一条待下载任务并立即标记为下载中；无任务返回 null。</summary>
-    private static (string Key, string WorkId, string Url, string Source, string SubPath, string Account)? ClaimNext()
+    /// <summary>从队列原子地领取一条属于该车道的待下载任务并立即标记为下载中；无任务返回 null。</summary>
+    private static (string Key, string WorkId, string Url, string Source, string SubPath, string Account)? ClaimNext(
+        string lane)
     {
         lock (ClaimLock)
         {
+            // fanbox 来源的三条车道（pawchive / 官方站 / 谷歌网盘）SQL 只能筛到来源，余下按 url 在这里细分；
+            // 其它车道一个来源就是一条车道，取第一行即可
+            var split = lane is DownloadLanes.Pawchive or DownloadLanes.Fanbox or DownloadLanes.Drive;
             var rows = Db.Select(
-                "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\", \"account\" FROM \"download_list\" WHERE \"status\" = '0' LIMIT 1");
-            if (rows is not { Count: > 0 })
+                "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\", \"account\" FROM \"download_list\" " +
+                $"WHERE \"status\" = '0' AND {DownloadLanes.SourceFilter(lane)} ORDER BY rowid" + (split ? "" : " LIMIT 1"));
+            var row = rows?.FirstOrDefault(r =>
+                !split || DownloadLanes.LaneOf(r[3] as string, r[2] as string ?? "") == lane);
+            if (row is null)
                 return null;
-            var key = rows[0][0] as string ?? "";
+            var key = row[0] as string ?? "";
             // 立即占位，其它线程不会重复领取；同时清除上次解析失败原因
             Db.Execute(
                 "UPDATE \"download_list\" SET \"status\" = '3', \"long\" = '0', \"error\" = NULL WHERE \"UUID\" = @k",
                 ("@k", key));
-            return (key, rows[0][1] as string ?? "", rows[0][2] as string ?? "",
-                rows[0][3] as string ?? "", rows[0][4] as string ?? "", rows[0][5] as string ?? "");
+            return (key, row[1] as string ?? "", row[2] as string ?? "",
+                row[3] as string ?? "", row[4] as string ?? "", row[5] as string ?? "");
         }
     }
 
@@ -959,8 +966,11 @@ public static class DownloadEngine
         SetStatus(key, "0");
     }
 
-    /// <summary>单个下载线程：不断领取队列任务，通过 debrid-link 中转下载（支持断点续传）。</summary>
-    private static void WorkerLoop()
+    /// <summary>
+    /// 单个下载线程：不断领取本车道（一个下载源）的队列任务并下载（支持断点续传）。
+    /// 只领本车道的任务，所以本站的冷却/限流等待不会占住其它站的线程。
+    /// </summary>
+    private static void WorkerLoop(string lane)
     {
         using var client = Http.CreateClient(Timeout.InfiniteTimeSpan);
         while (true)
@@ -972,7 +982,7 @@ public static class DownloadEngine
                 if (_stopRequested)
                     return;
 
-                var claimed = ClaimNext();
+                var claimed = ClaimNext(lane);
                 if (claimed is null)
                 {
                     // 队列空，等待新任务；期间收到暂停信号立即退出
@@ -1242,13 +1252,16 @@ public static class DownloadEngine
         // 流量重置监控线程：网盘流量用尽暂停后，到重置时间自动把暂停分卷重新排队续传
         new Thread(TrafficResetLoop) { IsBackground = true, Name = "traffic-reset-monitor" }.Start();
 
+        // 每个下载源一组线程，各领各的队列：不同站点之间并行下载，互不排队。
+        // 线程数设置是「每个下载源」的并发数；总带宽仍受全局限速约束
         var workers = new List<Thread>();
-        for (var i = 0; i < AppConfig.DownloadProcesses; i++)
-        {
-            var thread = new Thread(WorkerLoop) { IsBackground = true, Name = $"download-{i}" };
-            thread.Start();
-            workers.Add(thread);
-        }
+        foreach (var (lane, _) in DownloadLanes.All)
+            for (var i = 0; i < AppConfig.DownloadProcesses; i++)
+            {
+                var thread = new Thread(() => WorkerLoop(lane)) { IsBackground = true, Name = $"download-{lane}-{i}" };
+                thread.Start();
+                workers.Add(thread);
+            }
         foreach (var thread in workers)
             thread.Join();
     }

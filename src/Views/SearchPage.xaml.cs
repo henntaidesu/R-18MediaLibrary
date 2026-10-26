@@ -333,10 +333,6 @@ public partial class SearchPage : UserControl
     private const string SourceFanboxCc = "fanboxcc";
     private const string SourceEhentai = "ehentai";
     private const string SourcePixiv = "pixiv";
-    // pixiv 收藏（每个 pixiv 账号一项「pixiv 收藏（账号名）」）：结果区、按钮与 pixiv 完全共用，
-    // 故选中后 _source 仍记作 SourcePixiv，只另记 _pixivFav
-    private const string SourcePixivFav = "pixivfav";
-    private bool _pixivFav;
     // 两个 FANBOX 来源共用同一个结果区（FanboxView），只是取数的站点不同
     private bool IsFanbox => _source is SourceFanbox or SourceFanboxCc;
     private bool _buildingSources;   // 重建来源下拉期间不把选中项变化当成用户切来源
@@ -405,6 +401,12 @@ public partial class SearchPage : UserControl
         };
 
         // pixiv 结果区的计数与「下载 / 返回」按钮同样由本页的搜索栏统一呈现
+        // 详情页点作者 / 标签：填进搜索框并查询（对齐 Web pxGotoQuery）
+        PixivView.QueryRequested += async text =>
+        {
+            InputBox.Text = text;
+            await RunSearchAnyAsync();
+        };
         PixivView.StatusChanged += text =>
         {
             if (_source != SourcePixiv)
@@ -438,22 +440,15 @@ public partial class SearchPage : UserControl
         _buildingSources = true;
         SourceBox.Items.Clear();
         SourceBox.Items.Add(new ComboBoxItem { Content = "DLsite", Tag = SourceDlsite });
-        SourceBox.Items.Add(new ComboBoxItem { Content = "FANBOX", Tag = SourceFanbox });
+        SourceBox.Items.Add(new ComboBoxItem { Content = "Pawchive", Tag = SourceFanbox });
         foreach (var a in FanboxSource.OfficialAccounts)
             SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.OfficialLabel(a), Tag = $"{SourceFanboxCc}:{a.UserId}" });
         SourceBox.Items.Add(new ComboBoxItem { Content = "E-Hentai", Tag = SourceEhentai });
         var pixivAccounts = SiteAccounts.List(AccountService.Pixiv);
         if (pixivAccounts.Count == 0)
-            SourceBox.Items.Add(new ComboBoxItem { Content = "pixiv", Tag = SourcePixiv });
+            SourceBox.Items.Add(new ComboBoxItem { Content = "Pixiv", Tag = SourcePixiv });
         foreach (var a in pixivAccounts)
-            SourceBox.Items.Add(new ComboBoxItem { Content = $"pixiv（{a.DisplayName}）", Tag = $"{SourcePixiv}:{a.UserId}" });
-        // 收藏要登录：每个 pixiv 账号一项（对齐 Web searchSources 的 pixivfav）
-        foreach (var a in pixivAccounts)
-            SourceBox.Items.Add(new ComboBoxItem
-            {
-                Content = I18n.Format(I18n.Tr("pixiv 收藏（{name}）"), ("name", a.DisplayName)),
-                Tag = $"{SourcePixivFav}:{a.UserId}",
-            });
+            SourceBox.Items.Add(new ComboBoxItem { Content = $"Pixiv（{a.DisplayName}）", Tag = $"{SourcePixiv}:{a.UserId}" });
         _buildingSources = false;
         if (SelectSource(_sourceTag))
             return;
@@ -490,13 +485,12 @@ public partial class SearchPage : UserControl
         if (key == _sourceTag)
             return;
         _sourceTag = key;
-        _pixivFav = KindOf(key) == SourcePixivFav;
-        _source = _pixivFav ? SourcePixiv : KindOf(key);
+        _source = KindOf(key);
         // FANBOX 各来源共用一个结果区：换了站点/账号就清空（作家键两边不通用，不同账号能看的投稿也不同）
         if (IsFanbox)
             FanboxView.SetOfficial(_source == SourceFanboxCc ? AccountOf(key) : null);
         if (_source == SourcePixiv)
-            PixivView.SetAccount(AccountOf(key), _pixivFav);
+            PixivView.SetAccount(AccountOf(key));
         ApplySource();
     }
 
@@ -584,12 +578,12 @@ public partial class SearchPage : UserControl
     }
 
     /// <summary>各来源的输入框占位提示（对齐 Web 的 SEARCH_SOURCES.placeholder）。</summary>
-    private string SourceHint(string source) => source switch
+    private static string SourceHint(string source) => source switch
     {
         SourceFanbox => FanboxSearchView.InputHint,
         SourceFanboxCc => FanboxSearchView.OfficialInputHint,
         SourceEhentai => EhentaiSearchView.InputHint,
-        SourcePixiv => _pixivFav ? PixivSearchView.FavInputHint : PixivSearchView.InputHint,
+        SourcePixiv => PixivSearchView.InputHint,
         _ => I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接"),
     };
 

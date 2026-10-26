@@ -48,7 +48,7 @@ public static class LoginBrowser
     {
         [AccountService.Fanbox] = new("FANBOX", "https://www.fanbox.cc/login?return_to=https%3A%2F%2Fwww.fanbox.cc%2F",
             "https://www.fanbox.cc/", "https://www.fanbox.cc/", "FANBOXSESSID"),
-        [AccountService.Pixiv] = new("pixiv", "https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2F",
+        [AccountService.Pixiv] = new("Pixiv", "https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2F",
             "https://www.pixiv.net/", "https://www.pixiv.net/", "PHPSESSID"),
         [AccountService.Ehentai] = new("E-Hentai", "https://forums.e-hentai.org/index.php?act=Login&CODE=00",
             "https://forums.e-hentai.org/", "https://e-hentai.org/", ""),

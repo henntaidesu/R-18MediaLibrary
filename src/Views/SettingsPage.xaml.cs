@@ -172,13 +172,13 @@ public partial class SettingsPage : UserControl
         EhTestButton.Content = I18n.Tr("连接测试");
         EhHint.Text = I18n.Tr("登录（访问里站、下载原图）请到左侧「账号访问」页。");
         BuildEhOriginalCombo();
-        PixivGroup.Header = HelpPanel.Header("pixiv", "10.2");
+        PixivGroup.Header = HelpPanel.Header("Pixiv", "10.2");
         PxOriginalLabel.Text = I18n.Tr("图片画质");
         PxModeLabel.Text = I18n.Tr("搜索分级");
         PxMatchLabel.Text = I18n.Tr("匹配方式");
         PxTestButton.Content = I18n.Tr("连接测试");
         PxHint.Text = I18n.Tr(
-            "未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 pixiv。");
+            "未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 Pixiv。");
         BuildPixivCombos();
         SystemGroup.Header = HelpPanel.Header(I18n.Tr("系统"), "14.1");
         MediaLibGroup.Header = HelpPanel.Header(I18n.Tr("媒体库"), "3");

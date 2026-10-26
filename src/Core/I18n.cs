@@ -358,6 +358,10 @@ public static class I18n
         ["等待下载"] = new() { ["zh_TW"] = "等待下載", ["ja"] = "待機中", ["en"] = "Waiting" },
         ["下载中"] = new() { ["zh_TW"] = "下載中", ["ja"] = "ダウンロード中", ["en"] = "Downloading" },
         ["已完成"] = new() { ["zh_TW"] = "已完成", ["ja"] = "完了", ["en"] = "Completed" },
+        // 下载列表的下载源分区标题（DownloadSectionItem）
+        ["等待"] = new() { ["zh_TW"] = "等待", ["ja"] = "待機", ["en"] = "Waiting" },
+        ["失败"] = new() { ["zh_TW"] = "失敗", ["ja"] = "失敗", ["en"] = "Failed" },
+        ["谷歌网盘"] = new() { ["zh_TW"] = "Google 雲端硬碟", ["ja"] = "Google ドライブ", ["en"] = "Google Drive" },
         ["待解压"] = new() { ["zh_TW"] = "待解壓", ["ja"] = "解凍待ち", ["en"] = "Pending extract" },
         ["等待移动"] = new() { ["zh_TW"] = "等待移動", ["ja"] = "移動待ち", ["en"] = "Pending move" },
         ["解压中 {pct}%"] = new() { ["zh_TW"] = "解壓中 {pct}%", ["ja"] = "解凍中 {pct}%", ["en"] = "Extracting {pct}%" },

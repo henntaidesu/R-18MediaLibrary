@@ -1,6 +1,8 @@
 // download.js —— 下载管理分区：下载列表 + 已下载表格（搜索已拆为独立的「DLsite 搜索」分区，见 search.js）。
 // ========== 下载管理（下载列表 / 已下载 两视图就地切换）==========
 let dlExpanded = new Set();
+// 展开着的下载源分区（键 = 分区 key，如 pixiv / ehentai）；默认全部折叠，标题行上看汇总
+let dlSectionOpen = new Set();
 // 下载目录树里被手动折叠的文件夹（键 = 番号 + '\n' + 文件夹相对路径）；默认展开，对齐 WPF
 let dlFolderCollapsed = new Set();
 let dlView = 'download';   // download | downloaded：两视图就地切换，不算一级导航
@@ -60,38 +62,63 @@ async function loadDownloads() {
   if (sel && !sel.isCollapsed && sel.anchorNode && list.contains(sel.anchorNode)) return;
   if (!d.groups.length) { list.innerHTML = '<div class="empty">下载列表为空</div>'; return; }
   list.innerHTML = '';
-  d.groups.forEach(g => {
-    const c = el('div', 'dl');
-    const row = el('div', 'drow');
-    const open = dlExpanded.has(g.id);
-    const tog = el('span', 'dtoggle', open ? '▾' : '▸');
-    // 显示作品名（过长截断，标题悬浮显示全名）；无名称时回退到番号
-    const rj = el('div', 'rj', g.name || g.id || '(未知)'); rj.title = g.name ? `${g.name}（${g.id}）` : (g.id || '');
-    const toggle = () => { if (dlExpanded.has(g.id)) dlExpanded.delete(g.id); else dlExpanded.add(g.id); loadDownloads(); };
-    tog.onclick = toggle; rj.onclick = toggle;
-    // 进度条恒为蓝色（对齐 WPF）；状态用文字颜色区分，不给进度条上色
-    const prog = el('div', 'dprog'); const pi = el('i'); pi.style.width = g.pct + '%';
-    prog.appendChild(pi); prog.appendChild(el('span', 'dpct', g.pct + '%'));
-    const sp = el('div', 'dsp', g.speed || '');
-    const stt = el('div', 'dst', g.statusText); stt.style.color = g.color; stt.title = g.statusText;
-    row.append(tog, rj, prog, stt, sp);
-    const act = el('div', 'dacts');
-    if (g.canOpen) { const b = el('button', 'mini', '跳转作品'); b.onclick = () => gotoWork(g.id); act.appendChild(b); }
-    if (g.canResume) { const b = el('button', 'mini', '下载'); b.onclick = async () => { await apiPost('/api/resumework', { id: g.id }); loadDownloads(); }; act.appendChild(b); }
-    if (g.canPause) { const b = el('button', 'mini', '停止'); b.onclick = async () => { await apiPost('/api/pausework', { id: g.id }); loadDownloads(); }; act.appendChild(b); }
-    if (g.canReparse) {
-      const rp = el('button', 'mini', '重新解析'); rp.onclick = async () => { await apiPost('/api/reparse', { id: g.id }); loadDownloads(); };
-      const rs = el('button', 'mini', '重新搜索'); rs.onclick = async () => { if (await uiConfirm(`将删除 ${g.id} 已下载的分卷与文件夹，并重新搜索。是否继续？`, { danger: true })) { await apiPost('/api/research', { id: g.id }); gotoSearch(g.id); } };
-      act.append(rp, rs);
+  // 一级：按下载源分区（各源并行下载，见 DownloadLanes），默认折叠，标题行显示该源的下载汇总；
+  // 二级：分区内照旧是作品卡 → 目录树
+  (d.sections || []).forEach(s => {
+    const open = dlSectionOpen.has(s.key);
+    const sec = el('div', 'dlsec');
+    const head = el('div', 'dlshead');
+    head.append(el('span', 'dtoggle', open ? '▾' : '▸'), el('span', 'dlsname', s.label));
+    const sum = el('span', 'dlssum');
+    const part = (n, text, cls) => { if (n) sum.appendChild(el('span', cls, `${text} ${n}`)); };
+    part(s.downloading, '下载中', 'on');
+    part(s.waiting, '等待', 'wait');
+    part(s.failed, '失败', 'bad');
+    sum.appendChild(el('span', null, `已完成 ${s.done}/${s.files}`));
+    sum.appendChild(el('span', null, `${s.works} 个作品`));
+    head.append(sum, el('span', 'dsp', s.speed || ''));
+    head.onclick = () => { if (dlSectionOpen.has(s.key)) dlSectionOpen.delete(s.key); else dlSectionOpen.add(s.key); loadDownloads(); };
+    sec.appendChild(head);
+    if (open) {
+      const body = el('div', 'dlsbody');
+      d.groups.filter(g => g.section === s.key).forEach(g => body.appendChild(renderDlGroup(g)));
+      sec.appendChild(body);
     }
-    if (g.canDelete) { const b = el('button', 'mini danger', '删除'); b.onclick = async () => { if (await uiConfirm(`将从下载列表删除 ${g.id}，并删除其作品记录与下载缓存。是否继续？`, { danger: true })) { await apiPost('/api/deletework', { id: g.id }); loadDownloads(); } }; act.appendChild(b); }
-    if (act.children.length) row.appendChild(act);
-    c.appendChild(row);
-    const ch = el('div', 'children' + (open ? ' open' : ''));
-    if (g.children && g.children.length) { const tree = el('div', 'dtree'); renderDlTree(g.id, buildDlTree(g.children), tree); ch.appendChild(tree); }
-    c.appendChild(ch);
-    list.appendChild(c);
+    list.appendChild(sec);
   });
+}
+// 下载列表里的一个作品（父行 + 可展开的目录树）
+function renderDlGroup(g) {
+  const c = el('div', 'dl');
+  const row = el('div', 'drow');
+  const open = dlExpanded.has(g.id);
+  const tog = el('span', 'dtoggle', open ? '▾' : '▸');
+  // 显示作品名（过长截断，标题悬浮显示全名）；无名称时回退到番号
+  const rj = el('div', 'rj', g.name || g.id || '(未知)'); rj.title = g.name ? `${g.name}（${g.id}）` : (g.id || '');
+  const toggle = () => { if (dlExpanded.has(g.id)) dlExpanded.delete(g.id); else dlExpanded.add(g.id); loadDownloads(); };
+  tog.onclick = toggle; rj.onclick = toggle;
+  // 进度条恒为蓝色（对齐 WPF）；状态用文字颜色区分，不给进度条上色
+  const prog = el('div', 'dprog'); const pi = el('i'); pi.style.width = g.pct + '%';
+  prog.appendChild(pi); prog.appendChild(el('span', 'dpct', g.pct + '%'));
+  const sp = el('div', 'dsp', g.speed || '');
+  const stt = el('div', 'dst', g.statusText); stt.style.color = g.color; stt.title = g.statusText;
+  row.append(tog, rj, prog, stt, sp);
+  const act = el('div', 'dacts');
+  if (g.canOpen) { const b = el('button', 'mini', '跳转作品'); b.onclick = () => gotoWork(g.id); act.appendChild(b); }
+  if (g.canResume) { const b = el('button', 'mini', '下载'); b.onclick = async () => { await apiPost('/api/resumework', { id: g.id }); loadDownloads(); }; act.appendChild(b); }
+  if (g.canPause) { const b = el('button', 'mini', '停止'); b.onclick = async () => { await apiPost('/api/pausework', { id: g.id }); loadDownloads(); }; act.appendChild(b); }
+  if (g.canReparse) {
+    const rp = el('button', 'mini', '重新解析'); rp.onclick = async () => { await apiPost('/api/reparse', { id: g.id }); loadDownloads(); };
+    const rs = el('button', 'mini', '重新搜索'); rs.onclick = async () => { if (await uiConfirm(`将删除 ${g.id} 已下载的分卷与文件夹，并重新搜索。是否继续？`, { danger: true })) { await apiPost('/api/research', { id: g.id }); gotoSearch(g.id); } };
+    act.append(rp, rs);
+  }
+  if (g.canDelete) { const b = el('button', 'mini danger', '删除'); b.onclick = async () => { if (await uiConfirm(`将从下载列表删除 ${g.id}，并删除其作品记录与下载缓存。是否继续？`, { danger: true })) { await apiPost('/api/deletework', { id: g.id }); loadDownloads(); } }; act.appendChild(b); }
+  if (act.children.length) row.appendChild(act);
+  c.appendChild(row);
+  const ch = el('div', 'children' + (open ? ' open' : ''));
+  if (g.children && g.children.length) { const tree = el('div', 'dtree'); renderDlTree(g.id, buildDlTree(g.children), tree); ch.appendChild(tree); }
+  c.appendChild(ch);
+  return c;
 }
 // 把扁平分卷列表按各文件的 relPath（含子目录）重建为文件夹/文件目录树（镜像 WPF RebuildTree）
 function buildDlTree(children) {

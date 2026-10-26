@@ -15,8 +15,9 @@ let pxGridScroll = 0;      // 进详情前网格的滚动位置，返回时恢�
 let pxAnonymous = false;   // 服务端报告的登录态：未登录时站点会把 R-18 滤掉，要提示用户
 let pxDetail = null;       // 当前详情的作品 { id, state }，工具栏「下载」据此定文案
 let pxPageIo = null;       // 详情页尾图流的懒加载观察器
-let pxAccount = '';        // 用哪个 pixiv 账号（用户号；'' = 匿名），来源下拉「pixiv（账号名）」经 pxSetAccount 设定
-let pxFav = false;         // 来源是「pixiv 收藏（账号名）」：查询列出该账号的收藏，输入框是收藏标签筛选（可留空）
+let pxAccount = '';        // 用哪个 Pixiv 账号（用户号；'' = 匿名），来源下拉「Pixiv（账号名）」经 pxSetAccount 设定
+let pxFav = false;         // 本轮是收藏列表：输入框留空直接查询 = 列出该账号的收藏（翻页沿用）
+let pxHeading = '';        // 服务端给的结果标题（「我的收藏（共 N 件）」「作者 xxx 的作品」），写在计数行前面
 
 // 站上的图统一走服务端代理：i.pximg.net 带防盗链，浏览器直接引用一律 403
 const pxImg = (url) => '/api/px/image?url=' + enc(url);
@@ -42,10 +43,10 @@ function pxResetState() {
   pxGen++; pxDetailGen++;
 }
 
-// 切账号 / 搜索与收藏互切（search.js 切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即清空面板
-function pxSetAccount(uid, fav) {
-  if (uid === pxAccount && !!fav === pxFav) return;
-  pxAccount = uid; pxFav = !!fav;
+// 切账号（search.js 切来源时调用）：不同账号看到的结果不同（R-18 设置、收藏），换了即清空面板
+function pxSetAccount(uid) {
+  if (uid === pxAccount) return;
+  pxAccount = uid;
   pxResetState();
   ['pxListPane', 'pxDetailPane'].forEach(id => { const p = $(id); if (p) p.innerHTML = ''; });
   if ($('pxListPane')) pxShowListPane();
@@ -102,15 +103,23 @@ function pxUpdateCount() {
   if (!pxItems.length) { $('count').textContent = ''; return; }
   const more = pxPaging && pxPaging.hasMore ? '（下拉加载更多）' : '';
   const anon = pxAnonymous ? '　未登录：结果中不含 R-18' : '';
-  $('count').textContent = `已加载 ${pxItems.length} 件${pxFav ? '收藏' : '作品'}${more}${anon}`;
+  $('count').textContent = `${pxHeading ? pxHeading + '　' : ''}已加载 ${pxItems.length} 件${more}${anon}`;
 }
 
 // ---------- 搜索 ----------
 
+// 详情页里点作者 / 标签：填进搜索框，按普通查询走一遍（地址栏随之更新）
+function pxGotoQuery(text) {
+  const inp = $('sId'); if (!inp) return;
+  inp.value = text;
+  runSearchAny();
+}
+
 // 由 search.js 的「查询」按钮 / 回车触发
 async function pxRunSearch() {
   const raw = ($('sId') && $('sId').value.trim()) || '';
-  if (!raw && !pxFav) return;   // 收藏可以不填：留空 = 全部收藏
+  pxFav = !raw;   // 留空直接查询 = 我的收藏（匿名时服务端回「要先登录」）
+  pxHeading = '';
   const gen = ++pxGen;
   pxKeyword = raw;
   pxItems = []; pxSel = new Set();
@@ -126,7 +135,8 @@ async function pxRunSearch() {
   if (gen !== pxGen || !first) return;
   box.innerHTML = '';
   if (!first.length) {
-    box.appendChild(el('div', 'empty', pxFav ? (raw ? '没有带这个标签的收藏' : '这个账号还没有收藏作品')
+    box.appendChild(el('div', 'empty', pxFav ? '这个账号还没有收藏作品'
+      : /pixiv\.net\/(?:[a-z]{2}\/)?users\//i.test(raw) ? '这个作者没有可见的作品'
       : pxAnonymous ? '没有匹配的作品（未登录，R-18 作品不会出现在结果里）'
       : '没有匹配的作品'));
     return;
@@ -152,7 +162,6 @@ async function pxFetch(gen, page) {
   q.set('q', pxKeyword);
   q.set('p', page);
   q.set('account', pxAccount);
-  if (pxFav) q.set('fav', '1');
   let d;
   try { d = await api('/api/px/search?' + q); } catch (e) { return null; }
   if (gen !== pxGen) return null;
@@ -162,6 +171,7 @@ async function pxFetch(gen, page) {
     return null;
   }
   pxAnonymous = !!d.anonymous;
+  pxHeading = d.heading || '';
   const items = d.items || [];
   if (pxPaging) { pxPaging.page = d.page || page; pxPaging.hasMore = !!d.hasMore; }
   pxItems = pxItems.concat(items);
@@ -351,7 +361,13 @@ function pxRenderArtwork(box, a, images) {
     if (typeof node === 'string') v.textContent = node; else v.appendChild(node);
     fields.appendChild(v);
   };
-  addF('作者', a.maker || '');
+  // 作者 / 标签可点：把作者主页链接或标签填进搜索框再查一次（服务端认得作者链接，列出该作者的作品）
+  if (a.userId) {
+    const author = el('a', null, a.maker || a.userId);
+    author.href = '#'; author.title = '查看该作者的作品';
+    author.onclick = e => { e.preventDefault(); pxGotoQuery('https://www.pixiv.net/users/' + a.userId); };
+    addF('作者', author);
+  } else addF('作者', a.maker || '');
   addF('投稿', a.posted || '');
   addF('形式', pxTagText(a));
   addF('张数', a.pages ? `${a.pages} 张` : '');
@@ -359,11 +375,16 @@ function pxRenderArtwork(box, a, images) {
   if (a.bookmarks) addF('收藏', String(a.bookmarks));
   if (a.tags && a.tags.length) {
     const wrap = el('span');
-    a.tags.forEach(t => wrap.appendChild(el('a', 'tag', t)));
+    a.tags.forEach(t => {
+      const tag = el('a', 'tag', t);
+      tag.href = '#'; tag.title = '搜索这个标签';
+      tag.onclick = e => { e.preventDefault(); pxGotoQuery(t); };
+      wrap.appendChild(tag);
+    });
     addF('标签', wrap);
   }
   addF('状态', done ? '已下载' : (a.state || '未下载'));
-  const site = el('a', null, '在 pixiv 打开');
+  const site = el('a', null, '在 Pixiv 打开');
   site.href = 'https://www.pixiv.net/artworks/' + a.id;
   site.target = '_blank'; site.rel = 'noreferrer';
   addF('原址', site);

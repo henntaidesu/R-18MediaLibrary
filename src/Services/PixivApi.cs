@@ -69,6 +69,8 @@ public class PixivSearchResult
     public int LastPage { get; init; }
     public bool HasMore => Items.Count > 0 && Page < LastPage;
     public string? Error { get; init; }
+    /// <summary>结果的标题（计数行前缀），如「作者 xxx 的作品」「我的收藏」；普通搜索为空。</summary>
+    public string Heading { get; init; } = "";
 }
 
 /// <summary>作品内的一张图。站点同时给出原图与几档缩放图，按用途各取所需。</summary>
@@ -239,7 +241,7 @@ public static class PixivApi
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {
             Logger.Error($"pixiv 网络请求失败: {e.Message} ({url})");
-            return (null, "连不上 pixiv：检查网络与代理设置");
+            return (null, "连不上 Pixiv：检查网络与代理设置");
         }
     }
 
@@ -256,7 +258,7 @@ public static class PixivApi
         // 该接口只对已登录会话返回数据，匿名一律 error —— 拿它当登录态探针
         var (body, _) = await GetBodyAsync($"{Origin}/ajax/user/extra?lang=zh");
         return body is null
-            ? (false, "已连上 pixiv，但登录已失效（请在「账号访问」重新登录）")
+            ? (false, "已连上 Pixiv，但登录已失效（请在「账号访问」重新登录）")
             : (true, "连接正常（已登录）");
     }
 
@@ -295,6 +297,102 @@ public static class PixivApi
 
     private static readonly Regex LegacyLinkPattern =
         new(@"illust_id=(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex UserLinkPattern =
+        new(@"pixiv\.net/(?:[a-z]{2}/)?(?:users/|member\.php\?id=)(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>作者主页链接（<c>pixiv.net/users/123</c>）→ 用户号；不是返回 null。详情页点作者即把这个链接填进搜索框。</summary>
+    public static string? ParseUserInput(string raw) =>
+        UserLinkPattern.Match(raw ?? "") is { Success: true } m ? m.Groups[1].Value : null;
+
+    /// <summary>作者主页链接（填进搜索框用）。</summary>
+    public static string UserLink(string userId) => $"{Origin}/users/{userId}";
+
+    /// <summary>
+    /// 作品搜索「Pixiv」来源的统一入口（Web 路由与桌面视图共用，翻页也走它）：
+    /// 输入为空 = 当前账号的收藏，作者主页链接 = 该作者的全部作品，其余按关键字/标签搜索。
+    /// 作品链接 / 作品号由调用方在第一页先行处理（直接出那一件）。
+    /// </summary>
+    public static Task<PixivSearchResult> QueryAsync(string input, int page)
+    {
+        input = (input ?? "").Trim();
+        if (input.Length == 0)
+            return GetBookmarksAsync("", page);
+        if (ParseUserInput(input) is { } userId)
+            return GetUserWorksAsync(userId, page);
+        return SearchAsync(input, page);
+    }
+
+    // ---------- 作者的作品 ----------
+
+    /// <summary>作者作品列表每页件数（与收藏一致）。</summary>
+    public const int UserWorksPageSize = 48;
+
+    // 用户号 → (全部作品号（新的在前）, 取到的时间)。站点先给全部作品号、再按号取详情，翻页期间沿用同一份
+    private static readonly Dictionary<string, (List<string> Ids, DateTime At)> UserWorkIds = [];
+
+    /// <summary>
+    /// 某作者的全部作品（插画 + 漫画 + 动图），新的在前。站点分两步：
+    /// <c>/ajax/user/{id}/profile/all</c> 给出全部作品号（illusts 与 manga 两个以作品号为键的对象），
+    /// 再用 <c>/ajax/user/{id}/profile/illusts?ids[]=…</c> 按号取一页的卡片信息。
+    /// 作品号在第一页时重取、之后翻页沿用（10 分钟内），免得每翻一页都把几百个作品号再拉一遍。
+    /// 匿名时站点会把 R-18 作品从列表里拿掉，与搜索同理。
+    /// </summary>
+    public static async Task<PixivSearchResult> GetUserWorksAsync(string userId, int page = 1)
+    {
+        if (userId.Length == 0 || !userId.All(char.IsAsciiDigit))
+            return new PixivSearchResult { Error = "作者链接不对" };
+        page = Math.Max(1, page);
+
+        List<string>? ids = null;
+        lock (UserWorkIds)
+            if (page > 1 && UserWorkIds.TryGetValue(userId, out var hit) && DateTime.Now - hit.At < TimeSpan.FromMinutes(10))
+                ids = hit.Ids;
+        if (ids == null)
+        {
+            var (all, error) = await GetBodyAsync($"{Origin}/ajax/user/{userId}/profile/all?lang=zh");
+            if (all is not { } b)
+                return new PixivSearchResult { Error = error ?? "获取作者作品失败" };
+            ids = [];
+            foreach (var key in new[] { "illusts", "manga" })
+                if (b.TryGetProperty(key, out var set) && set.ValueKind == JsonValueKind.Object)
+                    foreach (var p in set.EnumerateObject())
+                        if (p.Name.All(char.IsAsciiDigit))
+                            ids.Add(p.Name);
+            ids = ids.Distinct().OrderByDescending(x => long.Parse(x)).ToList();
+            lock (UserWorkIds)
+                UserWorkIds[userId] = (ids, DateTime.Now);
+        }
+
+        var slice = ids.Skip((page - 1) * UserWorksPageSize).Take(UserWorksPageSize).ToList();
+        var items = new List<PixivArtwork>();
+        if (slice.Count > 0)
+        {
+            var query = string.Join("&", slice.Select(id => "ids%5B%5D=" + id));
+            var (body, error) = await GetBodyAsync(
+                $"{Origin}/ajax/user/{userId}/profile/illusts?{query}&work_category=illustManga&is_first_page=0&lang=zh");
+            if (body is not { } wb)
+                return new PixivSearchResult { Error = error ?? "获取作者作品失败" };
+            if (wb.TryGetProperty("works", out var works) && works.ValueKind == JsonValueKind.Object)
+            {
+                var byId = new Dictionary<string, PixivArtwork>();
+                foreach (var w in works.EnumerateObject())
+                    if (ParseListItem(w.Value) is { } artwork)
+                        byId[artwork.Id] = artwork;
+                // 按作品号顺序（新的在前）排，站点返回的对象键序不保证
+                items.AddRange(slice.Where(byId.ContainsKey).Select(id => byId[id]));
+            }
+        }
+        var name = items.FirstOrDefault(a => a.UserName.Length > 0)?.UserName ?? await GetUserNameAsync(userId) ?? userId;
+        return new PixivSearchResult
+        {
+            Items = items,
+            Total = ids.Count,
+            Page = page,
+            LastPage = Math.Max(1, (ids.Count + UserWorksPageSize - 1) / UserWorksPageSize),
+            Heading = $"作者 {name} 的作品（共 {ids.Count} 件）",
+        };
+    }
 
     /// <summary>
     /// 把用户输入认成「作品链接 / 作品号」还是「搜索关键字」：
@@ -362,7 +460,7 @@ public static class PixivApi
     public const int BookmarkPageSize = 48;
 
     /// <summary>
-    /// 当前账号（<see cref="SiteAccounts.Active"/>）的收藏列表，作品搜索里的「pixiv 收藏（账号名）」来源用它。
+    /// 当前账号（<see cref="SiteAccounts.Active"/>）的收藏列表：作品搜索「Pixiv（账号名）」来源下输入框留空直接查询即列出它。
     /// <paramref name="tag"/> 为收藏标签筛选，空 = 全部。
     ///
     /// 站点把收藏分成公开（rest=show）与非公开（rest=hide）两份，各自分页；这里把两份接成一条：
@@ -373,7 +471,7 @@ public static class PixivApi
     {
         var account = SiteAccounts.Active(AccountService.Pixiv);
         if (account == null)
-            return new PixivSearchResult { Error = "查看收藏要先在「账号访问」登录 pixiv 账号" };
+            return new PixivSearchResult { Error = "输入关键字搜索；留空查询的是我的收藏，要先在「账号访问」登录 Pixiv 账号" };
         page = Math.Max(1, page);
         var offset = (page - 1) * BookmarkPageSize;
 
@@ -395,6 +493,7 @@ public static class PixivApi
             Total = total,
             Page = page,
             LastPage = Math.Max(1, (total + BookmarkPageSize - 1) / BookmarkPageSize),
+            Heading = $"我的收藏（共 {total} 件）",
         };
     }
 

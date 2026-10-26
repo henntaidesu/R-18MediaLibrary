@@ -304,6 +304,19 @@
   /* usage-card 复用（保留细进度条样式） */
   .bar { height: 6px; background: var(--surface2); border-radius: 4px; overflow: hidden; margin-top: 8px; }
   .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s; }
+  /* 下载源分区（一级折叠）：标题行 = ▸ 源名 · 汇总（下载中/等待/失败/已完成/作品数）· 速度；默认折叠 */
+  .dlsec { margin-bottom: 10px; }
+  .dlshead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: pointer; user-select: none;
+             background: var(--surface2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+  .dlshead:hover { border-color: var(--accent-dim); }
+  .dlshead .dtoggle { width: 16px; text-align: center; color: var(--muted); flex: none; }
+  .dlshead .dlsname { font-weight: 700; flex: none; }
+  .dlshead .dlssum { display: flex; gap: 12px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 13px; }
+  .dlshead .dlssum .on { color: #60a5fa; font-weight: 600; }
+  .dlshead .dlssum .wait { color: #facc15; }
+  .dlshead .dlssum .bad { color: #f87171; }
+  .dlshead .dsp { color: var(--muted); font-size: 12.5px; flex: none; min-width: 62px; text-align: right; }
+  .dlsbody { margin: 8px 0 0 16px; }
   .children { margin-top: 8px; padding-left: 22px; display: none; }
   .children.open { display: block; }
   /* 下载目录树：文件夹节点（可折叠）+ 文件叶子（进度条/速度/状态/复制链接） */

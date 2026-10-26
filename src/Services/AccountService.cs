@@ -34,7 +34,7 @@ public static class AccountService
     public static string Title(string site) => site switch
     {
         Fanbox => "FANBOX",
-        Pixiv => "pixiv",
+        Pixiv => "Pixiv",
         Ehentai => "E-Hentai",
         _ => site,
     };

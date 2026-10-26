@@ -1968,9 +1968,10 @@ public static class WebServer
     private static void ApiDownloads(NetworkStream stream)
     {
         var rows = Db.Select(
-            "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\" FROM \"download_list\" ORDER BY rowid");
+            "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid");
         var order = new List<string>();
         var grouped = new Dictionary<string, List<(string Uuid, string Url, string Status, string Long, string? Error, string? SubPath)>>();
+        var sourceOf = new Dictionary<string, string?>();   // 作品 → 下载源（同一作品的文件来源一致，取首行）
         foreach (var row in rows ?? [])
         {
             var workId = row[1] as string ?? "";
@@ -1978,6 +1979,7 @@ public static class WebServer
             {
                 grouped[workId] = list = [];
                 order.Add(workId);
+                sourceOf[workId] = row[7] as string;
             }
             list.Add((row[0] as string ?? "", row[2] as string ?? "",
                 row[3] as string ?? "", row[4]?.ToString() ?? "", row[5] as string, row[6] as string));
@@ -2038,7 +2040,10 @@ public static class WebServer
             return new
             {
                 id = workId, name = nameMap.GetValueOrDefault(workId, ""),
+                // 一级折叠分区（按下载源，见 DownloadLanes.SectionOf）
+                section = DownloadLanes.SectionOf(sourceOf[workId], items.Select(it => it.Url)),
                 pct = (int)groupPct, statusText = aggText, color = aggColor,
+                totalSpeed,
                 speed = totalSpeed > 0 ? FormatSpeed(totalSpeed) : "",
                 canReparse = statuses.Contains("2") && workId.Length > 0,
                 // 有下载中/等待分卷可"停止"；有已暂停分卷可"下载"（继续）；非空番号始终可"删除"
@@ -2049,7 +2054,26 @@ public static class WebServer
                 canOpen = nameMap.ContainsKey(workId),
                 children,
             };
-        });
+        }).ToList();
+        // 下载源分区的汇总（分区默认折叠，标题行上就要看出这个源正在下几个、等几个、速度多少）
+        var sections = DownloadLanes.All
+            .Select(lane => (lane, works: groups.Where(g => g.section == lane.Key).ToList()))
+            .Where(x => x.works.Count > 0)
+            .Select(x =>
+            {
+                var statuses = x.works.SelectMany(g => grouped[g.id]).ToList();
+                var speed = x.works.Sum(g => g.totalSpeed);
+                return new
+                {
+                    key = x.lane.Key, label = x.lane.Label, works = x.works.Count,
+                    downloading = statuses.Count(it => it.Status == "3"),
+                    waiting = statuses.Count(it => it.Status == "0"),
+                    failed = statuses.Count(it => it.Status == "2" && !DownloadEngine.IsSkipped(it.Error)),
+                    done = statuses.Count(it => it.Status == "1"),
+                    files = statuses.Count,
+                    speed = speed > 0 ? FormatSpeed(speed) : "",
+                };
+            });
         // 工具栏按钮的可用性：与桌面端同源（DownloadListActions.FlagsOf），避免两端灰显规则漂移
         var flags = DownloadListActions.FlagsOf(
             grouped.Values.SelectMany(v => v).Select(it => (it.Status, it.Error)));
@@ -2063,6 +2087,7 @@ public static class WebServer
                 canClearAll = flags.HasRows,
                 canReparseAll = flags.CanReparse,
             },
+            sections,
             groups,
         });
     }
@@ -3497,24 +3522,6 @@ public static class WebServer
         UsePixivAccount(req);
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
         var page = Math.Max(1, GetInt(req, "p"));
-        // fav=1：来源「pixiv 收藏（账号名）」——列出该账号的收藏，关键字是收藏标签筛选（可空 = 全部）
-        if (req.Query.GetValueOrDefault("fav") == "1")
-        {
-            var fav = await PixivApi.GetBookmarksAsync(keyword, page);
-            WriteJson(stream, 200, new
-            {
-                items = fav.Items.Select(PixivArtworkJson),
-                total = fav.Total, page = fav.Page, hasMore = fav.HasMore, error = fav.Error,
-                anonymous = false,
-            });
-            return;
-        }
-        if (keyword.Length == 0)
-        {
-            WriteJson(stream, 400, new { error = "bad request" });
-            return;
-        }
-
         // 贴的是作品链接/作品号：跳过搜索，直接取这一件的详情
         if (page == 1 && PixivApi.ParseArtworkInput(keyword) is { } direct)
         {
@@ -3531,7 +3538,8 @@ public static class WebServer
             return;
         }
 
-        var result = await PixivApi.SearchAsync(keyword, page);
+        // 留空 = 我的收藏，作者主页链接 = 该作者的作品（详情页点作者即填这个），其余按关键字/标签搜（PixivApi.QueryAsync）
+        var result = await PixivApi.QueryAsync(keyword, page);
         WriteJson(stream, 200, new
         {
             items = result.Items.Select(PixivArtworkJson),
@@ -3539,6 +3547,7 @@ public static class WebServer
             page = result.Page,
             hasMore = result.HasMore,
             error = result.Error,
+            heading = result.Heading,
             // 未登录时站点会把 R-18 从结果里滤掉，前端据此提示一句，免得用户以为是搜索坏了
             anonymous = !PixivApi.HasCookie,
         });
