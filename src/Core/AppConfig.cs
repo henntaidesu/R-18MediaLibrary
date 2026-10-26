@@ -6,11 +6,17 @@ using System.Text.Json;
 
 namespace R18MediaLibrary.Core;
 
-/// <summary>一个媒体库：名称 + 文件夹列表。</summary>
+/// <summary>一个媒体库：名称 + 文件夹列表 + 进库默认显示的视图。</summary>
 public class MediaLib
 {
+    public const string ViewWorks = "works";
+    public const string ViewMakers = "makers";
+
     public string Name { get; set; } = "";
     public List<string> Folders { get; set; } = [];
+
+    /// <summary>点进这个媒体库时先显示什么：<see cref="ViewWorks"/>（平铺作品，缺省）或 <see cref="ViewMakers"/>（社团卡片）。</summary>
+    public string View { get; set; } = ViewWorks;
 }
 
 /// <summary>
@@ -58,7 +64,7 @@ public static class AppConfig
         ["ehentai"] = new()
         {
             ["host"] = "e-hentai.org", ["member_id"] = "", ["pass_hash"] = "", ["igneous"] = "",
-            ["username"] = "",
+            ["username"] = "", ["password"] = "",
             ["original"] = "True",
         },
         // pixiv 数据源：匿名也能搜，但结果里不含 R-18，要看 R-18 就得填浏览器里的 PHPSESSID。
@@ -67,7 +73,12 @@ public static class AppConfig
         ["pixiv"] = new()
         {
             ["php_sessid"] = "", ["mode"] = "all", ["s_mode"] = "s_tag", ["original"] = "True",
+            ["username"] = "",
         },
+        // FANBOX 官方站（fanbox.cc）登录：浏览器里复制的 FANBOXSESSID。
+        // 未填时 FANBOX 只走 pawchive 归档；填了则作品搜索多出一个「FANBOX（账号名）」来源，直连官方 API。
+        // username 只是检测登录时顺手记下的显示名，鉴权只认 sessid。
+        ["fanbox"] = new() { ["sessid"] = "", ["username"] = "" },
         // 图床存储（自建 Image_hosting 服务）：开启后作品卡封面由图床直供，不再逐张唤醒 HDD
         ["image_host"] = new()
         {
@@ -215,7 +226,7 @@ public static class AppConfig
     public static bool AutoUnzip => Read("down_list", "auto_unzip") == "True";
 
     /// <summary>单文件并发分段数（1 = 不分段，最大 16）。</summary>
-    public static int DownloadProcesses => Math.Clamp(ReadInt("down_list", "download_processes", 1), 1, 16);
+    public static int DownloadProcesses => Math.Clamp(ReadInt("down_list", "download_processes", 1), 1, 6);
 
     /// <summary>下载文件夹命名方式："rj"=按RJ号，"work_name"=按作品名称。</summary>
     public static string FolderNameMode => Read("down_list", "folder_name", "rj") ?? "rj";
@@ -337,6 +348,8 @@ public static class AppConfig
                     f.ValueKind != JsonValueKind.Array)
                     continue;
                 var lib = new MediaLib { Name = name };
+                if (item.TryGetProperty("view", out var v) && v.GetString() == MediaLib.ViewMakers)
+                    lib.View = MediaLib.ViewMakers;
                 foreach (var folder in f.EnumerateArray())
                     if (folder.GetString() is { Length: > 0 } path)
                         lib.Folders.Add(path);
@@ -353,7 +366,7 @@ public static class AppConfig
     public static void WriteMediaLibs(List<MediaLib> libs)
     {
         var json = JsonSerializer.Serialize(
-            libs.ConvertAll(l => new { name = l.Name, folders = l.Folders }),
+            libs.ConvertAll(l => new { name = l.Name, folders = l.Folders, view = l.View }),
             new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         Write("media_lib", "libs", json);
     }
@@ -442,6 +455,9 @@ public static class AppConfig
     /// </summary>
     public static string EhentaiUsername => (Read("ehentai", "username", "") ?? "").Trim();
 
+    /// <summary>站点账号密码（「账号访问」页按用户要求保存，cookie 失效时可直接再登一次）。</summary>
+    public static string EhentaiPassword => Read("ehentai", "password", "") ?? "";
+
     /// <summary>登录 cookie 的 ipb_member_id（浏览器登录后从 Cookie 里复制）。</summary>
     public static string EhentaiMemberId => (Read("ehentai", "member_id", "") ?? "").Trim();
 
@@ -500,6 +516,20 @@ public static class AppConfig
     /// 与 E-Hentai 不同，pixiv 的原图不需要登录（只有 R-18 作品本身才需要）。
     /// </summary>
     public static bool PixivOriginal => Read("pixiv", "original", "True") != "False";
+
+    /// <summary>检测登录时记下的 pixiv 显示名（只用于「账号访问」页与来源下拉的展示，鉴权只认 PHPSESSID）。</summary>
+    public static string PixivUsername => (Read("pixiv", "username", "") ?? "").Trim();
+
+    // ---------- FANBOX 官方站（fanbox.cc）----------
+
+    /// <summary>
+    /// 登录 cookie 的 FANBOXSESSID（浏览器登录 fanbox.cc 后从 Cookie 里复制，形如 <c>12345678_abcdef…</c>）。
+    /// 留空即不登录：FANBOX 只能经 pawchive 归档访问。
+    /// </summary>
+    public static string FanboxSessionId => (Read("fanbox", "sessid", "") ?? "").Trim();
+
+    /// <summary>检测登录时记下的 FANBOX 显示名（来源下拉写成「FANBOX（显示名）」）。</summary>
+    public static string FanboxUsername => (Read("fanbox", "username", "") ?? "").Trim();
 
     // ---------- 图床存储（自建 Image_hosting）----------
 

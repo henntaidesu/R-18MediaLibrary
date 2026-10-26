@@ -24,6 +24,9 @@ public class DownloadedRow
     public Brush StateBrush { get; init; } = Brushes.Gray;
     public string DownTime { get; init; } = "";
     public string OpenText => I18n.Tr("跳转作品");
+    // 行内「标记为已品悦」：仅"已下载"状态显示（对齐 Web drawDownloaded 的 .mini 按钮；右键菜单仍保留）
+    public string MarkText => I18n.Tr("标记为已品悦");
+    public Visibility MarkVisibility => State == "已下载" ? Visibility.Visible : Visibility.Collapsed;
 }
 
 /// <summary>已下载页（对应 Python 版 downloaded_UI.py）。</summary>
@@ -107,6 +110,7 @@ public partial class DownloadedPage : UserControl
         BackButton.Content = "← " + I18n.Tr("下载");
         SearchBox.ToolTip = I18n.Tr("搜索 RJ号 / 作品名 / 社团");
         MarkMenuItem.Header = I18n.Tr("标记为已品悦");
+        EmptyLabel.Text = I18n.Tr("没有内容");
         UpdateHeaders();
 
         // 重建状态筛选下拉，保持当前选中项
@@ -285,7 +289,19 @@ public partial class DownloadedPage : UserControl
 
     private void MarkEnjoyed_Click(object sender, RoutedEventArgs e)
     {
-        if (WorksList.SelectedItem is not DownloadedRow row || row.State != "已下载")
+        if (WorksList.SelectedItem is DownloadedRow row)
+            MarkEnjoyed(row);
+    }
+
+    private void MarkRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: DownloadedRow row })
+            MarkEnjoyed(row);
+    }
+
+    private void MarkEnjoyed(DownloadedRow row)
+    {
+        if (row.State != "已下载")
             return;
         Db.Execute("UPDATE \"works\" SET \"state\" = '已品悦' WHERE \"work_id\" = @w", ("@w", row.WorkId));
         Refresh();

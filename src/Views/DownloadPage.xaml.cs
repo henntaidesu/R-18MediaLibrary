@@ -200,6 +200,7 @@ public partial class DownloadPage : UserControl
         ReparseAllButton.Content = I18n.Tr("全部重新解析");
         ShowDownloadedButton.Content = I18n.Tr("已下载");
         UsageLabel.ToolTip = UsageBar.ToolTip = I18n.Tr("点击查看各网盘流量详情");
+        EmptyLabel.Text = I18n.Tr("下载列表为空");
         UpdateStartButton();
         Refresh();
     }

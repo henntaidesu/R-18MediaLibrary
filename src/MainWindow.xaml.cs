@@ -30,20 +30,22 @@ public partial class MainWindow : Window
     private MediaLibPage? _makerPage;
     private MediaLibPage? _favoritePage;
     private SettingsPage? _settingsPage;
+    private WatchPage? _watchPage;
+    private AccountPage? _accountPage;
 
     private SearchPage SearchPage => _searchPage ??= new SearchPage();
 
-    private SettingsPage SettingsPage
+    private WatchPage WatchPage
     {
         get
         {
-            if (_settingsPage != null)
-                return _settingsPage;
+            if (_watchPage != null)
+                return _watchPage;
 
-            var page = new SettingsPage();
-            _settingsPage = page;
+            var page = new WatchPage();
+            _watchPage = page;
             // 监控卡的「打开主页」：跨分区切到"作品搜索"并直接进这位 FANBOX 作家的主页（同下载页的"重新搜索"）
-            page.OpenFanboxArtistRequested += (id, name) =>
+            page.OpenArtistRequested += (id, name) =>
             {
                 NavSearch.IsChecked = true;   // 触发 Nav_Checked 切页
                 SearchPage.OpenFanboxArtist(id, name);
@@ -117,10 +119,12 @@ public partial class MainWindow : Window
         NavMediaLibLabel.Text = I18n.Tr("媒体库");
         NavDownloadLabel.Text = I18n.Tr("下载管理");
         NavSearchLabel.Text = I18n.Tr("作品搜索");
+        NavWatchLabel.Text = I18n.Tr("作家监控");
         NavTagLabel.Text = I18n.Tr("作品标签");
         NavTypeLabel.Text = I18n.Tr("作品形式");
         NavMakerLabel.Text = I18n.Tr("作品社团");
         NavFavoriteLabel.Text = I18n.Tr("我的收藏");
+        NavAccountsLabel.Text = I18n.Tr("账号访问");
         NavSettingLabel.Text = I18n.Tr("系统设置");
         if (_trayIcon != null)
             _trayIcon.Text = I18n.Tr("R18媒体库");
@@ -138,11 +142,13 @@ public partial class MainWindow : Window
         {
             "download" => DownloadPage,
             "search" => SearchPage,
+            "watch" => WatchPage,
             "tag" => _tagPage ??= new MediaLibPage(MediaLibRoot.Genre),
             "type" => _typePage ??= new MediaLibPage(MediaLibRoot.WorkType),
             "maker" => _makerPage ??= new MediaLibPage(MediaLibRoot.Maker),
             "favorite" => _favoritePage ??= new MediaLibPage(MediaLibRoot.Favorite),
-            "setting" => SettingsPage,
+            "accounts" => _accountPage ??= new AccountPage(),
+            "setting" => _settingsPage ??= new SettingsPage(),
             _ => (object)_mediaLibPage,
         };
     }

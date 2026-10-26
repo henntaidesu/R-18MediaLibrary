@@ -1,148 +1,116 @@
-# R-18MediaLibrary
+# R-18MediaLibrary · R18 媒体库
 
-一个用于**获取、管理、浏览与播放成人向作品**的 Windows 桌面工具（WPF / .NET 10 / C#）。
+Windows 上的本地媒体库与下载管理工具，使用 WPF、C# 和 .NET 10。支持作品导入、元数据补全、多维分类、音视频播放，以及浏览器远程访问。
 
-程序集成三个来源，并内置媒体库、下载队列、内嵌播放器（视频 + 音频）以及可选的局域网 Web 访问服务：
+**[完整使用手册](docs/使用手册.md)** · [日文说明（历史版本）](README.ja.md)
 
-- **Anime-sharing 论坛**（[https://www.anime-sharing.com/](https://www.anime-sharing.com/)）——检索论坛贴子中的 DLsite 作品（RJ 号）网盘链接，**通过 Debrid-Link 网盘中转站解析并下载**。
-- **asmr.one 官方 API**——针对语音 / ASMR（SOU）作品的直链下载，保留原始目录结构。
-- **Pixiv FANBOX（经 pawchive 存档站）**——按作家检索 FANBOX 投稿并直链下载，免登录。
+![媒体库 Web 首页](docs/assets/manual/home.png)
 
-> 界面、日志、注释均为中文。本项目于 2026 年 6 月由旧的 Python/PyQt 版本完整重写为 C#；运行数据（`R-18MediaLibrary.db`、`images/`、`log/`）保存在仓库根目录。
->
-> 项目原名 DLsiteMedia。老版本的 `DLsiteMedia.db`（以及更早的 `DASD.db`）放在同一目录下即可，启动时会自动改名迁移，数据不丢。
+## 功能
 
----
+| 功能 | 当前实现 |
+| --- | --- |
+| 媒体库 | 多库、多数据源；作品／社团视图切换；扫描导入、元数据与封面补全；库改名和路径更新 |
+| 浏览与整理 | 本地搜索、排序、标签、社团、形式、收藏、已读、作品移动与删除 |
+| 播放与看图 | 文件树／缩略图，大图翻页，音视频队列、睡眠定时；桌面 LibVLC 视频与 NAudio 音频 |
+| DLsite 来源 | 编号／社团／目录查询，Anime-sharing 帖子解析、网盘检测、组合分卷下载 |
+| asmr.one | 桌面 SOU 直链下载、文件类型过滤；无对应作品时回退论坛来源 |
+| FANBOX | pawchive 归档作家检索；登录后增加官方来源；单篇与批量下载 |
+| E-Hentai／pixiv | 检索、详情预览、单件／批量下载，完成后统一入库 |
+| 下载管理 | 进度、断点续传、暂停、解析重试、限速、用量、自动解压与历史 |
+| 作家监控 | 定时检查 pawchive 作家新投稿，支持独立间隔、暂停和立即检查 |
+| 账号访问 | FANBOX、pixiv、E-Hentai 登录信息配置、检测与清除 |
+| Web 与串流 | HTTP 服务、访问密码、可选门户 SSO；游戏在服务端 Windows 运行并向网页串流 |
+| 封面图床 | 可选自建图床、连接检测和已有封面迁移 |
 
-## ⚠️ 关于 Anime-sharing 下载：必须使用 Debrid-Link 中转站
+图片翻译已有桌面设置和模型依赖管理，**尚未接入实际翻译执行与查看入口**，不列作完整可用功能。详情见[手册第 17 节](docs/使用手册.md#17-图片翻译的当前实现范围)。
 
-从 **Anime-sharing 论坛**下载作品时，贴子里的链接指向 Rapidgator、Katfile 等网盘。这些网盘对普通用户有速度 / 并发 / 直连限制，因此本程序**不直接下载网盘链接**，而是先经由 **[Debrid-Link](https://debrid-link.com/) 网盘中转站**把链接解析成可高速直连的地址后再下载。
+## 快速开始
 
-使用前请准备：
+### 从源码运行
 
-1. 注册 Debrid-Link 账号并开通会员（付费中转服务）。
-2. 在 **系统设置 → 下载** 中填入 **Debrid-Link API Key**（对应配置 `debrid.api_key`）。
-3. 若网络需要，配置代理（`proxy` 段，几乎所有 HTTP 请求都会使用它）。
+需要 Windows 和 .NET 10 SDK，在仓库根目录执行：
 
-未配置 Debrid-Link API Key 时，Anime-sharing 来源无法解析下载链接。
-
-> **asmr.one** 与 **FANBOX** 两个来源都是直链下载，**不需要** Debrid-Link。asmr.one 需要在设置中配置账号；FANBOX 免登录、无需任何账号。
-
----
-
-## 功能速览
-
-- **三来源检索下载**：「作品搜索」页顶部的来源下拉切换 `DLsite` / `FANBOX`。
-  - DLsite：输入 RJ 号即可检索；语音 / ASMR（SOU）作品可优先走 asmr.one 直链（可在设置中按作品类型选择优先来源，asmr.one 没有该作品时自动回退论坛），其余作品走 Anime-sharing + Debrid-Link。
-  - FANBOX：输入作家名检索 → 作家主页投稿网格 → 勾选投稿批量下载，或单篇直接下载。
-- **下载队列**：多线程下载，支持断点续传、暂停、低速重试、全局限速，429/403 等限流会自动冷却重试；asmr / FANBOX 作品保留原始多级目录树展示。
-- **自动化**：可选自动下载 / 自动解压。解压支持 Bandizip 或内置 SharpCompress，自动修复 Shift_JIS 文件名乱码并整理目录；加密压缩包会依次尝试设置里的密码本。
-- **媒体库**：按 媒体库 → 社团 → 作品 → 详情 浏览，自动抓取 DLsite 页面元数据、标签、封面与简介。FANBOX 投稿同样入库（作品号形如 `FB12508755`，社团即作家），元数据在下载时就从 pawchive 取好，不再回查 DLsite。
-- **多维浏览**：作品标签、作品社团、作品形式、我的收藏。
-- **内嵌播放**：视频用 LibVLC（不依赖系统解码器，H.264/H.265 直接播放）；音频用 NAudio 并做响度归一化（目标约 -18 dBFS），支持文件夹播放列表与睡眠定时。
-- **局域网 Web 访问**（可选）：内置 HTTP 服务，把媒体库以响应式网页形式暴露给同一局域网内的手机 / 浏览器，可设访问密码。
-- **封面图床加速**（可选）：媒体库放在机械硬盘时，翻一页作品卡就是几十次随机读；接入自建图床后封面改由图床提供，桌面端与 Web 端共用同一套缩略图缓存。
-
----
-
-## FANBOX 来源说明
-
-FANBOX 投稿来自 **pawchive**（Kemono 形态的公开存档站，默认域名 `pawchive.pw`，可在设置中改）。该来源**只做检索与下载**，不提供独立的媒体库浏览视图——下载完的投稿和 DLsite 作品一样落在媒体库目录里，由媒体库统一浏览。
-
-- 检索：站点没有服务端搜索接口，程序会把整站作家表缓存到 `cache/pawchive-creators.json`（24 小时）后在内存里匹配；只命中一个作家时直接进入作家主页。
-- 作品目录：`<媒体库>/FB<投稿ID>`，与 DLsite 的 `<媒体库>/<RJ号>` 平级。目录按投稿 ID 命名而非标题——标题会改、会重名。
-- 文件命名：图片按站内顺序重编号为 `001.png`、`002.png`（原名是无意义的哈希）；压缩包 / 视频 / PSD 等附件保留原名，形如 `003_原文件名.zip`。
-- 附件里的压缩包在开启「自动解压」时会各自解压到以自身命名的子目录；解压失败不会阻塞入库，压缩包原样留在作品目录里。
-
----
-
-## 界面预览
-
-### 媒体库
-浏览已入库（已品悦）的作品，卡片展示封面、作品号与作品形式标记，可搜索、排序、切换显示社团。
-
-![媒体库](img/1.png)
-
-### 作品搜索
-输入 RJ 号 / 作品名 / 社团检索，卡片显示 Anime-sharing 命中状态（如 `AS·N帖` / `AS·无`）与扫描状态，可一键组合下载或开启自动下载；切换来源下拉即可改用 FANBOX 按作家检索。
-
-![作品搜索](img/2.png)
-
-### 作品标签
-按 DLsite 标签聚合浏览全部作品。
-
-![作品标签](img/3.png)
-
-### 作品形式
-按作品形式（ボイス・ASMR、マンガ、CG、FANBOX 等）聚合浏览。
-
-![作品形式](img/4.png)
-
----
-
-## 构建与运行
-
-需要 .NET 10 SDK。**在仓库根目录**运行（SQLite 数据库 `R-18MediaLibrary.db` 与 `log/`、`images/` 均按当前工作目录定位）：
-
-```bash
-# 构建
+```powershell
 dotnet build src/R-18MediaLibrary.csproj
-
-# 运行
 dotnet run --project src/R-18MediaLibrary.csproj
 ```
 
-> 工程文件叫 `R-18MediaLibrary.csproj`、产出 `R-18MediaLibrary.exe`，但代码里的命名空间是 `R18MediaLibrary`——C# 命名空间不允许连字符，故 `AssemblyName` 与 `RootNamespace` 在 csproj 里分开设置。
+也可双击 `start.bat`，以 Release 配置运行。
 
-### 单文件发布
+### 发布
 
-在仓库根目录运行 `publish.bat`，生成依赖框架（不打包 .NET 运行时）的单文件 `publish/R-18MediaLibrary.exe`：
+运行 `publish.bat`，生成 `publish/R-18MediaLibrary.exe`。目标电脑需要 **.NET 10 Desktop Runtime**，保留 exe 旁的 `libvlc/win-x64/` 数据目录。
 
-```bash
-dotnet publish src/R-18MediaLibrary.csproj -c Release -r win-x64 --self-contained false ^
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+脚本会清理旧 `publish` 文件夹，请勿把个人文件、数据库或媒体库放入其中。
+
+### 首次使用
+
+1. 在系统设置确认下载缓存路径及网络配置。
+2. 新建媒体库，添加运行程序的电脑上的数据源目录。
+3. 导入已有作品，等待扫描和元数据补全。
+4. 按来源配置账号或 Debrid-Link，在作品搜索查询并选择目标库下载。
+5. 到下载管理确认进度，完成后在媒体库查看和播放。
+
+本地扫描检查数据源下的一级子目录，名称需包含 `RJ` 加至少六位数字，或 `FB`／`EH`／`PX` 加数字。搜索支持的编号与本地扫描范围并不完全相同。
+
+## 来源与前置条件
+
+| 来源 | 前置条件 | 下载方式 |
+| --- | --- | --- |
+| Anime-sharing | 有效 Debrid-Link Key、可用网盘额度与链接 | 论坛网盘 → 中转解析 → 缓存／解压 → 媒体库 |
+| asmr.one | 桌面配置账号、SOU 优先源及文件类型 | 直链，保留多级目录 |
+| FANBOX 归档 | pawchive 来源可访问 | 投稿及受支持附件直链，目录 `FB<投稿ID>` |
+| FANBOX 官方 | 有效登录，账号拥有对应内容权限 | 官方投稿，目录同上 |
+| E-Hentai／ExHentai | 按站点及内容要求配置登录 | 画廊图片，目录 `EH<画廊ID>` |
+| pixiv | 按内容要求配置登录，未登录可能过滤 R-18 结果 | 作品图片，目录 `PX<作品ID>` |
+
+Debrid-Link 只负责相关网盘解析，不能代替来源账号权限。FANBOX 作家监控目前使用归档来源。
+
+## 桌面端与 Web 端
+
+在桌面“系统设置 → 外部访问”配置开关、端口和密码，浏览器打开 `http://<主机地址>:<端口>/`，默认端口 8080。网页和桌面共用数据库、文件、任务与监控。
+
+Web 的目录、下载位置以及“本机运行”均指向**服务端电脑**。程序关闭后 Web、下载和监控停止。网页播放兼容性由浏览器决定，桌面使用本地播放引擎。
+
+asmr.one 直链入口、SOU 优先源、E-Hentai 画质／站点、pixiv 分级／匹配／画质、外部访问及 SSO 参数在桌面配置；当前 Web 搜索没有 asmr.one 专用入口。
+
+门户代理需配套 API 和 WebSocket 转发。当前部分请求使用根路径 `/api/...`，子路径下首页能打开不代表全部功能可用。部署与串流限制见[使用手册](docs/使用手册.md)。
+
+## 配置与数据
+
+配置保存在 SQLite `R-18MediaLibrary.db` 的 `conf` 表，由 [AppConfig.cs](src/Core/AppConfig.cs) 管理。普通设置通常在失焦或选择时保存，账号页使用“保存并检测”。
+
+| 数据 | 位置／作用 |
+| --- | --- |
+| 数据库 | 优先工作目录，再从 exe 目录向上查找；不存在时在 exe 目录创建 |
+| 媒体库 | 用户配置的数据源目录，保存作品及 `DataSource` 元数据等 |
+| 下载缓存 | 系统设置中的缓存路径 |
+| 回退封面 | 工作目录 `images/` |
+| 日志 | 工作目录 `log/` |
+| 来源缓存 | `cache/`，如 pawchive 作家索引 |
+
+旧 `DLsiteMedia.db` 或 `DASD.db` 在没有新名库时会尝试迁移。备份前正常退出并确认实际数据库位置；数据库含账号信息，不应公开提交。
+
+“删除媒体库”保留文件和已导入记录；“删除作品”会删除实际目录及相关记录，不可恢复。扫描也会清理缺失作品记录，网络盘或移动盘不可用时先恢复挂载。
+
+## 开发导航
+
+```text
+src/
+├─ Core/                 SQLite、配置、日志、网络与语言
+├─ Views/                WPF 页面与对话框
+├─ Controls/             文件与播放等界面组件
+├─ Services/             来源、下载、解压、媒体库、Web 与串流
+│  └─ Translate/         翻译模型依赖管理等基础代码
+└─ Web/                  内嵌 Web 前端
+docs/
+├─ 使用手册.md           分功能步骤、限制与排查
+└─ assets/manual/        Edge 实际界面截图
 ```
 
-> LibVLC 的原生引擎无法被打进单文件，需要在 exe 旁保留一个几 MB 的 `libvlc\win-x64\` 目录（hrtfs + lua 数据），它在运行时按文件路径加载。
+主要依赖包括 Microsoft.Data.Sqlite、HtmlAgilityPack、SharpCompress、LibVLCSharp、VideoLAN.LibVLC.Windows、NAudio 和 CommunityToolkit.Mvvm，版本以[工程文件](src/R-18MediaLibrary.csproj)为准。程序集名为 `R-18MediaLibrary`，C# 根命名空间为 `R18MediaLibrary`。
 
----
+手册按 2026-10-26 源码与 Web 界面核对，附功能到源码的对应表。下载、删除、移动、登录及串流未在文档编写中实际执行测试。
 
-## 配置
-
-所有配置保存在本地 SQLite 数据库 `R-18MediaLibrary.db` 的 `conf` 表中，由 `AppConfig`（[src/Core/AppConfig.cs](src/Core/AppConfig.cs)）管理，可在程序内 **系统设置** 页修改（失焦 / 选择即保存，无独立保存按钮）。
-
-主要设置项：
-
-| 配置 | 说明 |
-| --- | --- |
-| `proxy` | 代理设置，应用于几乎所有 HTTP 请求 |
-| `debrid.api_key` | **Debrid-Link API Key（Anime-sharing 下载必需）** |
-| `down_list` | 下载选项：自动下载 / 自动解压 / 线程数 / 命名规则 / 最低速度 / 限速 |
-| `downpath` | 下载缓存目录 |
-| `unzip.passwords` | 解压密码本，一行一个，加密压缩包按顺序逐个试 |
-| `media_lib.libs` | 媒体库路径（JSON） |
-| `language.lang` | 界面语言（zh_CN / zh_TW / ja / en） |
-| `web_server` | 局域网 Web 访问：开关 / 端口 / 密码 |
-| `asmr` | asmr.one 账号：用户名 / 密码 / token / 镜像站点 |
-| `asmr_filetype` | asmr.one 按扩展名的文件类型过滤（mp3/mp4/flac/wav/jpg/png/pdf/txt/vtt/lrc） |
-| `search.sou_source` | SOU（语音/ASMR）作品的优先来源：`asmr` 或 `anime-sharing` |
-| `pawchive.host` | FANBOX 来源使用的 pawchive 站点域名（默认 `pawchive.pw`） |
-| `image_host` | 封面图床：开关 / 地址 / 项目 / 令牌 |
-
----
-
-## 技术栈
-
-- **框架**：WPF / .NET 10 / C#（`UseWindowsForms` 开启以承载 LibVLC 的 `VideoView`）
-- **数据库**：`Microsoft.Data.Sqlite`（WAL 模式，参数化 SQL）
-- **抓取**：`HtmlAgilityPack`
-- **解压**：`SharpCompress`（备用；优先调用已安装的 Bandizip `bz.exe`）
-- **视频播放**：`LibVLCSharp` + `LibVLCSharp.WPF` + `VideoLAN.LibVLC.Windows`
-- **音频播放**：`NAudio`（响度归一化）
-- **MVVM**：`CommunityToolkit.Mvvm`
-
----
-
-## 免责声明
-
-本工具仅用于个人对已合法获取内容的下载管理与本地播放。请遵守相关网站的服务条款及所在地区法律法规，自行承担使用风险。
+仅管理自己有权访问的内容，并遵守来源服务条款。

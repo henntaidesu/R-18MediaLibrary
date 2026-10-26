@@ -29,7 +29,7 @@ function fallbackCopy(t) {
 // ---------- 页内弹窗（替代浏览器原生 alert/confirm/prompt，避免使用浏览器顶部弹窗）----------
 // 返回 Promise：alert→resolve(undefined)；confirm→resolve(true/false)；prompt→resolve(字符串或 null)
 let _modalCancel = null;   // 遮罩点击时用于取消当前弹窗的回调（保证 Promise 一定被 resolve，不悬挂）
-function uiModal({ title, message, input, defaultValue, okText = '确定', cancelText, danger }) {
+function uiModal({ title, message, input, defaultValue, okText = '确定', cancelText, altText, danger }) {
   return new Promise(resolve => {
     const ov = $('modal'), box = $('modalBox');
     box.innerHTML = '';
@@ -44,6 +44,8 @@ function uiModal({ title, message, input, defaultValue, okText = '确定', cance
     }
     const btns = el('div', 'modal-btns');
     if (cancelText) { const c = el('button', 'icon-btn', cancelText); c.onclick = () => done(input ? null : false); btns.appendChild(c); }
+    // 第三个选项（如"远程串流 / 在电脑上运行"二选一）：点它 resolve 'alt'
+    if (altText) { const a = el('button', 'icon-btn', altText); a.onclick = () => done('alt'); btns.appendChild(a); }
     const ok = el('button', 'icon-btn primary' + (danger ? ' danger' : ''), okText);
     ok.onclick = () => done(input ? field.value : true);
     btns.appendChild(ok); box.appendChild(btns);
@@ -58,6 +60,64 @@ function uiModal({ title, message, input, defaultValue, okText = '确定', cance
     (field || ok).focus();
   });
 }
+// 卡片式二选一/多选一：每个选项一张卡（样式同媒体库选择器的 .pk-card），点卡即选，不另设确定/取消按钮——
+// 点遮罩或 Esc 即取消（resolve null）。disabled 的卡片置灰、不可点，sub 写明原因。
+function uiChoice({ title, message, choices }) {
+  return new Promise(resolve => {
+    const ov = $('modal'), box = $('modalBox');
+    box.innerHTML = '';
+    const done = (v) => { _modalCancel = null; ov.classList.remove('show'); document.removeEventListener('keydown', onKey); resolve(v); };
+    if (title) box.appendChild(el('h3', null, title));
+    if (message) box.appendChild(el('div', 'modal-msg', message));
+    const grid = el('div', 'pk-grid choice-grid');
+    grid.style.gridTemplateColumns = `repeat(${choices.length}, 1fr)`;
+    for (const c of choices) {
+      const card = el('div', 'pk-card' + (c.disabled ? ' disabled' : ''));
+      if (c.icon) card.appendChild(el('div', 'pk-icon', c.icon));
+      card.appendChild(el('div', 'pk-name', c.name));
+      if (c.sub) card.appendChild(el('div', 'pk-sub', c.sub));
+      if (!c.disabled) card.onclick = () => done(c.key);
+      grid.appendChild(card);
+    }
+    box.appendChild(grid);
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); done(null); } }
+    _modalCancel = () => done(null);
+    document.addEventListener('keydown', onKey);
+    ov.classList.add('show');
+  });
+}
+// 多字段表单：fields = [{ key, label, value, placeholder }]，确定返回 { key: 值 }，取消返回 null。
+// 回车在最后一个输入框上即确定，其余输入框上跳到下一个
+function uiForm({ title, message, fields, okText = '保存' }) {
+  return new Promise(resolve => {
+    const ov = $('modal'), box = $('modalBox');
+    box.innerHTML = '';
+    const inputs = [];
+    const collect = () => Object.fromEntries(fields.map((f, i) => [f.key, inputs[i].value]));
+    const done = (v) => { _modalCancel = null; ov.classList.remove('show'); document.removeEventListener('keydown', onKey); resolve(v); };
+    if (title) box.appendChild(el('h3', null, title));
+    if (message) box.appendChild(el('div', 'modal-msg', message));
+    fields.forEach((f, i) => {
+      box.appendChild(el('label', 'modal-label', f.label));
+      const inp = el('input', 'modal-input'); inp.value = f.value || ''; inp.placeholder = f.placeholder || '';
+      inp.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        if (i < fields.length - 1) inputs[i + 1].focus(); else done(collect());
+      });
+      inputs.push(inp); box.appendChild(inp);
+    });
+    const btns = el('div', 'modal-btns');
+    const c = el('button', 'icon-btn', '取消'); c.onclick = () => done(null); btns.appendChild(c);
+    const ok = el('button', 'icon-btn primary', okText); ok.onclick = () => done(collect()); btns.appendChild(ok);
+    box.appendChild(btns);
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); done(null); } }
+    _modalCancel = () => done(null);
+    document.addEventListener('keydown', onKey);
+    ov.classList.add('show');
+    (inputs[0] || ok).focus();
+  });
+}
 function uiAlert(message, title) { return uiModal({ title: title || '提示', message, okText: '确定' }); }
 function uiConfirm(message, opts = {}) { return uiModal({ title: opts.title || '确认', message, okText: opts.okText || '确定', cancelText: opts.cancelText || '取消', danger: opts.danger }); }
 function uiPrompt(message, defaultValue, title) { return uiModal({ title: title || '输入', message, input: true, defaultValue, cancelText: '取消' }); }
@@ -67,10 +127,12 @@ const SECTIONS = [
   { key: 'medialib', label: '媒体库', root: 'libs',     icon: '📚' },
   { key: 'download', label: '下载管理',                  icon: '⬇' },
   { key: 'search',   label: '作品搜索',                    icon: '🔍' },
+  { key: 'watch',    label: '作家监控',                    icon: '⏱' },
   { key: 'tag',      label: '作品标签', root: 'genres',   icon: '🏷' },
   { key: 'maker',    label: '作品社团', root: 'allmakers', icon: '🏢' },
   { key: 'type',     label: '作品形式', root: 'types',   icon: '🎬' },
   { key: 'favorite', label: '我的收藏', root: 'favorites', icon: '♥' },
+  { key: 'accounts', label: '账号访问',                     icon: '🔑' },
   { key: 'settings', label: '系统设置',                     icon: '⚙' },
 ];
 const MAKER_SORTS = ['作品数 多→少', '作品数 少→多', '社团名 A→Z'];
@@ -181,15 +243,21 @@ function applyLayout() {
 window.addEventListener('resize', applyLayout);
 
 // ---------- 顶栏 + 页内工具栏常驻页顶 ----------
-// 顶栏高度不固定（窄屏换行、详情页多一排操作按钮），页内工具栏（一张悬浮卡片）又要正好停在它下面，
-// 所以只能实测：按文档顺序取当前可见的工具栏，逐条把 top 设成「顶栏高 + 空隙 + 之前各条高度之和」，
+// 顶栏高度不固定（窄屏换行、详情页多一排操作按钮），页内工具栏（与顶栏同样式的平铺横条）又要正好停在它下面，
+// 所以只能实测：按文档顺序取当前可见的工具栏，逐条把 top 设成「顶栏高 + 之前各条高度之和」，
 // 最后把总高写进 --bars-h 供表头一类的二级吸顶元素使用（已下载表的 .dt th）。
-// 一页可能叠两条（搜索栏 + 选择条），故再按位置打 stack-top/mid/bot，让整叠拼成同一张卡（样式见 app.css）。
+// 一页可能叠两条（搜索栏 + 选择条），故再按位置打 stack-top/mid/bot（样式见 app.css）。
 // 写入前先比对旧值：值没变就不写（class 同理），否则下面的 MutationObserver 会被自己的写入再次唤醒、来回打转。
 function syncStickyBars() {
   const root = document.documentElement, head = document.querySelector('header');
-  const gap = parseFloat(getComputedStyle(root).getPropertyValue('--bar-gap')) || 10;
-  let top = head ? Math.round(head.getBoundingClientRect().height) : 0;
+  // 顶栏里一样东西都不显示时（搜索/下载页：标题为空、按钮全收起）整条藏掉，不留一道空白条。
+  // 不能用 offsetParent 判断子元素是否可见：顶栏藏起来后子元素的 offsetParent 全是 null，会永远出不来。
+  if (head) {
+    const empty = !Array.from($('topbar').children).some(c =>
+      !c.hidden && getComputedStyle(c).display !== 'none' && (c.tagName !== 'SPAN' || c.textContent.trim()));
+    if (head.hidden !== empty) head.hidden = empty;
+  }
+  let top = head && !head.hidden ? Math.round(head.getBoundingClientRect().height) : 0;
   const setVar = (k, v) => { if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v); };
   const setCls = (e, c, on) => { if (e.classList.contains(c) !== on) e.classList.toggle(c, on); };
   setVar('--topbar-h', top + 'px');
@@ -199,12 +267,11 @@ function syncStickyBars() {
   all.forEach(b => {
     const i = bars.indexOf(b);
     if (i < 0 && b.style.top) b.style.top = '';
-    setCls(b, 'bar-lead', i === 0);                                  // 只有最上面那条负责封住与顶栏之间的空隙
+    setCls(b, 'bar-lead', i === 0);                                  // 最上面那条贴住页顶（app.css）
     setCls(b, 'stack-top', i === 0 && bars.length > 1);
     setCls(b, 'stack-mid', i > 0 && i < bars.length - 1);
     setCls(b, 'stack-bot', i > 0 && i === bars.length - 1);
   });
-  if (bars.length) top += gap;   // 卡片与顶栏之间的空隙
   bars.forEach(bar => {
     const v = top + 'px';
     if (bar.style.top !== v) bar.style.top = v;
@@ -247,6 +314,8 @@ function selectSection(key, noRender) {
   if (s.root) { if (!noRender) render(); }
   else if (key === 'search') renderSearchArea();
   else if (key === 'download') renderDownloadArea();
+  else if (key === 'watch') renderWatchPage();
+  else if (key === 'accounts') renderAccountsPage();
   else if (key === 'settings') renderSettings();
 }
 
@@ -257,7 +326,7 @@ function encodeHash() {
   const s = SECTIONS.find(x => x.key === section);
   if (section === 'search') return encodeSearchHash();       // 作品搜索把来源与查询词编进地址栏
   if (section === 'download') return encodeDlHash();         // 下载管理有两视图，走独立编码
-  if (!s || !s.root) return '#/' + section;             // 其它叶子分区（设置）
+  if (!s || !s.root) return '#/' + section;             // 其它叶子分区（作家监控 / 账号访问 / 设置）
   const segs = stack.slice(1).map(e => {
     const ctx = { ...e.ctx }; delete ctx.nodes; delete ctx.open;   // nodes 文件树缓存过大、open 详情折叠态是运行时状态，均不入 URL
     const c = Object.keys(ctx).length ? '~' + encodeURIComponent(JSON.stringify(ctx)) : '';
@@ -349,6 +418,7 @@ async function popView() {
   return true;
 }
 window.addEventListener('popstate', () => {
+  if (GS.isOpen) { GS.hide(); return; }   // 串流页同看图：返回手势只关掉它
   if (LB.isOpen) { LB.hide(); return; }   // 看图层先退：返回手势只关看图，不离开当前页
   if (section === 'search') return;   // 搜索分区内不压历史层级（来源/查询词只 replace）
   if (section === 'download') { syncDlFromHash(); return; }
@@ -417,11 +487,21 @@ function drawGroups(items, mapFn, unit) {
     // 右侧信息块：名称 + 作品数竖排
     const info = el('div', 'ginfo');
     info.append(el('div', 'gt', m.title), el('div', 'gc', m.caption));
+    // 社团主页外链：新标签页打开，别让点击冒泡成"进入该分组"
+    if (m.links && m.links.length) {
+      const lk = el('div', 'glinks');
+      for (const l of m.links) {
+        const a = el('a', null, l.label); a.href = l.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.title = l.url; a.onclick = (ev) => ev.stopPropagation();
+        lk.appendChild(a);
+      }
+      info.appendChild(lk);
+    }
     c.appendChild(info);
-    // 右上角改名按钮（只有社团卡给 onEdit）：别让点击冒泡成"进入该分组"
+    // 右上角按钮（社团卡 🖊 改显示名、媒体库卡 ⚙ 设置）：别让点击冒泡成"进入该分组"
     if (m.onEdit) {
-      const eb = el('button', 'gedit', '🖊');
-      eb.title = '自定义显示名称';
+      const eb = el('button', 'gedit', m.editIcon || '🖊');
+      eb.title = m.editTitle || '自定义显示名称';
       eb.onclick = (ev) => { ev.stopPropagation(); m.onEdit(); };
       c.appendChild(eb);
     }

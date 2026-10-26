@@ -110,7 +110,7 @@ public static class FanboxService
                 "\"source\" = excluded.\"source\", \"meta_scanned\" = '1', " +
                 "\"down_time\" = excluded.\"down_time\", " +
                 "\"folder\" = NULL, \"target\" = NULL, \"target_lib\" = NULL, \"cover\" = NULL",
-                ("@w", workId), ("@n", post.Title), ("@mi", artist.Id), ("@mn", artist.Name),
+                ("@w", workId), ("@n", post.Title), ("@mi", artist.MakerId), ("@mn", artist.Name),
                 ("@t", WorkTypeName), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
                 ("@d", FormatPublished(post.Published)), ("@src", SourceName), ("@time", now));
 
@@ -163,7 +163,54 @@ public static class FanboxService
 
         Logger.Info($"fanbox {artist.Name} 已加入下载队列：{postCount} 篇作品 / {fileCount} 个文件");
         DownloadEngine.Start();
+        // 新作家：记下它的 FANBOX / pawchive 主页与 FANBOX 上的显示名（已有记录的作家不动）
+        MakerHomeService.Remember(artist);
         return new FanboxEnqueueResult { PostCount = postCount, FileCount = fileCount, Skipped = skipped };
+    }
+
+    // ---------- 扫描导回的作品补元数据 ----------
+
+    /// <summary>
+    /// 从 pawchive 补全一篇 fanbox 作品的元数据，返回是否成功。
+    ///
+    /// 正常下载的作品在入队时就写好了元数据；这里管的是「扫描媒体库」导回来的作品——
+    /// 导入只认得文件夹名里的作品号，works 行是空的。FB 作品不是 DLsite 作品，
+    /// 绝不能交给 DL API / 作品页补全，必须回源站取（字段映射与入队时完全一致）。
+    /// 成功后置 meta_scanned='1'；失败（站上已删、网络不通）保持原样，下次扫描再试。
+    /// </summary>
+    public static async Task<bool> BackfillFromPawchiveAsync(string workId)
+    {
+        var postId = PostIdOf(workId);
+        var artistId = await PawchiveApi.FindPostArtistAsync(PawchiveApi.FanboxService, postId);
+        if (artistId is null)
+            return false;
+        var post = await PawchiveApi.GetPostAsync(PawchiveApi.FanboxService, artistId, postId);
+        if (post is null)
+            return false;
+        var artist = await PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistId);
+
+        Db.Execute(
+            "UPDATE \"works\" SET \"work_name\" = @n, \"maker_id\" = @mi, \"maker_name\" = @mn, " +
+            "\"work_type\" = @t, \"intro_s\" = @s, \"genre\" = @g, \"sell_date\" = @d, " +
+            "\"source\" = @src, \"meta_scanned\" = '1' WHERE \"work_id\" = @w",
+            ("@n", post.Title), ("@mi", artistId), ("@mn", artist?.Name ?? artistId),
+            ("@t", WorkTypeName), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
+            ("@d", FormatPublished(post.Published)), ("@src", SourceName), ("@w", workId));
+        SyncGenres(workId, post.Tags);
+
+        var rows = Db.Select(
+            "SELECT \"folder\", \"cover\" FROM \"works\" WHERE \"work_id\" = @w", ("@w", workId));
+        if (rows is { Count: > 0 } && rows[0][0] as string is { Length: > 0 } folder)
+        {
+            if (!File.Exists(Path.Combine(folder, PostTextFile)))
+                WritePostText(workId, folder);
+            var cover = rows[0][1] as string;
+            if ((string.IsNullOrEmpty(cover) || !File.Exists(cover)) && FindCover(folder) is { } found)
+                Db.Execute("UPDATE \"works\" SET \"cover\" = @c WHERE \"work_id\" = @w",
+                    ("@c", found), ("@w", workId));
+        }
+        Logger.Info($"{workId} 已从 pawchive 补全元数据：{post.Title}");
+        return true;
     }
 
     /// <summary>发布时间 ISO（2026-08-29T23:53:10）转成 DLsite 的「年月日」写法，两种来源才能混排。</summary>
@@ -181,6 +228,9 @@ public static class FanboxService
     /// </summary>
     private static string DownloadUrl(PawchiveFile file, string postId)
     {
+        // fanbox.cc 官方站的直链路径里本来就带着投稿号（/images/post/<投稿号>/…），不会撞主键，原样用
+        if (file.Url.Length > 0)
+            return file.Url;
         var url = PawchiveApi.FileUrl(file.Path, file.Name);
         return url + (url.Contains('?') ? "&" : "?") + "pcid=" + postId;
     }

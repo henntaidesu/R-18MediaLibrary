@@ -85,7 +85,7 @@ public class AudioPlayerBar : UserControl
             Background = TryFindResource("BaseBrush") as Brush ?? Brushes.Black,
             BorderBrush = TryFindResource("BorderBrush") as Brush ?? Brushes.Gray,
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(12, 8, 12, 8),
+            Padding = new Thickness(12, 10, 12, 10),   // Web .abar
         };
         var bar = new Grid();
         bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });            // 播放/暂停
@@ -170,7 +170,7 @@ public class AudioPlayerBar : UserControl
             Background = TryFindResource("BaseBrush") as Brush ?? Brushes.Black,
             BorderBrush = TryFindResource("BorderBrush") as Brush ?? Brushes.Gray,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),   // Web .apopup
             MinWidth = 300,
             MaxHeight = 360,
             Margin = new Thickness(0, 0, 0, 6),
@@ -199,7 +199,7 @@ public class AudioPlayerBar : UserControl
     private void RefreshPlaylist()
     {
         _playlistPanel.Children.Clear();
-        var accent = TryFindResource("AccentLightBrush") as Brush ?? Brushes.SteelBlue;
+        var accent = TryFindResource("AccentBrush") as Brush ?? Brushes.SteelBlue;   // .aprow.cur：accent-dim
         var caption = TryFindResource("CaptionBrush") as Brush ?? Brushes.Gray;
         for (var i = 0; i < _queue.Count; i++)
         {
@@ -208,7 +208,7 @@ public class AudioPlayerBar : UserControl
             {
                 Background = current ? accent : Brushes.Transparent,
                 CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6, 10, 6),
+                Padding = new Thickness(10, 8, 10, 8),   // .aprow：内距 8/10
                 Margin = new Thickness(0, 1, 0, 1),
                 Cursor = Cursors.Hand,
             };
@@ -236,7 +236,7 @@ public class AudioPlayerBar : UserControl
             row.MouseLeftButtonUp += (_, _) => JumpTo(idx);
             if (!current)
             {
-                row.MouseEnter += (_, _) => row.Background = TryFindResource("BorderBrush") as Brush ?? Brushes.DimGray;
+                row.MouseEnter += (_, _) => row.Background = TryFindResource("ButtonBrush") as Brush ?? Brushes.DimGray;
                 row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
             }
             _playlistPanel.Children.Add(row);
@@ -278,7 +278,7 @@ public class AudioPlayerBar : UserControl
             };
             var m = minutes;
             row.MouseLeftButtonUp += (_, _) => { _sleepPopup.IsOpen = false; SetSleep(m); };
-            row.MouseEnter += (_, _) => row.Background = TryFindResource("BorderBrush") as Brush ?? Brushes.DimGray;
+            row.MouseEnter += (_, _) => row.Background = TryFindResource("ButtonBrush") as Brush ?? Brushes.DimGray;
             row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
             panel.Children.Add(row);
         }
@@ -287,7 +287,7 @@ public class AudioPlayerBar : UserControl
             Background = TryFindResource("BaseBrush") as Brush ?? Brushes.Black,
             BorderBrush = TryFindResource("BorderBrush") as Brush ?? Brushes.Gray,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),   // Web .apopup
             Padding = new Thickness(6),
             Margin = new Thickness(0, 0, 0, 6),
             Child = panel,

@@ -30,14 +30,16 @@
         </Style>
 
         <!-- 文件叶子节点（按类型隐式套用：目录树里出现 DownloadFileItem 即用此模板） -->
+        <!-- 对齐 Web .dfile：文件名（灰、撑满）· 120×8 细进度条 · 速度（右对齐 11.5px）· 状态 · 复制链接（.mini），间距 8；
+             失败原因（.ferr）另起一行 12px 红字 -->
         <DataTemplate DataType="{x:Type v:DownloadFileItem}">
-            <StackPanel Margin="0,2">
-                <Grid>
+            <StackPanel Margin="0,3">
+                <Grid TextElement.FontSize="12.5">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="220" />
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="*" MinWidth="80" />
+                        <ColumnDefinition Width="128" />
+                        <ColumnDefinition Width="Auto" MinWidth="62" />
+                        <ColumnDefinition Width="Auto" MinWidth="60" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{Binding FileName}"
@@ -45,34 +47,37 @@
                                ToolTip="{Binding Url}"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     <ProgressBar Grid.Column="1" Value="{Binding Pct}" Maximum="100"
-                                 Height="10" VerticalAlignment="Center"
-                                 Margin="0,0,12,0"
-                                 Foreground="#39507e" Background="#1c2130" />
+                                 Height="8" VerticalAlignment="Center" Margin="8,0,0,0" />
                     <TextBlock Grid.Column="2" Text="{Binding SpeedText}"
-                               Style="{StaticResource CaptionText}"
+                               Foreground="{StaticResource CaptionBrush}" FontSize="11.5"
+                               TextAlignment="Right" Margin="8,0,0,0"
                                VerticalAlignment="Center" />
                     <TextBlock Grid.Column="3" Text="{Binding StatusText}"
-                               Foreground="{Binding StatusBrush}"
+                               Foreground="{Binding StatusBrush}" Margin="8,0,0,0"
                                VerticalAlignment="Center" />
                     <Button Grid.Column="4" Content="{Binding CopyUrlText}"
-                            FontSize="11" Padding="8,2" Margin="8,0,0,0"
+                            Style="{StaticResource MiniButton}" Margin="8,0,0,0"
                             Click="CopyUrl_Click" />
                 </Grid>
                 <TextBlock Text="{Binding ErrorReason}"
                            Visibility="{Binding ErrorVisibility}"
-                           Foreground="#f87171" FontSize="11"
-                           TextWrapping="Wrap" Margin="0,3,0,0" />
+                           Foreground="{StaticResource RedBrush}" FontSize="12"
+                           TextWrapping="Wrap" Margin="4,0,0,3" />
             </StackPanel>
         </DataTemplate>
 
         <!-- 文件夹节点：标题行 + 递归子节点（子节点按类型隐式套用上面的文件/文件夹模板） -->
         <DataTemplate DataType="{x:Type v:DownloadFolderItem}">
-            <StackPanel Margin="0,2,0,0">
+            <!-- 对齐 Web .dfhead：▾ + 文件夹名（粗体）+「N 项」（灰），12.5px -->
+            <StackPanel Margin="0,3,0,0" TextElement.FontSize="12.5">
                 <StackPanel Orientation="Horizontal">
                     <ToggleButton IsChecked="{Binding IsExpanded}" Style="{StaticResource ExpandToggle}" />
                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
                                Foreground="{StaticResource TextBrush}"
                                VerticalAlignment="Center" Margin="2,0,0,0" />
+                    <TextBlock Text="{Binding Children.Count, StringFormat={}{0} 项}"
+                               Foreground="{StaticResource CaptionBrush}"
+                               VerticalAlignment="Center" Margin="6,0,0,0" />
                 </StackPanel>
                 <ItemsControl ItemsSource="{Binding Children}" Visibility="{Binding ChildrenVisibility}"
                               Margin="16,0,0,0" />
@@ -100,10 +105,9 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="200" />
                 </Grid.ColumnDefinitions>
                 <!-- "已下载"为本分区第二视图入口（对齐 Web 下载管理工具栏首位）；搜索已移到独立的"DLsite 搜索"导航 -->
-                <Button x:Name="ShowDownloadedButton" MinWidth="100"
+                <Button x:Name="ShowDownloadedButton"
                         Click="ShowDownloadedButton_Click" Content="已下载" />
                 <Button x:Name="ClearDoneButton" Grid.Column="1" Margin="8,0,0,0"
                         Click="ClearDoneButton_Click" Content="清除已完成" />
@@ -117,13 +121,36 @@
                         Click="StartButton_Click" Content="开始下载" />
                 <Button x:Name="ReparseAllButton" Grid.Column="5" Margin="8,0,0,0"
                         Click="ReparseAllButton_Click" Content="全部重新解析" />
-                <TextBlock x:Name="UsageLabel" Grid.Column="7" VerticalAlignment="Center"
-                           Style="{StaticResource CaptionText}" Margin="0,0,8,0" Text="debrid-link 使用量 --"
-                           Background="Transparent" Cursor="Hand" MouseLeftButtonUp="Usage_Click" />
-                <ProgressBar x:Name="UsageBar" Grid.Column="8" Height="10" VerticalAlignment="Center"
-                             Cursor="Hand" MouseLeftButtonUp="Usage_Click" />
+                <!-- debrid-link 使用量卡片（Web .usage-card）：靠右，surface2 底 + 描边 + 圆角 10，
+                     上一行灰字说明、下一条 6px 紫色细条（.bar > i 的 #a78bfa）；点击看各网盘详情 -->
+                <Border Grid.Column="7" MinWidth="220" Background="{StaticResource ButtonBrush}"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10"
+                        Padding="12,7" Cursor="Hand" MouseLeftButtonUp="Usage_Click"
+                        ToolTip="点击查看各网盘流量详情">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="UsageLabel" Foreground="{StaticResource CaptionBrush}" FontSize="12.5"
+                                   Text="debrid-link 使用量 --" />
+                        <ProgressBar x:Name="UsageBar" Height="6" Margin="0,6,0,0" Foreground="#a78bfa" />
+                    </StackPanel>
+                </Border>
             </Grid>
         </Border>
+
+        <!-- 空态（Web .empty「下载列表为空」：灰字居中、上下留白 50） -->
+        <TextBlock Grid.Row="1" Text="下载列表为空" x:Name="EmptyLabel"
+                   Foreground="{StaticResource CaptionBrush}" HorizontalAlignment="Center"
+                   VerticalAlignment="Top" Margin="0,50,0,0">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasItems, ElementName=GroupList}" Value="False">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
 
         <!-- 下载列表（两级树：番号 -> 分卷文件）；虚拟化：仅渲染视口内的番号卡，元素数量恒定 -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" CanContentScroll="True">
@@ -138,19 +165,21 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Style="{StaticResource Card}" Margin="0,3">
+                        <!-- Web .dl：padding 10/14、行间距 8 -->
+                        <Border Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,8">
                             <StackPanel>
-                                <!-- 父行：番号 -->
+                                <!-- 父行：列序对齐 Web .drow——▸ · 作品名（撑满）· 进度条 · 状态 · 速度 · 操作，间距 10 -->
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="24" />
+                                        <ColumnDefinition Width="26" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="220" />
-                                        <ColumnDefinition Width="110" />
-                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="240" />
+                                        <ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="Auto" MinWidth="72" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <ToggleButton IsChecked="{Binding IsExpanded}" Width="20" Height="20"
+                                    <ToggleButton IsChecked="{Binding IsExpanded}" Width="16" Height="20"
+                                                  HorizontalAlignment="Left"
                                                   Background="Transparent" BorderThickness="0"
                                                   Foreground="{StaticResource CaptionBrush}"
                                                   Cursor="Hand">
@@ -178,41 +207,45 @@
                                     <TextBlock Grid.Column="1" Text="{Binding DisplayName}" FontWeight="SemiBold"
                                                TextTrimming="CharacterEllipsis" ToolTip="{Binding WorkId}"
                                                VerticalAlignment="Center" />
-                                    <Grid Grid.Column="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <!-- Web .dprog：18px 高、圆角 5，百分比居中叠在上面（11px） -->
+                                    <Grid Grid.Column="2" VerticalAlignment="Center" Margin="10,0,0,0">
                                         <ProgressBar Value="{Binding Pct}" Maximum="100" Height="18" />
                                         <TextBlock Text="{Binding PctText}" FontSize="11"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Grid>
-                                    <TextBlock Grid.Column="3" Text="{Binding SpeedText}"
-                                               VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="4" Text="{Binding StatusText}"
-                                               Foreground="{Binding StatusBrush}" FontWeight="SemiBold"
-                                               VerticalAlignment="Center" />
-                                    <StackPanel Grid.Column="5" Orientation="Horizontal">
-                                        <!-- 跳转作品排第一（对齐 Web download.js 的 .dacts） -->
-                                        <Button Content="{Binding OpenText}" FontSize="12" Padding="10,3"
-                                                Margin="0,0,6,0" Visibility="{Binding OpenVisibility}"
+                                    <!-- Web .dst：13px 粗体，按状态着色，过长省略 -->
+                                    <TextBlock Grid.Column="3" Text="{Binding StatusText}"
+                                               Foreground="{Binding StatusBrush}" FontWeight="SemiBold" FontSize="13"
+                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding StatusText}"
+                                               Margin="10,0,0,0" VerticalAlignment="Center" />
+                                    <!-- Web .dsp：灰 12.5px，右对齐 -->
+                                    <TextBlock Grid.Column="4" Text="{Binding SpeedText}"
+                                               Foreground="{StaticResource CaptionBrush}" FontSize="12.5"
+                                               TextAlignment="Right" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                    <!-- 行操作（Web .dacts 的 .mini，间距 6）：跳转作品排第一；只有「删除」是红色 -->
+                                    <StackPanel Grid.Column="5" Orientation="Horizontal" Margin="10,0,0,0">
+                                        <StackPanel.Resources>
+                                            <Style TargetType="Button" BasedOn="{StaticResource MiniButton}">
+                                                <Setter Property="Margin" Value="0,0,6,0" />
+                                            </Style>
+                                        </StackPanel.Resources>
+                                        <Button Content="{Binding OpenText}" Visibility="{Binding OpenVisibility}"
                                                 Click="OpenWork_Click" />
-                                        <Button Content="{Binding DownloadText}" FontSize="12" Padding="10,3"
+                                        <Button Content="{Binding DownloadText}"
                                                 Visibility="{Binding ResumeVisibility}" Click="DownloadOne_Click" />
-                                        <Button Content="{Binding StopText}" FontSize="12" Padding="10,3"
-                                                Margin="6,0,0,0" Visibility="{Binding PauseVisibility}"
+                                        <Button Content="{Binding StopText}" Visibility="{Binding PauseVisibility}"
                                                 Click="StopOne_Click" />
-                                        <Button Content="{Binding ReparseText}" FontSize="12" Padding="10,3"
-                                                Margin="6,0,0,0" Visibility="{Binding ActionsVisibility}"
+                                        <Button Content="{Binding ReparseText}" Visibility="{Binding ActionsVisibility}"
                                                 Click="Reparse_Click" />
-                                        <!-- 与「下载/停止/重新解析」同为中性按钮，只有「删除」是红色（对齐 Web 的 .mini / .mini.danger） -->
-                                        <Button Content="{Binding ResearchText}" FontSize="12" Padding="10,3"
-                                                Margin="6,0,0,0" Visibility="{Binding ActionsVisibility}"
+                                        <Button Content="{Binding ResearchText}" Visibility="{Binding ActionsVisibility}"
                                                 Click="Research_Click" />
-                                        <Button Content="{Binding DeleteText}" FontSize="12" Padding="10,3"
-                                                Style="{StaticResource DangerButton}"
-                                                Margin="6,0,0,0" Click="DeleteOne_Click" />
+                                        <Button Content="{Binding DeleteText}" Style="{StaticResource MiniDangerButton}"
+                                                Click="DeleteOne_Click" />
                                     </StackPanel>
                                 </Grid>
                                 <!-- 子树：作品内目录层级（文件夹/文件递归），最多约 10 行高，超出滚动 -->
                                 <!-- 顶层节点虚拟化：CanContentScroll + VirtualizingStackPanel 只渲染视口内的行 -->
-                                <ScrollViewer Visibility="{Binding ChildrenVisibility}" Margin="24,4,0,0"
+                                <ScrollViewer Visibility="{Binding ChildrenVisibility}" Margin="22,8,0,0"
                                               MaxHeight="260" VerticalScrollBarVisibility="Auto"
                                               CanContentScroll="True">
                                     <!-- 文件/文件夹为异构模板，用 Standard 模式避免回收复用错模板 -->

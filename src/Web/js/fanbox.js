@@ -1,11 +1,14 @@
-// fanbox.js ——「作品搜索」分区里的 FANBOX 数据源（pawchive）：搜作家 → 作家主页选作品 → 批量/单篇下载。
+// fanbox.js ——「作品搜索」分区里的 FANBOX 数据源：搜作家 → 作家主页选作品 → 批量/单篇下载。
+// 两个来源共用本模块：「FANBOX」走 pawchive 归档（匿名），「FANBOX（账号名）」直连 fanbox.cc 官方站
+// （「账号访问」里登录了才有）。两者面板、卡片、详情、下载完全相同，只是请求带不带 site=cc（fbSite）；
+// 官方站的作家键是 creatorId（字符串），pawchive 是纯数字作家号，前端一律当不透明字符串传。
 // 只做搜索与下载，不含媒体库浏览：已下载的 fanbox 作品落在磁盘的媒体库目录里，程序内不再单独建卡片视图。
 // 工具栏（来源下拉 + 输入框 + 查询）由 search.js 统一提供，本模块只负责两个结果面板：
 //   fbArtistPane 作家搜索结果（只有一个结果时直接进主页）
 //   fbPostPane   作家主页：作品网格 + 卡内按钮选择 + 批量下载
 //   fbDetailPane 单篇作品内容：正文 + 图集（灯箱）+ 附件清单 + 下载本篇
-// 作家监控（有新作品自动下载）的列表与间隔设置不在这里，在「系统设置 → FANBOX 作家监控」（settings.js）；
-// 本模块只留作家主页选择条上的「+ 监控作家」，以及被设置页「打开主页」调用的 fbGotoArtist。
+// 作家监控（有新作品自动下载）的列表与间隔设置不在这里，在一级导航「作家监控」（watch.js）；
+// 本模块只留作家主页选择条上的「+ 监控作家」，以及被监控页「打开主页」调用的 fbGotoArtist。
 let fbArtist = null;        // 当前作家 { id, name, publicId }
 let fbPosts = [];           // 作家主页已加载的作品（跨分页累积）
 let fbSel = new Set();      // 选中待下载的作品号
@@ -18,9 +21,20 @@ let fbWatched = false;      // 当前作家是否已在监控中（作家主页�
 let fbDetailGen = 0;
 let fbGridScroll = 0;       // 进详情前作品网格的滚动位置，返回时恢复
 let fbPageIo = null;        // 详情页图流的懒加载观察器（滚到跟前才给图贴 src）
-let fbDetail = null;        // 当前详情页的作品 { id, state }，工具栏「下载」据此定文案
+let fbDetail = null;        // 当前详情页的作品 { id, state, locked }，工具栏「下载」据此定文案
+let fbSite = '';            // '' = pawchive，'cc' = fanbox.cc 官方站（由 search.js 切来源时经 fbSetSite 设定）
 
 const fbImg = (url) => '/api/fanbox/image?url=' + enc(url);
+const fbCc = () => fbSite === 'cc';
+
+// 切换 pawchive / 官方站：两边的作家键与结果互不通用，换站即清空面板与状态
+function fbSetSite(site) {
+  if (site === fbSite) return;
+  fbSite = site;
+  fbResetState();
+  ['fbArtistPane', 'fbPostPane', 'fbDetailPane'].forEach(id => { const p = $(id); if (p) p.innerHTML = ''; });
+  if ($('fbArtistPane')) fbShowArtistPane();
+}
 
 // ---------- 面板骨架 ----------
 
@@ -73,9 +87,9 @@ function fbUpdateToolbarBtns() {
   const done = fbDetail.state === '已品悦';
   const busy = fbDetail.state === '下载中' || fbDetail.state === '已下载';
   d.style.display = '';
-  d.textContent = done ? '已下载' : (busy ? fbDetail.state : '下载');
-  d.disabled = done || busy;
-  d.classList.toggle('primary', !done && !busy);
+  d.textContent = done ? '已下载' : (busy ? fbDetail.state : (fbDetail.locked ? '🔒 需赞助' : '下载'));
+  d.disabled = done || busy || fbDetail.locked;
+  d.classList.toggle('primary', !done && !busy && !fbDetail.locked);
 }
 
 // 工具栏「下载」：只入队当前详情这一篇
@@ -121,6 +135,8 @@ function fbParseInput(raw) {
 // 由 search.js 的「查询」按钮 / 回车触发
 async function fbRunSearch() {
   const raw = ($('sId') && $('sId').value.trim()) || '';
+  // 官方站：留空查询 = 列出我赞助 / 关注的作家；作家链接与 creatorId 由服务端认，这里不拆
+  if (fbCc()) { await fbSearchArtists(raw); return; }
   if (!raw) return;
   const p = fbParseInput(raw);
   // 直接给出作家号（或粘链接）时跳过搜索，径直进主页
@@ -132,17 +148,24 @@ async function fbSearchArtists(kw) {
   const gen = ++fbGen;
   fbShowArtistPane();
   const box = $('fbArtistPane');
-  box.innerHTML = '<div class="empty"><span class="spin"></span> 正在搜索作家…（首次搜索需下载站点作家索引，约 15MB）</div>';
+  box.innerHTML = fbCc()
+    ? '<div class="empty"><span class="spin"></span> 正在查询 fanbox.cc…</div>'
+    : '<div class="empty"><span class="spin"></span> 正在搜索作家…（首次搜索需下载站点作家索引，约 15MB）</div>';
   $('count').textContent = '';
   let d;
-  try { d = await api('/api/fanbox/artists?q=' + enc(kw)); } catch (e) { return; }
+  try { d = await api('/api/fanbox/artists?q=' + enc(kw) + (fbCc() ? '&site=cc' : '')); } catch (e) { return; }
   if (gen !== fbGen) return;
   const artists = d.artists || [];
-  // 只有一个结果 → 直接进入该作家主页（免去多余一次点击）
-  if (artists.length === 1) { await fbOpenArtist(artists[0], false); return; }
+  // 只有一个结果 → 直接进入该作家主页（免去多余一次点击）；「我赞助/关注的」列表例外，那是要挑的
+  if (artists.length === 1 && !d.mine) { await fbOpenArtist(artists[0], false); return; }
   box.innerHTML = '';
-  if (!artists.length) { box.appendChild(el('div', 'empty', '没有匹配的作家')); return; }
-  $('count').textContent = `搜索到 ${artists.length} 位作家` + (d.cachedAt ? `　索引更新于 ${d.cachedAt}` : '');
+  if (!artists.length) {
+    box.appendChild(el('div', 'empty', d.error || (d.mine ? '还没有赞助或关注任何作家' : '没有匹配的作家')));
+    return;
+  }
+  $('count').textContent = d.mine
+    ? `我赞助 / 关注的作家 ${artists.length} 位`
+    : `搜索到 ${artists.length} 位作家` + (d.cachedAt ? `　索引更新于 ${d.cachedAt}` : '');
   const grid = el('div', 'grid cards');
   artists.forEach(a => grid.appendChild(fbMakeArtistCard(a)));
   box.appendChild(grid);
@@ -184,7 +207,9 @@ async function fbOpenArtist(artist, fromArtists) {
   const none = el('button', 'icon-btn', '清空'); none.onclick = () => fbSelectAll(false);
   const dl = el('button', 'icon-btn primary', '下载选中'); dl.id = 'fbDlBtn'; dl.onclick = fbDownloadSelected;
   // 监控这位作家：加进监控后按设定的间隔轮询，有新作品就自动下载
+  // 监控只走 pawchive（后台轮询不该拿着登录 cookie 反复敲官方站），官方站来源不给这颗按钮
   const watch = el('button', 'icon-btn'); watch.id = 'fbWatchToggle'; watch.onclick = fbToggleWatch;
+  if (fbCc()) watch.style.display = 'none';
   selbar.append(info, watch, all, none, dl);
   box.appendChild(selbar);
   fbUpdateWatchBtn();
@@ -198,6 +223,7 @@ async function fbOpenArtist(artist, fromArtists) {
 async function fbFetchPosts(gen, offset) {
   const q = new URLSearchParams();
   q.set('id', fbArtist ? fbArtist.id : ''); q.set('service', 'fanbox'); q.set('o', offset);
+  if (fbCc()) q.set('site', 'cc');
   let d;
   try { d = await api('/api/fanbox/posts?' + q); } catch (e) { return null; }
   if (gen !== fbGen) return null;
@@ -244,7 +270,7 @@ function fbMakePostCard(p) {
   const done = p.state === '已品悦';
   const busy = p.state === '下载中' || p.state === '已下载';
   const picked = fbSel.has(p.id);
-  const c = el('div', 'card mk' + (done || busy ? ' dim' : '') + (picked ? ' picked' : ''));
+  const c = el('div', 'card mk' + (done || busy || p.locked ? ' dim' : '') + (picked ? ' picked' : ''));
 
   const cov = el('div', 'cover');
   if (p.cover) { const img = el('img'); img.loading = 'lazy'; img.src = fbImg(p.cover); cov.appendChild(img); }
@@ -252,13 +278,15 @@ function fbMakePostCard(p) {
   // 作品本体在网盘上（站上只归档了一张封面图）：入队时会连网盘文件一起下
   if (p.drive) cov.appendChild(el('div', 'badge rj', '☁ 网盘'));
   if (done || busy) cov.appendChild(el('div', 'badge lib', done ? '已下载' : p.state));
+  // 官方站：当前账号的赞助档位看不到这篇
+  else if (p.locked) cov.appendChild(el('div', 'badge lib', '🔒 ' + (p.fee ? `¥${p.fee}` : '需赞助')));
   c.appendChild(cov);
 
   const foot = el('div', 'mk-foot');
   foot.appendChild(el('div', 'wt', p.title || p.id));
   const acts = el('div', 'mcard-actions');
-  if (done || busy) {
-    const st = el('button', null, done ? '已下载' : p.state); st.disabled = true;
+  if (done || busy || p.locked) {
+    const st = el('button', null, done ? '已下载' : (busy ? p.state : '🔒 需赞助')); st.disabled = true;
     acts.appendChild(st);
   } else {
     const selBtn = el('button', picked ? 'primary' : null, picked ? '已选' : '选择');
@@ -286,7 +314,7 @@ function fbTogglePick(id, card, btn) {
   fbUpdateSelInfo();
 }
 
-const fbPostSelectable = (p) => p.state !== '已品悦' && p.state !== '下载中' && p.state !== '已下载';
+const fbPostSelectable = (p) => p.state !== '已品悦' && p.state !== '下载中' && p.state !== '已下载' && !p.locked;
 
 function fbSelectAll(on) {
   fbSel = new Set();
@@ -363,6 +391,7 @@ async function fbOpenPost(post) {
 
   const q = new URLSearchParams();
   q.set('id', fbArtist ? fbArtist.id : ''); q.set('post', post.id); q.set('service', 'fanbox');
+  if (fbCc()) q.set('site', 'cc');
   let d;
   try { d = await api('/api/fanbox/post?' + q); } catch (e) { return; }
   // 期间已返回列表或换了作家就丢弃本次结果
@@ -378,7 +407,7 @@ function fbRenderPost(box, d) {
   const busy = d.state === '下载中' || d.state === '已下载';
 
   // 下载这一篇的按钮在共用工具栏上（查询 与 返回 之间），详情页自己不再另起一条操作条
-  fbDetail = { id: d.id, state: d.state || '' };
+  fbDetail = { id: d.id, state: d.state || '', locked: !!d.locked };
   fbUpdateToolbarBtns();
 
   const root = el('div', 'detail');
@@ -415,7 +444,8 @@ function fbRenderPost(box, d) {
   const links = d.links || [];
   addF('文件', `${d.files} 个（图片 ${imgs.length}）` +
     (links.length ? `　网盘 ${links.length} 条` : ''));
-  addF('状态', done ? '已下载' : (d.state || '未下载'));
+  addF('状态', done ? '已下载'
+    : (d.state || (d.locked ? '🔒 需赞助' + (d.fee ? ` ¥${d.fee} 档位` : '') + '才能查看' : '未下载')));
   top.appendChild(fields);
   root.appendChild(top);
 
@@ -489,7 +519,7 @@ async function fbEnqueue(ids, btn) {
   let r;
   try {
     r = await apiPost('/api/fanbox/enqueue', {
-      id: fbArtist.id, service: 'fanbox', posts: ids, lib, folder,
+      id: fbArtist.id, service: 'fanbox', posts: ids, lib, folder, site: fbSite,
     });
   } catch (e) {
     if (btn) { btn.textContent = orig; btn.disabled = false; }
@@ -508,13 +538,14 @@ async function fbEnqueue(ids, btn) {
 }
 
 // ---------- 作家监控（有新作品自动下载） ----------
-// 监控列表、轮询间隔与总开关都在「系统设置 → FANBOX 作家监控」（settings.js 的 renderFanboxWatchSection），
-// 本模块只留两处：作家主页选择条上的「+ 监控作家 / ✓ 已监控」，以及设置页「打开主页」回跳到这里。
+// 监控列表、轮询间隔与总开关都在一级导航「作家监控」（watch.js 的 renderWatchPage），
+// 本模块只留两处：作家主页选择条上的「+ 监控作家 / ✓ 已监控」，以及监控页「打开主页」回跳到这里。
 // 数据在服务端的 fanbox_watch 表里，后台按各作家自己的间隔轮询 pawchive：
 // 发现比"添加监控那一刻"更新的投稿，就按该作家设定的媒体库自动入队下载。
 // 判"新"看的是投稿的发布时间而不是"本地有没有这篇"，所以手动删掉的作品不会被一次次下回来。
 
-// 设置页监控卡的「打开主页」：跨分区切到 作品搜索 → FANBOX，并直接进这位作家的作品网格
+// 作家监控页监控卡的「打开主页」：跨分区切到 作品搜索 → FANBOX，并直接进这位作家的作品网格
+// 监控只走 pawchive，故固定切到「FANBOX」那一项（不是官方站）
 function fbGotoArtist(id, name) {
   selectSection('search');
   const sel = $('srcSel');

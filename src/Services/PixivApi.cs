@@ -252,6 +252,34 @@ public static class PixivApi
             : (true, "连接正常（已登录）");
     }
 
+    /// <summary>
+    /// 从 PHPSESSID / FANBOXSESSID 里取出 pixiv 用户号：两者都形如 <c>12345678_随机串</c>，
+    /// 下划线前那段就是账号的用户号（FANBOX 用的就是 pixiv 账号）。取不出返回空串。
+    /// </summary>
+    public static string UserIdFromSession(string session)
+    {
+        var cut = (session ?? "").IndexOf('_');
+        if (cut <= 0)
+            return "";
+        var id = session![..cut];
+        return id.All(char.IsAsciiDigit) ? id : "";
+    }
+
+    /// <summary>
+    /// 按用户号查 pixiv 的显示名（匿名即可查，不依赖登录）；查不到返回 null。
+    /// 「账号访问」页据此把「已登录（显示名）」写出来，FANBOX 的登录也借它取名字——两者是同一个 pixiv 账号。
+    /// </summary>
+    public static async Task<string?> GetUserNameAsync(string userId)
+    {
+        if (userId.Length == 0 || !userId.All(char.IsAsciiDigit))
+            return null;
+        var (body, _) = await GetBodyAsync($"{Origin}/ajax/user/{userId}?lang=zh");
+        if (body is not { } b)
+            return null;
+        var name = JStr(b, "name");
+        return name.Length > 0 ? name : null;
+    }
+
     // ---------- 输入解析 ----------
 
     private static readonly Regex ArtworkLinkPattern =

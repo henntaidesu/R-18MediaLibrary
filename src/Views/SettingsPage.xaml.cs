@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using R18MediaLibrary.Core;
 using R18MediaLibrary.Services;
 using R18MediaLibrary.Services.Translate;
@@ -16,12 +18,8 @@ namespace R18MediaLibrary.Views;
 public partial class SettingsPage : UserControl
 {
     private bool _loading;  // 回填控件时不触发保存
-    private readonly List<string> _unzipPwds = new();  // 解压密码库：一条一个输入框
+    private readonly List<string> _unzipPwds = new();  // 解压密码库：一条一张小卡片
     private readonly MediaLibSettingDialog _mediaLibSection = new();  // 内联的媒体库管理区块（常驻，扫描随其存活）
-    private readonly FanboxWatchSettings _fanboxWatchSection = new();  // 内联的 FANBOX 作家监控区块
-
-    /// <summary>监控卡的「打开主页」：请求跨分区切到 作品搜索 → FANBOX 并打开这位作家（参数：作家号 / 作家名）。</summary>
-    public event Action<string, string>? OpenFanboxArtistRequested;
 
     public SettingsPage()
     {
@@ -32,8 +30,6 @@ public partial class SettingsPage : UserControl
         // 媒体库管理内联进设置页（对齐 Web 设置页），构建一次；扫描状态在页面切换间保持
         MediaLibHost.Content = _mediaLibSection.BuildSection(this);
         // FANBOX 作家监控同样内联进设置页（对齐 Web），「打开主页」转交宿主跨分区跳转
-        _fanboxWatchSection.OpenArtistRequested += (id, name) => OpenFanboxArtistRequested?.Invoke(id, name);
-        FanboxWatchHost.Content = _fanboxWatchSection.BuildSection(this);
         I18n.LanguageChanged += RetranslateUi;
         // 模型依赖下载在后台线程推进度，切回调度线程再动控件
         TranslateDeps.Changed += OnTranslateDepsChanged;
@@ -157,6 +153,7 @@ public partial class SettingsPage : UserControl
     private void RetranslateUi()
     {
         _loading = true;
+        PageTitle.Text = I18n.Tr("系统设置");
         DownloadGroup.Header = I18n.Tr("下载");
         ProxyGroup.Header = I18n.Tr("代理");
         DebridGroup.Header = I18n.Tr("Debrid-Link 下载中转站");
@@ -170,28 +167,19 @@ public partial class SettingsPage : UserControl
         EhentaiGroup.Header = "E-Hentai";
         EhHostLabel.Text = I18n.Tr("站点");
         EhOriginalLabel.Text = I18n.Tr("图片画质");
-        EhUserLabel.Text = I18n.Tr("账号");
-        EhPassLabel.Text = I18n.Tr("密码");
-        EhLoginButton.Content = I18n.Tr("登录并获取 Cookie");
-        EhLogoutButton.Content = I18n.Tr("退出登录");
-        EhMemberLabel.Text = "member_id";
-        EhHashLabel.Text = "pass_hash";
-        EhIgneousLabel.Text = "igneous";
         EhTestButton.Content = I18n.Tr("连接测试");
+        EhHint.Text = I18n.Tr("登录（访问里站、下载原图）请到左侧「账号访问」页。");
         BuildEhOriginalCombo();
         PixivGroup.Header = "pixiv";
         PxOriginalLabel.Text = I18n.Tr("图片画质");
         PxModeLabel.Text = I18n.Tr("搜索分级");
         PxMatchLabel.Text = I18n.Tr("匹配方式");
-        PxSessionLabel.Text = "PHPSESSID";
         PxTestButton.Content = I18n.Tr("连接测试");
         PxHint.Text = I18n.Tr(
-            "留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉。" +
-            "要看 R-18，请在浏览器登录 pixiv 后从 Cookie 里复制 PHPSESSID 填在这里。");
+            "未登录也能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请到左侧「账号访问」页登录 pixiv。");
         BuildPixivCombos();
         SystemGroup.Header = I18n.Tr("系统");
         MediaLibGroup.Header = I18n.Tr("媒体库");
-        FanboxWatchGroup.Header = I18n.Tr("FANBOX 作家监控");
         PathLabel.Text = I18n.Tr("缓存路径");
         PathChooseButton.Content = I18n.Tr("保存");
         AutoDownloadLabel.Text = I18n.Tr("自动下载");
@@ -200,7 +188,7 @@ public partial class SettingsPage : UserControl
         DebridTestButton.Content = I18n.Tr("测试");
         DownProcLabel.Text = I18n.Tr("单文件线程数");
         DownProcLabel.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段");
-        DownProcBox.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段，最大 16");
+        DownProcBox.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段，最大 6");
         MinSpeedLabel.Text = I18n.Tr("最低速度 (KB/s)");
         MinSpeedBox.ToolTip = I18n.Tr("持续低于该速度 30 秒后自动重试，0 表示不限制");
         SpeedLimitLabel.Text = I18n.Tr("速度限制 (KB/s)");
@@ -269,10 +257,7 @@ public partial class SettingsPage : UserControl
     private void Page_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (!(bool)e.NewValue)
-        {
-            _fanboxWatchSection.Suspend();   // 离开设置页即停掉监控状态轮询，没人看时不必每 1.5 秒查一次
             return;
-        }
         // 切换到本页时若配置版本变过才重读数据库（未变则用进程缓存，避免每次进页都打库）
         if (AppConfig.Version != _cfgVersionSeen)
         {
@@ -281,7 +266,6 @@ public partial class SettingsPage : UserControl
         }
         ReadConf();
         _mediaLibSection.RefreshLibs();   // 拾取外部对媒体库的改动
-        _fanboxWatchSection.Refresh();    // 监控状态可能被后台轮询改过
     }
 
     /// <summary>用户的"下载"文件夹。</summary>
@@ -324,11 +308,6 @@ public partial class SettingsPage : UserControl
         var ehHost = Array.IndexOf(EhHosts, AppConfig.EhentaiHost);
         EhHostCombo.SelectedIndex = ehHost >= 0 ? ehHost : 0;
         EhOriginalCombo.SelectedIndex = AppConfig.EhentaiOriginal ? 0 : 1;
-        EhUserBox.Text = AppConfig.EhentaiUsername;
-        EhMemberBox.Text = AppConfig.EhentaiMemberId;
-        EhHashBox.Text = AppConfig.EhentaiPassHash;
-        EhIgneousBox.Text = AppConfig.EhentaiIgneous;
-        PxSessionBox.Text = AppConfig.PixivSessionId;
         PxOriginalCombo.SelectedIndex = AppConfig.PixivOriginal ? 0 : 1;
         PxModeCombo.SelectedIndex = Math.Max(0, Array.IndexOf(PixivModes, AppConfig.PixivSearchMode));
         PxMatchCombo.SelectedIndex = Math.Max(0, Array.IndexOf(PixivMatches, AppConfig.PixivTagMatch));
@@ -344,7 +323,7 @@ public partial class SettingsPage : UserControl
 
         AutoDownloadCombo.SelectedIndex = AppConfig.AutoDownload ? 0 : 1;
         AutoUnzipCombo.SelectedIndex = AppConfig.AutoUnzip ? 0 : 1;
-        DownProcBox.Text = AppConfig.DownloadProcesses.ToString();
+        DownProcBox.SelectedIndex = AppConfig.DownloadProcesses - 1;
         MinSpeedBox.Text = AppConfig.MinSpeedKb.ToString();
         SpeedLimitBox.Text = AppConfig.SpeedLimitKb.ToString();
         _unzipPwds.Clear();
@@ -561,100 +540,9 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("ehentai", "original", EhOriginalCombo.SelectedIndex == 0 ? "True" : "False");
     }
 
-    private void EhUserBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_loading)
-            return;
-        AppConfig.Write("ehentai", "username", EhUserBox.Text.Trim());
-    }
-
-    /// <summary>
-    /// 账号密码登录：由 <see cref="EhentaiApi.LoginAsync"/> 取回三个 cookie 并落库，
-    /// 这里只负责回填输入框——登录成功后用户应当能在下面看到取到了什么。
-    /// </summary>
-    private async void EhLoginButton_Click(object sender, RoutedEventArgs e)
-    {
-        var user = EhUserBox.Text.Trim();
-        var pass = EhPassBox.Password;
-        if (user.Length == 0 || pass.Length == 0)
-        {
-            InAppDialog.Warn(this, I18n.Tr("请先填写账号与密码"), I18n.Tr("登录"));
-            return;
-        }
-
-        AppConfig.Write("ehentai", "username", user);
-        EhLoginButton.IsEnabled = false;
-        EhLoginButton.Content = I18n.Tr("登录中…");
-        try
-        {
-            var result = await EhentaiApi.LoginAsync(user, pass);
-            if (result.Ok)
-            {
-                // 拿到的 cookie 要显示出来：用户据此知道里站权限到底有没有拿到
-                _loading = true;
-                EhMemberBox.Text = AppConfig.EhentaiMemberId;
-                EhHashBox.Text = AppConfig.EhentaiPassHash;
-                EhIgneousBox.Text = AppConfig.EhentaiIgneous;
-                _loading = false;
-                EhPassBox.Clear();   // 密码不留在界面上，也不写进配置
-                InAppDialog.Info(this, result.Message, I18n.Tr("登录成功"));
-            }
-            else
-            {
-                InAppDialog.Warn(this, result.Message, I18n.Tr("登录失败"));
-            }
-        }
-        finally
-        {
-            EhLoginButton.IsEnabled = true;
-            EhLoginButton.Content = I18n.Tr("登录并获取 Cookie");
-        }
-    }
-
-    /// <summary>退出登录：清掉三个 cookie（账号名留着，方便下次再登）。</summary>
-    private void EhLogoutButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!InAppDialog.Confirm(
-                this, I18n.Tr("确定要清除 E-Hentai 登录信息吗？清除后将无法访问 exhentai(里站)。"),
-                I18n.Tr("退出登录")))
-            return;
-
-        AppConfig.Write("ehentai", "member_id", "");
-        AppConfig.Write("ehentai", "pass_hash", "");
-        AppConfig.Write("ehentai", "igneous", "");
-        EhentaiApi.Invalidate();
-        _loading = true;
-        EhMemberBox.Text = "";
-        EhHashBox.Text = "";
-        EhIgneousBox.Text = "";
-        _loading = false;
-        EhPassBox.Clear();
-    }
-
-    private void EhMemberBox_LostFocus(object sender, RoutedEventArgs e) =>
-        SaveEhCookie("member_id", EhMemberBox.Text);
-
-    private void EhHashBox_LostFocus(object sender, RoutedEventArgs e) =>
-        SaveEhCookie("pass_hash", EhHashBox.Text);
-
-    private void EhIgneousBox_LostFocus(object sender, RoutedEventArgs e) =>
-        SaveEhCookie("igneous", EhIgneousBox.Text);
-
-    private void SaveEhCookie(string key, string value)
-    {
-        if (_loading)
-            return;
-        AppConfig.Write("ehentai", key, value.Trim());
-        EhentaiApi.Invalidate();
-    }
-
     private async void EhTestButton_Click(object sender, RoutedEventArgs e)
     {
-        // 先保存当前输入，再用其连接
-        AppConfig.Write("ehentai", "member_id", EhMemberBox.Text.Trim());
-        AppConfig.Write("ehentai", "pass_hash", EhHashBox.Text.Trim());
-        AppConfig.Write("ehentai", "igneous", EhIgneousBox.Text.Trim());
-        EhentaiApi.Invalidate();
+        // 登录 cookie 在「账号访问」页填写，这里只测当前配置能不能连上
         EhTestButton.IsEnabled = false;
         try
         {
@@ -729,19 +617,9 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("pixiv", "s_mode", PixivMatches[PxMatchCombo.SelectedIndex]);
     }
 
-    private void PxSessionBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_loading)
-            return;
-        AppConfig.Write("pixiv", "php_sessid", PxSessionBox.Text.Trim());
-        PixivApi.Invalidate();   // cookie 变了要重建客户端
-    }
-
     private async void PxTestButton_Click(object sender, RoutedEventArgs e)
     {
-        // 先保存当前输入，再用其连接
-        AppConfig.Write("pixiv", "php_sessid", PxSessionBox.Text.Trim());
-        PixivApi.Invalidate();
+        // 登录 cookie 在「账号访问」页填写，这里只测当前配置能不能连上
         PxTestButton.IsEnabled = false;
         try
         {
@@ -771,11 +649,11 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("down_list", "auto_unzip", AutoUnzipCombo.SelectedIndex == 0 ? "True" : "False");
     }
 
-    private void DownProcBox_LostFocus(object sender, RoutedEventArgs e)
+    private void DownProcBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loading)
+        if (_loading || DownProcBox.SelectedIndex < 0)
             return;
-        AppConfig.Write("down_list", "download_processes", DownProcBox.Text.Trim());
+        AppConfig.Write("down_list", "download_processes", (DownProcBox.SelectedIndex + 1).ToString());
     }
 
     private void MinSpeedBox_LostFocus(object sender, RoutedEventArgs e)
@@ -798,51 +676,103 @@ public partial class SettingsPage : UserControl
     /// 解压密码库：一个输入框一个密码，末尾「＋」新增一条、每行「✕」删除（对齐 Web 设置页）。
     /// 库里仍存老格式（一行一个），故 AppConfig.UnzipPasswords 那边不用改。
     /// </summary>
+    /// <summary>
+    /// 解压密码库（对齐 Web settings.js 的 .pwlist）：一个密码一张小卡片，宽度随内容、排满换行；
+    /// 悬停卡片时右上角出红色 ✕，删除要二次确认；末尾圆形虚线「＋」弹框新增一条。
+    /// </summary>
     private void RebuildUnzipPwdRows()
     {
         UnzipPwdList.Children.Clear();
+        var surface2 = (Brush)FindResource("ButtonBrush");
+        var line = (Brush)FindResource("BorderBrush");
+        var accent = (Brush)FindResource("AccentLightBrush");
         for (var i = 0; i < _unzipPwds.Count; i++)
         {
-            var index = i;   // 行随增删整体重建，故这里捕获的下标始终对得上
-            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-            var remove = new Button
+            var index = i;   // 卡片随增删整体重建，故这里捕获的下标始终对得上
+            var value = _unzipPwds[index];
+            // .pwchip：surface2 底 + line 描边 + 圆角 8，内距 6/12，14px；悬停描边转 accent
+            var chip = new Border
             {
-                Content = "✕", Width = 30, Margin = new Thickness(6, 0, 0, 0),
-                Padding = new Thickness(0, 4, 0, 4), ToolTip = I18n.Tr("删除这条密码"),
-                Style = (Style)FindResource("DangerButton"),
+                Background = surface2, BorderBrush = line, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 6, 12, 6),
+                Child = new TextBlock { Text = value, FontSize = 14 },
             };
-            remove.Click += (_, _) =>
+            // .pwdel：18px 红色圆钮，骑在卡片右上角，悬停卡片才出现
+            var del = new Button
             {
+                Content = "✕", Width = 18, Height = 18, FontSize = 10, Cursor = Cursors.Hand,
+                ToolTip = I18n.Tr("删除这条密码"),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -8, -8, 0), Visibility = Visibility.Hidden,
+                Template = RoundButtonTemplate(new SolidColorBrush(Color.FromRgb(0xE5, 0x48, 0x4D)), null),
+                Foreground = Brushes.White,
+            };
+            del.Click += (_, _) =>
+            {
+                if (!InAppDialog.Confirm(this,
+                        I18n.Format(I18n.Tr("删除密码「{pwd}」？"), ("pwd", value)), I18n.Tr("删除")))
+                    return;
                 _unzipPwds.RemoveAt(index);
                 SaveUnzipPwds();
                 RebuildUnzipPwdRows();
             };
-            DockPanel.SetDock(remove, Dock.Right);
-            row.Children.Add(remove);
-            var box = new TextBox
-            {
-                Text = _unzipPwds[index], VerticalContentAlignment = VerticalAlignment.Center,
-            };
-            box.TextChanged += (_, _) => _unzipPwds[index] = box.Text;
-            box.LostFocus += (_, _) => SaveUnzipPwds();
-            row.Children.Add(box);
-            UnzipPwdList.Children.Add(row);
+            var cell = new Grid { Margin = new Thickness(0, 0, 10, 10) };
+            cell.Children.Add(chip);
+            cell.Children.Add(del);
+            cell.MouseEnter += (_, _) => { chip.BorderBrush = accent; del.Visibility = Visibility.Visible; };
+            cell.MouseLeave += (_, _) => { chip.BorderBrush = line; del.Visibility = Visibility.Hidden; };
+            UnzipPwdList.Children.Add(cell);
         }
 
+        // .pwadd：32px 圆形虚线「＋」，悬停描边与文字转 accent
         var add = new Button
         {
-            Content = "＋", Width = 34, Padding = new Thickness(0, 4, 0, 4),
-            HorizontalAlignment = HorizontalAlignment.Left, ToolTip = I18n.Tr("添加一条密码"),
+            Content = "＋", Width = 32, Height = 32, FontSize = 16, Cursor = Cursors.Hand,
+            Foreground = (Brush)FindResource("CaptionBrush"),
+            ToolTip = I18n.Tr("添加一条密码"), Margin = new Thickness(0, 0, 0, 10),
+            VerticalAlignment = VerticalAlignment.Center,
+            Template = RoundButtonTemplate(surface2, line, dashed: true),
         };
+        add.MouseEnter += (_, _) => add.Foreground = accent;
+        add.MouseLeave += (_, _) => add.Foreground = (Brush)FindResource("CaptionBrush");
         add.Click += (_, _) =>
         {
-            _unzipPwds.Add("");
+            var v = (InAppDialog.Prompt(this, I18n.Tr("输入解压密码"), I18n.Tr("添加密码")) ?? "").Trim();
+            if (v.Length == 0)
+                return;
+            if (_unzipPwds.Contains(v))
+            {
+                InAppDialog.Info(this, I18n.Tr("这个密码已经在密码库里了"), I18n.Tr("添加密码"));
+                return;
+            }
+            _unzipPwds.Add(v);
+            SaveUnzipPwds();
             RebuildUnzipPwdRows();
-            // 新增的那一行直接可以打字
-            (UnzipPwdList.Children[_unzipPwds.Count - 1] as DockPanel)?
-                .Children.OfType<TextBox>().FirstOrDefault()?.Focus();
         };
         UnzipPwdList.Children.Add(add);
+    }
+
+    /// <summary>圆形按钮模板（密码库的 ✕ / ＋）：圆底 + 可选描边（虚线），内容居中。</summary>
+    private static ControlTemplate RoundButtonTemplate(Brush background, Brush? border, bool dashed = false)
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var grid = new FrameworkElementFactory(typeof(Grid));
+        var circle = new FrameworkElementFactory(typeof(System.Windows.Shapes.Ellipse));
+        circle.SetValue(System.Windows.Shapes.Shape.FillProperty, background);
+        if (border != null)
+        {
+            circle.SetValue(System.Windows.Shapes.Shape.StrokeProperty, border);
+            circle.SetValue(System.Windows.Shapes.Shape.StrokeThicknessProperty, 1.0);
+            if (dashed)
+                circle.SetValue(System.Windows.Shapes.Shape.StrokeDashArrayProperty, new DoubleCollection { 3, 2 });
+        }
+        grid.AppendChild(circle);
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        content.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        grid.AppendChild(content);
+        template.VisualTree = grid;
+        return template;
     }
 
     /// <summary>写回密码库：去掉空行与首尾空白，顺序即解压时的尝试顺序。</summary>

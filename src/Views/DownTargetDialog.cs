@@ -50,18 +50,18 @@ public class DownTargetDialog
     {
         var dim = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x9A, 0, 0, 0)),
+            Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)),
             Focusable = true,
         };
         var card = new Border
         {
-            Background = Res("WindowBrush", Brushes.Black),
+            Background = Res("CardBrush", Brushes.Black),
             BorderBrush = Res("BorderBrush", Brushes.Gray),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(20, 18, 20, 16),
-            MinWidth = 540,
-            MaxWidth = 780,
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20),
+            MinWidth = 360,
+            MaxWidth = 760,
             MaxHeight = 640,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -71,18 +71,17 @@ public class DownTargetDialog
         _titleText = new TextBlock
         {
             FontWeight = FontWeights.SemiBold,
-            FontSize = 15,
+            FontSize = 16,
             Foreground = Res("TextBrush", Brushes.White),
-            Margin = new Thickness(0, 0, 0, 12),
+            Margin = new Thickness(0, 0, 0, 8),
         };
         DockPanel.SetDock(_titleText, Dock.Top);
         layout.Children.Add(_titleText);
 
         _bottomButton = new Button
         {
-            Margin = new Thickness(0, 14, 0, 0),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            MinWidth = 88,
+            Margin = new Thickness(0, 16, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         _bottomButton.Click += (_, _) => _onBottom();
         DockPanel.SetDock(_bottomButton, Dock.Bottom);
@@ -125,7 +124,7 @@ public class DownTargetDialog
             hasTarget = true;
             var caption = folders.Count > 1
                 ? I18n.Format(I18n.Tr("{n} 个文件夹"), ("n", folders.Count))
-                : folders[0];
+                : "";
             var libName = lib.Name;
             _grid.Children.Add(MakeCard(lib.Name, caption, folders.Count > 1 ? null : folders[0], () =>
             {
@@ -141,6 +140,7 @@ public class DownTargetDialog
                 }
             }));
         }
+        _grid.Columns = Math.Clamp(_grid.Children.Count, 1, 5);
         if (_moveMode && !hasTarget)
             _grid.Children.Add(new TextBlock
             {
@@ -157,61 +157,69 @@ public class DownTargetDialog
     {
         _titleText.Text = I18n.Tr(_moveMode ? "选择目标文件夹" : "选择下载文件夹");
         _grid.Children.Clear();
+        _grid.Columns = 1;
         foreach (var folder in folders)
         {
             var f = folder;
-            var name = Path.GetFileName(folder.TrimEnd('\\', '/'));
-            if (string.IsNullOrEmpty(name))
-                name = folder;
-            _grid.Children.Add(MakeCard(name, folder, folder, () =>
+            var button = new Button
+            {
+                Content = new TextBlock { Text = folder, TextWrapping = TextWrapping.Wrap },
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 8, 0, 0),
+            };
+            button.Click += (_, _) =>
             {
                 SelectedFolder = f;
                 _close(true);
-            }));
+            };
+            _grid.Children.Add(button);
         }
         _bottomButton.Content = I18n.Tr("← 返回");
         _onBottom = BuildLibPage;
     }
 
-    /// <summary>单张可点击卡片：标题 + 副标题，悬停高亮。</summary>
+    /// <summary>单张可点击卡片（Web .pk-card）：居中的库名 + 副标题，悬停描边与底色提亮。</summary>
     private Border MakeCard(string title, string caption, string? tip, Action onClick)
     {
-        var baseBrush = Res("CardBrush", new SolidColorBrush(Color.FromArgb(20, 255, 255, 255)));
-        var hoverBrush = Res("ButtonHoverBrush", new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)));
+        var baseBrush = new SolidColorBrush(Color.FromArgb(10, 255, 255, 255));
+        var hoverBrush = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
+        var line = Res("BorderBrush", Brushes.Gray);
+        var accent = Res("AccentBrush", Brushes.SteelBlue);
         var card = new Border
         {
             Background = baseBrush,
-            BorderBrush = Res("BorderBrush", Brushes.Gray),
+            BorderBrush = line,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(14, 12, 14, 12),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(8, 14, 8, 14),
             Margin = new Thickness(5),
             MinHeight = 84,
             Cursor = Cursors.Hand,
             ToolTip = tip,
         };
-        var panel = new StackPanel();
+        var panel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         panel.Children.Add(new TextBlock
         {
             Text = title,
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            FontSize = 13,
             Foreground = Res("TextBrush", Brushes.White),
             TextWrapping = TextWrapping.Wrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxHeight = 44,
+            TextAlignment = TextAlignment.Center,
         });
-        panel.Children.Add(new TextBlock
-        {
-            Text = caption,
-            Foreground = Res("CaptionBrush", Brushes.Gray),
-            FontSize = 12,
-            Margin = new Thickness(0, 6, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
+        if (caption.Length > 0)
+            panel.Children.Add(new TextBlock
+            {
+                Text = caption,
+                Foreground = Res("CaptionBrush", Brushes.Gray),
+                FontSize = 11,
+                Margin = new Thickness(0, 6, 0, 0),
+                TextAlignment = TextAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
         card.Child = panel;
-        card.MouseEnter += (_, _) => card.Background = hoverBrush;
-        card.MouseLeave += (_, _) => card.Background = baseBrush;
+        card.MouseEnter += (_, _) => { card.Background = hoverBrush; card.BorderBrush = accent; };
+        card.MouseLeave += (_, _) => { card.Background = baseBrush; card.BorderBrush = line; };
         card.MouseLeftButtonUp += (_, _) => onClick();
         return card;
     }

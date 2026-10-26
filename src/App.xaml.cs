@@ -19,6 +19,8 @@ public partial class App : Application
             WebServer.StartFromConfig();
         // 后台补齐 DLsite 社团头像（查过的社团不会再发请求）；查完会自己再 Kick 一次图床
         DlsiteMakerIcon.Kick();
+        // 后台给还没有主页记录的 FANBOX 作家补上主页（FANBOX / pawchive 外链 + FANBOX 上的显示名）
+        MakerHomeService.Kick();
         // 开启了图床存储时，后台把新入库作品的封面补传上去（未开启为空操作）
         ImageHostService.Kick();
         // FANBOX 作家监控的轮询线程：到点就去 pawchive 看有没有新投稿，有就自动入队下载

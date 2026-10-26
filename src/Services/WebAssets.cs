@@ -33,7 +33,10 @@ internal static class WebAssets
         ("/js/pixiv.js",    ".pixiv.js",    "application/javascript; charset=utf-8"),
         ("/js/download.js", ".download.js", "application/javascript; charset=utf-8"),
         ("/js/settings.js", ".settings.js", "application/javascript; charset=utf-8"),
+        ("/js/watch.js",    ".watch.js",    "application/javascript; charset=utf-8"),
+        ("/js/accounts.js", ".accounts.js", "application/javascript; charset=utf-8"),
         ("/js/viewer.js",   ".viewer.js",   "application/javascript; charset=utf-8"),
+        ("/js/stream.js",   ".stream.js",   "application/javascript; charset=utf-8"),
         ("/js/boot.js",     ".boot.js",     "application/javascript; charset=utf-8"),
     ];
 

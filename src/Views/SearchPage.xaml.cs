@@ -147,8 +147,8 @@ public class MakerWorkItem : INotifyPropertyChanged
     /// <summary>在库状态文本（下载中/已下载/已品悦），仅 InLib 时显示。</summary>
     public string StateText { get; init; } = "";
 
-    /// <summary>卡片不透明度：已在库 / 下载中 / 不喜欢 / AS·无（均无需再 AS 搜索）的作品降到 0.45 以示区别。</summary>
-    public double CardOpacity => InLib || DownActive || Disliked || AsEmpty ? 0.45 : 1.0;
+    /// <summary>卡片不透明度：已在库 / 下载中 / 不喜欢 / AS·无（均无需再 AS 搜索）的作品降到 0.5 以示区别（Web .card.dim）。</summary>
+    public double CardOpacity => InLib || DownActive || Disliked || AsEmpty ? 0.5 : 1.0;
 
     // AS·无：命中 7 天缓存或本次扫出无结果 → 卡片置灰，角标显示可再扫倒计时
     private bool _asEmpty;
@@ -237,8 +237,46 @@ public class MakerWorkItem : INotifyPropertyChanged
     public Brush AsStatusBrush
     {
         get => _asStatusBrush;
-        set { _asStatusBrush = value; OnPropertyChanged(); }
+        set { _asStatusBrush = value; OnPropertyChanged(); OnPropertyChanged(nameof(AsBadgeBg)); }
     }
+
+    // AS 角标底色（Web runMakerScans）：命中帖子 rgba(34,160,80,.88)、失败 rgba(180,60,60,.88)、其余 .badge 默认 rgba(0,0,0,.62)；
+    // 文字一律 #f3f3f3。AsStatusBrush 仍是代码里表达状态的那一笔，这里按它的颜色映射成底色
+    private static readonly Brush AsOkBg = Frozen(Color.FromArgb(0xE0, 34, 160, 80));
+    private static readonly Brush AsFailBg = Frozen(Color.FromArgb(0xE0, 180, 60, 60));
+    private static readonly Brush AsIdleBg = Frozen(Color.FromArgb(0x9E, 0, 0, 0));
+    public Brush AsBadgeBg => (_asStatusBrush as SolidColorBrush)?.Color switch
+    {
+        { R: 0x4a, G: 0xde, B: 0x80 } => AsOkBg,     // GreenBrush
+        { R: 0xf8, G: 0x71, B: 0x71 } => AsFailBg,   // RedBrush
+        _ => AsIdleBg,
+    };
+
+    private static Brush Frozen(Color c)
+    {
+        var b = new SolidColorBrush(c);
+        b.Freeze();
+        return b;
+    }
+
+    // 卡内常驻按钮（Web .mk-foot .mcard-actions：[结果列表][自动下载]）：默认禁用，AS 扫出帖子后才可用
+    private bool _asHasPosts;
+    public bool AsHasPosts
+    {
+        get => _asHasPosts;
+        set { _asHasPosts = value; OnPropertyChanged(); OnPropertyChanged(nameof(AutoEnabled)); }
+    }
+
+    private string _autoText = "";
+    /// <summary>卡内「自动下载」按钮文案：自动下载 → 入队中… → 已入队（入队后保持禁用，避免重复入队）。</summary>
+    public string AutoText
+    {
+        get => _autoText.Length > 0 ? _autoText : I18n.Tr("自动下载");
+        set { _autoText = value; OnPropertyChanged(); OnPropertyChanged(nameof(AutoEnabled)); }
+    }
+
+    public bool AutoEnabled => AsHasPosts && _autoText.Length == 0;
+    public string ListText => I18n.Tr("结果列表");
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
@@ -284,13 +322,18 @@ public partial class SearchPage : UserControl
     private bool _autoLoadingPages;
 
     // 当前搜索来源："dlsite"（作品号/社团号/目录页）、"fanbox"（pawchive 作家）、
+    // "fanboxcc"（fanbox.cc 官方站，「账号访问」里登录了 FANBOX 才有，下拉里写成「FANBOX（账号名）」）、
     // "ehentai"（画廊）或 "pixiv"（插画/漫画/动图）。
     // 各来源共用同一条搜索栏，结果区互斥显示（对齐 Web 端 renderSearchArea 的来源下拉）。
     private string _source = SourceDlsite;
     private const string SourceDlsite = "dlsite";
     private const string SourceFanbox = "fanbox";
+    private const string SourceFanboxCc = "fanboxcc";
     private const string SourceEhentai = "ehentai";
     private const string SourcePixiv = "pixiv";
+    // 两个 FANBOX 来源共用同一个结果区（FanboxView），只是取数的站点不同
+    private bool IsFanbox => _source is SourceFanbox or SourceFanboxCc;
+    private bool _buildingSources;   // 重建来源下拉期间不把选中项变化当成用户切来源
     // DLsite 侧最后停在哪个子视图（""=还没搜过 / "results"=帖子结果 / "maker"=社团作品网格），
     // 切到 FANBOX 再切回来时按它原样恢复
     private string _dlsiteLevel = "";
@@ -327,7 +370,7 @@ public partial class SearchPage : UserControl
         {
             FanboxBackButton.Content = FanboxView.BackLabel;
             FanboxBackButton.Visibility =
-                available && _source == SourceFanbox ? Visibility.Visible : Visibility.Collapsed;
+                available && IsFanbox ? Visibility.Visible : Visibility.Collapsed;
         };
         // 详情页的「下载」也在本页的搜索栏上，文案/可用性随作品状态变
         FanboxView.DetailDownloadChanged += SyncFanboxDownloadButton;
@@ -366,32 +409,52 @@ public partial class SearchPage : UserControl
         BuildSourceBox();
         RetranslateUi();
         I18n.LanguageChanged += RetranslateUi;
+        // 在「账号访问」里登录/退出 FANBOX、或检测到了新的账号名：来源下拉随之增减/改名
+        AccountService.Changed += () => Dispatcher.BeginInvoke(new Action(BuildSourceBox));
     }
 
-    /// <summary>来源下拉的选项（顺序即显示顺序，对齐 Web 的 SEARCH_SOURCES）。</summary>
+    /// <summary>
+    /// 来源下拉的选项（顺序即显示顺序，对齐 Web 的 SEARCH_SOURCES / searchSources）。
+    /// 登录了 FANBOX 才多出「FANBOX（账号名）」一项，与未登录的「FANBOX」（pawchive 归档）并列；
+    /// 正选着它时退出了登录，就退回「FANBOX」。
+    /// </summary>
     private void BuildSourceBox()
     {
+        _buildingSources = true;
         SourceBox.Items.Clear();
         SourceBox.Items.Add(new ComboBoxItem { Content = "DLsite", Tag = SourceDlsite });
         SourceBox.Items.Add(new ComboBoxItem { Content = "FANBOX", Tag = SourceFanbox });
+        if (FanboxSource.OfficialAvailable)
+            SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.OfficialLabel, Tag = SourceFanboxCc });
         SourceBox.Items.Add(new ComboBoxItem { Content = "E-Hentai", Tag = SourceEhentai });
         SourceBox.Items.Add(new ComboBoxItem { Content = "pixiv", Tag = SourcePixiv });
-        SourceBox.SelectedIndex = _source switch
-        {
-            SourceFanbox => 1,
-            SourceEhentai => 2,
-            SourcePixiv => 3,
-            _ => 0,
-        };
+        _buildingSources = false;
+        if (!SelectSource(_source) && _source == SourceFanboxCc)
+            SelectSource(SourceFanbox);   // 触发 SelectionChanged → 换回 pawchive
+    }
+
+    /// <summary>在下拉里选中某个来源（会触发 SelectionChanged）；下拉里没有这一项时返回 false。</summary>
+    private bool SelectSource(string key)
+    {
+        foreach (var item in SourceBox.Items)
+            if (item is ComboBoxItem { Tag: string tag } box && tag == key)
+            {
+                SourceBox.SelectedItem = box;
+                return true;
+            }
+        return false;
     }
 
     private void SourceBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (SourceBox.SelectedItem is not ComboBoxItem item || item.Tag is not string key)
+        if (_buildingSources || SourceBox.SelectedItem is not ComboBoxItem item || item.Tag is not string key)
             return;
         if (key == _source)
             return;
         _source = key;
+        // 两个 FANBOX 来源共用一个结果区：换了站点就清空（作家键两边不通用）
+        if (IsFanbox)
+            FanboxView.SetOfficial(_source == SourceFanboxCc);
         ApplySource();
     }
 
@@ -464,7 +527,7 @@ public partial class SearchPage : UserControl
         FanboxDownloadButton.Content = FanboxView.DetailDownloadLabel;
         FanboxDownloadButton.IsEnabled = FanboxView.DetailDownloadEnabled;
         FanboxDownloadButton.Visibility =
-            _source == SourceFanbox && FanboxView.CanDownloadDetail
+            IsFanbox && FanboxView.CanDownloadDetail
                 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -482,6 +545,7 @@ public partial class SearchPage : UserControl
     private static string SourceHint(string source) => source switch
     {
         SourceFanbox => FanboxSearchView.InputHint,
+        SourceFanboxCc => FanboxSearchView.OfficialInputHint,
         SourceEhentai => EhentaiSearchView.InputHint,
         SourcePixiv => PixivSearchView.InputHint,
         _ => I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接"),
@@ -495,7 +559,7 @@ public partial class SearchPage : UserControl
         EhentaiBackButton.Content = EhentaiView.BackLabel;
         PixivBackButton.Content = PixivView.BackLabel;
         PixivDownloadButton.Content = PixivView.DetailDownloadLabel;
-        BackButton.Content = I18n.Tr("← 返回社团作品");
+        BackButton.Content = _catalogUrl != null ? I18n.Tr("返回作品列表") : I18n.Tr("返回社团作品");
         LoadingText.Text = I18n.Tr("正在查询…");
         AutoDownloadButton.Content = _autoDownload ? I18n.Tr("自动下载：开") : I18n.Tr("自动下载：关");
         InputBox.ToolTip = SourceHint(_source);
@@ -526,7 +590,7 @@ public partial class SearchPage : UserControl
     /// <summary>查询入口：按当前来源分流到 DLsite / FANBOX / E-Hentai / pixiv 的搜索。</summary>
     private Task RunSearchAnyAsync() => _source switch
     {
-        SourceFanbox => FanboxView.RunSearchAsync(InputBox.Text),
+        SourceFanbox or SourceFanboxCc => FanboxView.RunSearchAsync(InputBox.Text),
         SourceEhentai => EhentaiView.RunSearchAsync(InputBox.Text),
         SourcePixiv => PixivView.RunSearchAsync(InputBox.Text),
         _ => RunSearchAsync(),
@@ -544,15 +608,14 @@ public partial class SearchPage : UserControl
     /// <summary>搜索栏「下载」：入队 FANBOX 详情页当前这一篇。</summary>
     private void FanboxDownload_Click(object sender, RoutedEventArgs e) => FanboxView.DownloadDetail();
 
-    /// <summary>由系统设置页的监控卡「打开主页」触发：切到 FANBOX 来源并直接进这位作家的主页。</summary>
+    /// <summary>
+    /// 由作家监控页的「打开主页」触发：切到 FANBOX 来源并直接进这位作家的主页。
+    /// 监控只走 pawchive，故固定切到「FANBOX」那一项（不是官方站）。
+    /// </summary>
     public void OpenFanboxArtist(string artistId, string artistName)
     {
         if (_source != SourceFanbox)
-        {
-            SourceBox.SelectedIndex = 1;   // 触发 SelectionChanged → ApplySource
-            _source = SourceFanbox;
-            ApplySource();
-        }
+            SelectSource(SourceFanbox);   // 触发 SelectionChanged → SetOfficial(false) + ApplySource
         FanboxView.OpenArtist(artistId, artistName);
     }
 
@@ -572,7 +635,7 @@ public partial class SearchPage : UserControl
         ResultList.Visibility = Visibility.Visible;
         MakerList.Visibility = Visibility.Collapsed;
         BackButton.Visibility = _fromMaker ? Visibility.Visible : Visibility.Collapsed;
-        BackButton.Content = _catalogUrl != null ? I18n.Tr("← 返回作品列表") : I18n.Tr("← 返回社团作品");
+        BackButton.Content = _catalogUrl != null ? I18n.Tr("返回作品列表") : I18n.Tr("返回社团作品");   // Web updateBackListBtn：无箭头
         // 仅当当前作品确认走 asmr.one 时，结果页顶部展示 asmr.one 直链下载横幅
         AsmrBanner.Visibility = _asmrForCurrent ? Visibility.Visible : Visibility.Collapsed;
         // 自动下载按钮仅在社团/目录作品网格上有意义
@@ -1122,6 +1185,7 @@ public partial class SearchPage : UserControl
                 {
                     item.AsStatusText = I18n.Format(I18n.Tr("AS · {count} 帖"), ("count", count));
                     item.AsStatusBrush = (Brush)FindResource("GreenBrush");
+                    item.AsHasPosts = true;   // 有帖子 → 卡内 [结果列表][自动下载] 可用
                 }
                 else if (count == 0)
                 {
@@ -1290,8 +1354,11 @@ public partial class SearchPage : UserControl
     /// 对单个网格作品自动下载：SOU 且优先 asmr 且账号已配置 → 走 asmr.one 直链；
     /// 否则搜 AS 论坛，逐帖抓网盘链接、检测某网盘组全部有效即加入下载。全程受 _makerGeneration 守卫。
     /// </summary>
-    private async Task AttemptAutoDownloadAsync(MakerWorkItem item, int generation)
+    private async Task AttemptAutoDownloadAsync(MakerWorkItem item, int generation,
+        string? folder = null, string? lib = null)
     {
+        folder ??= _autoDownFolder;
+        lib ??= _autoDownLib;
         var workId = item.WorkId;
         item.AsStatusText = I18n.Tr("自动检测…");
         item.AsStatusBrush = (Brush)FindResource("CaptionBrush");
@@ -1319,7 +1386,7 @@ public partial class SearchPage : UserControl
             if (hasAsmr)
             {
                 var res = await AsmrService.EnqueueByRjAsync(
-                    workId, workData?.WorkName ?? "", _autoDownFolder, _autoDownLib);
+                    workId, workData?.WorkName ?? "", folder, lib);
                 if (generation != _makerGeneration)
                     return;
                 if (res.Ok)
@@ -1409,7 +1476,7 @@ public partial class SearchPage : UserControl
                 }
                 if (allValid)
                 {
-                    EnqueueAsWork(workId, workData, hostUrls, _autoDownFolder, _autoDownLib);
+                    EnqueueAsWork(workId, workData, hostUrls, folder, lib);
                     MarkMakerEnqueued(item);
                     return;
                 }
@@ -1437,10 +1504,46 @@ public partial class SearchPage : UserControl
     /// <summary>把作品卡片切到"待下载"下载状态角标并启动与下载页的每秒状态同步。</summary>
     private void MarkMakerEnqueued(MakerWorkItem item)
     {
+        item.AutoText = I18n.Tr("已入队");
         item.DownText = I18n.Tr("待下载");
         item.DownBrush = (Brush)FindResource("YellowBrush");
         item.DownActive = true;
         StartDownSync();
+    }
+
+    /// <summary>卡内「结果列表」：同点击卡片本体——用该作品号搜索 AS 帖子。按钮自己吞掉点击，不再触发卡片选中。</summary>
+    private async void MakerCardList_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is not MakerWorkItem item)
+            return;
+        InputBox.Text = item.WorkId;
+        _fromMaker = true;
+        await RunWorkSearchAsync(item.WorkId);
+    }
+
+    /// <summary>
+    /// 卡内「自动下载」（Web autoDownload 的单卡版）：先选一次媒体库，再走与全局自动下载相同的
+    /// asmr / AS 自动检测入队流程；入队成功后按钮转「已入队」并保持禁用。
+    /// </summary>
+    private async void MakerCardAuto_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is not MakerWorkItem item || !item.AutoEnabled)
+            return;
+        string? folder = null, lib = null;
+        if (AppConfig.ReadMediaLibs().Count > 0)
+        {
+            var dialog = new DownTargetDialog();
+            if (!dialog.Show(this))
+                return;   // 取消选库
+            folder = dialog.SelectedFolder;
+            lib = dialog.SelectedLib;
+        }
+        item.AutoText = I18n.Tr("入队中…");
+        await AttemptAutoDownloadAsync(item, _makerGeneration, folder, lib);
+        if (!item.DownActive)
+            item.AutoText = "";   // 没能入队：恢复可点
     }
 
     /// <summary>点击卡片右下角"不喜欢"按钮：切换标记。用 PreviewMouseLeftButtonDown 并吞掉事件，避免冒泡触发 ListBoxItem 选中导航。</summary>
@@ -1678,7 +1781,7 @@ public partial class SearchPage : UserControl
         if (valid == card.Urls.Count)
         {
             card.Status = true;
-            card.StatusText = I18n.Tr("有效");
+            card.StatusText = I18n.Tr("点击下载");
             card.StatusBrush = (Brush)FindResource("GreenBrush");
             card.CanDownload = true;
         }
@@ -1699,6 +1802,8 @@ public partial class SearchPage : UserControl
     }
 
     /// <summary>列表内点击"下载"：该网站全部链接通过 debrid-link 中转站下载。</summary>
+    private void HostCard_MouseUp(object sender, MouseButtonEventArgs e) => HostDownload_Click(sender, e);
+
     private void HostDownload_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not HostCardItem card || !card.CanDownload)

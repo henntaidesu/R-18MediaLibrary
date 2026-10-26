@@ -87,7 +87,7 @@ public static class InAppDialog
     {
         var dim = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x9A, 0, 0, 0)),
+            Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)),
             Focusable = true,
         };
         var card = new Border
@@ -95,10 +95,10 @@ public static class InAppDialog
             Background = Res("CardBrush", Brushes.Black),
             BorderBrush = Res("BorderBrush", Brushes.Gray),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(24, 20, 24, 18),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20),
             MinWidth = 340,
-            MaxWidth = 480,
+            MaxWidth = 360,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -116,8 +116,8 @@ public static class InAppDialog
             Text = message,
             TextWrapping = TextWrapping.Wrap,
             Foreground = Res("TextBrush", Brushes.White),
-            Margin = new Thickness(0, 14, 0, 0),
-            LineHeight = 22,
+            Margin = new Thickness(0, 12, 0, 0),
+            LineHeight = 22.4,
         });
         if (checkBox != null)
             panel.Children.Add(checkBox);
@@ -126,14 +126,15 @@ public static class InAppDialog
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 20, 0, 0),
+            Margin = new Thickness(0, 18, 0, 0),
         };
-        for (var i = 0; i < buttons.Length; i++)
+        // buttons[0] 是主按钮：倒序排，让它落在最右（Web .modal-btns：取消在左、确定在右）
+        for (var i = buttons.Length - 1; i >= 0; i--)
         {
             var index = i;
             var button = MakeButton(buttons[i], primary: i == 0);
-            if (i > 0)
-                button.Margin = new Thickness(10, 0, 0, 0);
+            if (i < buttons.Length - 1)
+                button.Margin = new Thickness(8, 0, 0, 0);
             button.Click += (_, _) => close(index);
             buttonBar.Children.Add(button);
         }
@@ -169,12 +170,98 @@ public static class InAppDialog
         return shown == true ? value : null;
     }
 
+    /// <summary>
+    /// 多字段表单（程序内覆盖层，对齐 Web 的 uiForm）：每个字段一行标签 + 一行输入框。
+    /// 确定返回各字段的值（与 <paramref name="fields"/> 同序），取消返回 null。
+    /// 回车在最后一个输入框上即确定，其余输入框上跳到下一个。
+    /// </summary>
+    public static string[]? Form(DependencyObject? owner, string title, string message,
+        (string Label, string Value)[] fields, string? okText = null)
+    {
+        var inputs = fields.Select(f => new TextBox { Text = f.Value }).ToArray();
+        var shown = OverlayHost.ShowModal(owner, close =>
+        {
+            var dim = new Grid { Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)), Focusable = true };
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock
+            {
+                Text = title, FontWeight = FontWeights.SemiBold, FontSize = 16,
+                Foreground = Res("TextBrush", Brushes.White), TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            if (message.Length > 0)
+                panel.Children.Add(new TextBlock
+                {
+                    Text = message, TextWrapping = TextWrapping.Wrap,
+                    Foreground = Res("TextBrush", Brushes.White), Margin = new Thickness(0, 12, 0, 0),
+                });
+            for (var i = 0; i < fields.Length; i++)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = fields[i].Label, Foreground = Res("CaptionBrush", Brushes.Gray), FontSize = 13,
+                    Margin = new Thickness(0, 12, 0, 4),
+                });
+                var input = inputs[i];
+                var next = i + 1 < inputs.Length ? inputs[i + 1] : null;
+                input.KeyDown += (_, e) =>
+                {
+                    if (e.Key != Key.Enter)
+                        return;
+                    if (next != null)
+                        next.Focus();
+                    else
+                        close(true);
+                    e.Handled = true;
+                };
+                panel.Children.Add(input);
+            }
+            if (inputs.Length > 0)
+                inputs[0].Loaded += (_, _) => { inputs[0].Focus(); inputs[0].SelectAll(); };
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 18, 0, 0),
+            };
+            var cancel = MakeButton(I18n.Tr("取消"), primary: false);
+            cancel.Click += (_, _) => close(false);
+            buttons.Children.Add(cancel);
+            var ok = MakeButton(okText ?? I18n.Tr("保存"), primary: true);
+            ok.Margin = new Thickness(8, 0, 0, 0);
+            ok.Click += (_, _) => close(true);
+            buttons.Children.Add(ok);
+            panel.Children.Add(buttons);
+
+            dim.Children.Add(new Border
+            {
+                Background = Res("CardBrush", Brushes.Black),
+                BorderBrush = Res("BorderBrush", Brushes.Gray),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(20),
+                Width = 480,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = panel,
+            });
+            dim.KeyDown += (_, e) =>
+            {
+                if (e.Key != Key.Escape)
+                    return;
+                close(false);
+                e.Handled = true;
+            };
+            return dim;
+        });
+        return shown == true ? inputs.Select(t => t.Text).ToArray() : null;
+    }
+
     private static FrameworkElement BuildPrompt(
         string title, string message, string defaultValue, Action<string> onAccept, Action<bool> close)
     {
         var dim = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x9A, 0, 0, 0)),
+            Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)),
             Focusable = true,
         };
         var card = new Border
@@ -182,10 +269,10 @@ public static class InAppDialog
             Background = Res("CardBrush", Brushes.Black),
             BorderBrush = Res("BorderBrush", Brushes.Gray),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(24, 20, 24, 18),
-            MinWidth = 360,
-            MaxWidth = 480,
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20),
+            MinWidth = 340,
+            MaxWidth = 360,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -213,15 +300,15 @@ public static class InAppDialog
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 20, 0, 0),
+            Margin = new Thickness(0, 18, 0, 0),
         };
-        var ok = MakeButton(I18n.Tr("确定"), primary: true);
-        ok.Click += (_, _) => { onAccept(input.Text); close(true); };
-        buttons.Children.Add(ok);
         var cancel = MakeButton(I18n.Tr("取消"), primary: false);
-        cancel.Margin = new Thickness(10, 0, 0, 0);
         cancel.Click += (_, _) => close(false);
         buttons.Children.Add(cancel);
+        var ok = MakeButton(I18n.Tr("确定"), primary: true);
+        ok.Margin = new Thickness(8, 0, 0, 0);
+        ok.Click += (_, _) => { onAccept(input.Text); close(true); };
+        buttons.Children.Add(ok);
         panel.Children.Add(buttons);
 
         card.Child = panel;
@@ -284,7 +371,7 @@ public static class InAppDialog
     {
         var dim = new Grid
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x9A, 0, 0, 0)),
+            Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)),
             Focusable = true,
         };
 
@@ -293,10 +380,10 @@ public static class InAppDialog
             Background = Res("CardBrush", Brushes.Black),
             BorderBrush = Res("BorderBrush", Brushes.Gray),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(24, 20, 24, 18),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20),
             MinWidth = 340,
-            MaxWidth = 480,
+            MaxWidth = 360,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -314,25 +401,25 @@ public static class InAppDialog
             Text = message,
             TextWrapping = TextWrapping.Wrap,
             Foreground = Res("TextBrush", Brushes.White),
-            Margin = new Thickness(0, 14, 0, 0),
-            LineHeight = 22,
+            Margin = new Thickness(0, 12, 0, 0),
+            LineHeight = 22.4,
         });
 
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 20, 0, 0),
+            Margin = new Thickness(0, 18, 0, 0),
         };
         if (yesNo)
         {
-            var yes = MakeButton(I18n.Tr("是"), primary: true);
-            yes.Click += (_, _) => close(true);
-            buttons.Children.Add(yes);
             var no = MakeButton(I18n.Tr("否"), primary: false);
-            no.Margin = new Thickness(10, 0, 0, 0);
             no.Click += (_, _) => close(false);
             buttons.Children.Add(no);
+            var yes = MakeButton(I18n.Tr("是"), primary: true);
+            yes.Margin = new Thickness(8, 0, 0, 0);
+            yes.Click += (_, _) => close(true);
+            buttons.Children.Add(yes);
         }
         else
         {
@@ -362,12 +449,7 @@ public static class InAppDialog
 
     private static Button MakeButton(string text, bool primary)
     {
-        var button = new Button
-        {
-            Content = text,
-            MinWidth = 76,
-            Padding = new Thickness(14, 5, 14, 5),
-        };
+        var button = new Button { Content = text };
         if (primary && Application.Current?.TryFindResource("AccentButton") is Style accent)
             button.Style = accent;
         return button;

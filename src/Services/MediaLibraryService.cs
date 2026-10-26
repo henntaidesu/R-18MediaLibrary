@@ -17,6 +17,88 @@ public delegate void BackfillProgress(int index, int total, string rj, bool ok);
 /// </summary>
 public static class MediaLibraryService
 {
+    /// <summary>
+    /// 媒体库改名（媒体库卡片的 ⚙ 设置，两端共用）。库名同时是 works.library、works.target_lib、
+    /// fanbox_watch.target_lib 里的值，配置与这三列要一起改，否则作品会从库里"消失"、作家监控也会找不到去向。
+    /// 成功返回 null，失败返回给用户看的原因。
+    /// </summary>
+    public static string? RenameLibrary(string oldName, string newName)
+    {
+        newName = newName.Trim();
+        if (newName.Length == 0)
+            return "名称不能为空";
+        if (newName == oldName)
+            return null;
+        var libs = AppConfig.ReadMediaLibs();
+        var lib = libs.FirstOrDefault(l => l.Name == oldName);
+        if (lib == null)
+            return "媒体库不存在";
+        if (libs.Any(l => l.Name == newName))
+            return "已存在同名媒体库";
+        lib.Name = newName;
+        AppConfig.WriteMediaLibs(libs);
+        Db.Execute("UPDATE \"works\" SET \"library\" = @n WHERE \"library\" = @o", ("@n", newName), ("@o", oldName));
+        Db.Execute("UPDATE \"works\" SET \"target_lib\" = @n WHERE \"target_lib\" = @o", ("@n", newName), ("@o", oldName));
+        Db.Execute("UPDATE \"fanbox_watch\" SET \"target_lib\" = @n WHERE \"target_lib\" = @o", ("@n", newName), ("@o", oldName));
+        Logger.Info($"媒体库改名：{oldName} → {newName}");
+        return null;
+    }
+
+    /// <summary>设置媒体库的默认视图（<see cref="MediaLib.ViewWorks"/> / <see cref="MediaLib.ViewMakers"/>）。</summary>
+    public static void SetLibraryView(string name, string view)
+    {
+        var libs = AppConfig.ReadMediaLibs();
+        var lib = libs.FirstOrDefault(l => l.Name == name);
+        if (lib == null)
+            return;
+        lib.View = view == MediaLib.ViewMakers ? MediaLib.ViewMakers : MediaLib.ViewWorks;
+        AppConfig.WriteMediaLibs(libs);
+    }
+
+    /// <summary>
+    /// 修改媒体库的一个文件夹路径（媒体库 ⚙ 设置里文件夹卡片的「编辑」，两端共用），在列表中原位替换。
+    /// 典型场景是盘符/挂载点变了：works 的 folder / cover / target 与 fanbox_watch.target_folder 存的都是绝对路径，
+    /// 落在旧文件夹下的要一并改成新前缀，否则封面、作品文件全部找不到。成功返回 null，失败返回给用户看的原因。
+    /// </summary>
+    public static string? ChangeLibraryFolder(string name, string oldFolder, string newFolderRaw)
+    {
+        newFolderRaw = newFolderRaw.Trim();
+        if (newFolderRaw.Length == 0)
+            return "路径不能为空";
+        string newFolder;
+        try { newFolder = Path.GetFullPath(newFolderRaw); }
+        catch (Exception) { return "路径格式错误"; }
+        if (!Directory.Exists(newFolder))
+            return "文件夹不存在或无法访问（需为运行本程序的电脑上的路径）";
+        var libs = AppConfig.ReadMediaLibs();
+        var lib = libs.FirstOrDefault(l => l.Name == name);
+        if (lib == null)
+            return "媒体库不存在";
+        var idx = lib.Folders.IndexOf(oldFolder);
+        if (idx < 0)
+            return "该文件夹已不在此媒体库中";
+        if (string.Equals(newFolder, oldFolder, StringComparison.OrdinalIgnoreCase))
+            return null;
+        if (libs.Any(l => l.Folders.Any(f => string.Equals(f, newFolder, StringComparison.OrdinalIgnoreCase))))
+            return "该文件夹已在某个媒体库中";
+        lib.Folders[idx] = newFolder;
+        AppConfig.WriteMediaLibs(libs);
+
+        static string Prefix(string p) => p.EndsWith('\\') || p.EndsWith('/') ? p : p + "\\";
+        var (oldP, newP) = (Prefix(oldFolder), Prefix(newFolder));
+        foreach (var (table, col) in new[] { ("works", "folder"), ("works", "cover"), ("works", "target"), ("fanbox_watch", "target_folder") })
+        {
+            Db.Execute($"UPDATE \"{table}\" SET \"{col}\" = @n WHERE lower(\"{col}\") = lower(@o)",
+                ("@n", newFolder), ("@o", oldFolder));
+            Db.Execute($"UPDATE \"{table}\" SET \"{col}\" = @np || substr(\"{col}\", length(@op) + 1) " +
+                       $"WHERE lower(substr(\"{col}\", 1, length(@op))) = lower(@op)",
+                ("@np", newP), ("@op", oldP));
+        }
+        ImageHostService.Invalidate();
+        Logger.Info($"媒体库「{name}」文件夹改路径：{oldFolder} → {newFolder}");
+        return null;
+    }
+
     // 作品文件夹名：DLsite 的 RJ 号，或 fanbox 的 FB+作品号、E-Hentai 的 EH+画廊号、
     // pixiv 的 PX+作品号（都以作品号命名，扫描才能认出来）
     private static readonly Regex RjPattern =
@@ -74,9 +156,11 @@ public static class MediaLibraryService
                 (string.IsNullOrEmpty(oldCover) || !File.Exists(oldCover)))
             {
                 // 作品文件夹在程序外被移动过时封面路径失效（meta_scanned 已置位不会重新补全）：
-                // 从新文件夹的 DataSource 重新定位封面（不联网，仅查本地已有图片）
-                var newCover = DlsitePage.DownloadWorkImagesAsync(rj, [], folder)
-                    .GetAwaiter().GetResult();
+                // 从新文件夹重新定位封面（不联网，仅查本地已有图片）——DLsite 作品在 DataSource 里，
+                // fanbox/E-Hentai/pixiv 的图直接摊在作品目录里
+                var newCover = IsFlatImageWork(rj)
+                    ? FanboxService.FindCover(folder) ?? ""
+                    : DlsitePage.DownloadWorkImagesAsync(rj, [], folder).GetAwaiter().GetResult();
                 if (newCover.Length > 0)
                     cover = newCover;
             }
@@ -371,6 +455,21 @@ public static class MediaLibraryService
         for (var i = 0; i < rjList.Count; i++)
         {
             var rj = rjList[i];
+            // FB 作品不是 DLsite 作品：元数据回 pawchive 取（扫描媒体库导回来的作品只有作品号）
+            if (FanboxService.IsFanboxWorkId(rj))
+            {
+                var fbOk = await FanboxService.BackfillFromPawchiveAsync(rj);
+                if (fbOk) filled++; else missed++;
+                progress?.Invoke(i + 1, rjList.Count, rj, fbOk);
+                continue;
+            }
+            // E-Hentai / pixiv 同理不是 DLsite 作品，拿作品号去查 DL API 只会白发请求
+            if (IsFlatImageWork(rj))
+            {
+                missed++;
+                progress?.Invoke(i + 1, rjList.Count, rj, false);
+                continue;
+            }
             var work = await DlsiteApi.GetWorkDataAsync(rj);
             if (work != null)
             {
@@ -419,7 +518,10 @@ public static class MediaLibraryService
             // meta_scanned 是"已完整扫描"（字段+图片+正文+标签）的唯一标记
             : "SELECT \"work_id\", \"folder\" FROM \"works\" WHERE \"state\" = '已品悦' " +
               $"AND COALESCE(\"meta_scanned\", '') != '1'{cond}";
-        var rows = Db.Select(sql, args.ToArray());
+        // 作品页抓取只对 DLsite 作品有意义：fanbox/E-Hentai/pixiv 的元数据来自各自站点
+        // （见 BackfillWorksFromApiAsync），拿它们的作品号去抓 DLsite 作品页只会失败
+        var rows = Db.Select(sql, args.ToArray())?
+            .Where(r => !IsFlatImageWork(r[0] as string ?? "")).ToList();
         if (rows == null)
             return (0, 0, 0);
 

@@ -67,7 +67,7 @@ public class PixivCardItem : ObservableBase
     public Visibility BusyVisibility => Selectable ? Visibility.Collapsed : Visibility.Visible;
 
     /// <summary>已入库/下载中的降亮，与 Web 的 .card.dim 等价。</summary>
-    public double CardOpacity => Selectable ? 1.0 : 0.45;
+    public double CardOpacity => Selectable ? 1.0 : 0.5;   // Web .card.dim
 
     private bool _isPicked;
     public bool IsPicked
@@ -77,17 +77,11 @@ public class PixivCardItem : ObservableBase
         {
             if (!Set(ref _isPicked, value))
                 return;
-            Raise(nameof(PickBorderBrush));
             Raise(nameof(PickText));
             Raise(nameof(PickBackground));
             Raise(nameof(PickForeground));
         }
     }
-
-    /// <summary>选中的卡片用强调色描边（等价 Web 的 .card.picked）。</summary>
-    public Brush PickBorderBrush => IsPicked
-        ? Application.Current?.TryFindResource("AccentLightBrush") as Brush ?? Brushes.DodgerBlue
-        : Brushes.Transparent;
 
     /// <summary>选择按钮文案：未选「选择」，已选「已选」（对齐 Web 的 .mcard-actions 按钮）。</summary>
     public string PickText => IsPicked ? I18n.Tr("已选") : I18n.Tr("选择");
@@ -95,7 +89,7 @@ public class PixivCardItem : ObservableBase
     /// <summary>已选时按钮转强调色底（等价 Web 的 .mcard-actions button.primary）。</summary>
     public Brush PickBackground => IsPicked
         ? Application.Current?.TryFindResource("AccentBrush") as Brush ?? Brushes.DodgerBlue
-        : Application.Current?.TryFindResource("CardBrush") as Brush ?? Brushes.DimGray;
+        : Application.Current?.TryFindResource("ButtonBrush") as Brush ?? Brushes.DimGray;   // .mcard-actions button：surface2
 
     /// <summary>强调色底上用白字，未选时用常规文字色。</summary>
     public Brush PickForeground => IsPicked
@@ -203,7 +197,6 @@ public partial class PixivSearchView : UserControl
         SelectAllButton.Content = I18n.Tr("全选");
         SelectNoneButton.Content = I18n.Tr("清空");
         DownloadSelectedButton.Content = I18n.Tr("下载选中");
-        DetailOpenSiteButton.Content = I18n.Tr("在 pixiv 打开");
         DetailBodyHeader.Text = I18n.Tr("说明");
         LoadingText.Text = I18n.Tr("正在查询…");
         UpdateSelectInfo();
@@ -458,6 +451,15 @@ public partial class PixivSearchView : UserControl
             AddDetailField(I18n.Tr("标签"), string.Join(" / ", a.Tags));
         AddDetailField(I18n.Tr("状态"), done ? I18n.Tr("已下载")
             : _detailState.Length > 0 ? _detailState : I18n.Tr("未下载"));
+        var site = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(I18n.Tr("在 pixiv 打开")))
+        {
+            Foreground = TryFindResource("AccentLightBrush") as Brush,
+            TextDecorations = null,
+        };
+        site.Click += DetailOpenSite_Click;
+        var siteBlock = new TextBlock();
+        siteBlock.Inlines.Add(site);
+        AddDetailField(I18n.Tr("原址"), siteBlock);
 
         if (a.Description.Length > 0)
         {
@@ -493,19 +495,25 @@ public partial class PixivSearchView : UserControl
     {
         if (value.Length == 0)
             return;
-        DetailFields.Children.Add(new TextBlock
+        AddDetailField(key, new TextBlock { Text = value, TextWrapping = TextWrapping.Wrap });
+    }
+
+    /// <summary>Web .fields：两列栅格「键 | 值」，键 muted 13px，行距 6、列距 14（键列靠 SharedSizeGroup 对齐）。</summary>
+    private void AddDetailField(string key, FrameworkElement value)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "pxk" });
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.Children.Add(new TextBlock
         {
             Text = key,
-            Margin = new Thickness(0, 0, 0, 2),
-            Style = TryFindResource("CaptionText") as Style,
+            FontSize = 13,
+            Foreground = TryFindResource("CaptionBrush") as Brush,
+            Margin = new Thickness(0, 1, 14, 0),
         });
-        DetailFields.Children.Add(new TextBlock
-        {
-            Text = value,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 13.5,
-            Margin = new Thickness(0, 0, 0, 12),
-        });
+        Grid.SetColumn(value, 1);
+        row.Children.Add(value);
+        DetailFields.Children.Add(row);
     }
 
     /// <summary>详情页「在 pixiv 打开」：交给系统默认浏览器（桌面固有能力，Web 端是普通超链接）。</summary>
