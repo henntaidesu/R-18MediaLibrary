@@ -17,6 +17,7 @@ public static class DownloadLanes
     public const string Drive = "gdrive";
     public const string Ehentai = "ehentai";
     public const string Pixiv = "pixiv";
+    public const string Fantia = "fantia";
 
     /// <summary>全部车道（顺序即下载列表分区的显示顺序）与显示名。</summary>
     public static readonly (string Key, string Label)[] All =
@@ -25,6 +26,7 @@ public static class DownloadLanes
         (Asmr, "asmr.one"),
         (Pawchive, "pawchive"),
         (Fanbox, "FANBOX"),
+        (Fantia, "Fantia"),
         (Drive, "谷歌网盘"),
         (Ehentai, "E-Hentai"),
         (Pixiv, "pixiv"),
@@ -34,13 +36,15 @@ public static class DownloadLanes
 
     /// <summary>
     /// 单个文件走哪条车道。fanbox 来源一分为三：pawchive 附件、官方站附件（fanbox.cc）、
-    /// 正文里的谷歌网盘链接——三者是不同的站点，限流/配额互不相干。
+    /// 正文里的谷歌网盘链接——三者是不同的站点，限流/配额互不相干。Fantia 投稿正文里的网盘链接同样归谷歌网盘车道。
     /// </summary>
     public static string LaneOf(string? source, string url) => source switch
     {
         "asmr" => Asmr,
         EhentaiApi.SourceName => Ehentai,
         PixivApi.SourceName => Pixiv,
+        FantiaApi.SourceName when GoogleDriveClient.Parse(url) is not null => Drive,
+        FantiaApi.SourceName => Fantia,
         FanboxService.SourceName when GoogleDriveClient.Parse(url) is not null => Drive,
         FanboxService.SourceName when FanboxOfficialApi.IsOfficialUrl(url) => Fanbox,
         FanboxService.SourceName => Pawchive,
@@ -59,11 +63,18 @@ public static class DownloadLanes
         return lanes.FirstOrDefault(l => l != Drive) ?? Drive;
     }
 
-    /// <summary>领取任务时按车道筛 download_list 的 SQL 条件（fanbox 的三条车道还要再按 url 细分，见 LaneOf）。</summary>
+    /// <summary>
+    /// 领取任务时按车道筛 download_list 的 SQL 条件。fanbox / Fantia 来源会分到不止一条车道
+    /// （谷歌网盘），SQL 只能筛到来源，余下按 url 细分（见 LaneOf 与 <see cref="SplitsByUrl"/>）。
+    /// </summary>
     internal static string SourceFilter(string lane) => lane switch
     {
-        AnimeSharing => "IFNULL(\"source\", '') NOT IN ('asmr', 'fanbox', 'ehentai', 'pixiv')",
-        Pawchive or Fanbox or Drive => "\"source\" = 'fanbox'",
-        _ => "\"source\" = '" + lane + "'",   // 车道键即来源名（asmr / ehentai / pixiv），常量非用户输入
+        AnimeSharing => "IFNULL(\"source\", '') NOT IN ('asmr', 'fanbox', 'ehentai', 'pixiv', 'fantia')",
+        Pawchive or Fanbox => "\"source\" = 'fanbox'",
+        Drive => "\"source\" IN ('fanbox', 'fantia')",
+        _ => "\"source\" = '" + lane + "'",   // 车道键即来源名（asmr / ehentai / pixiv / fantia），常量非用户输入
     };
+
+    /// <summary>该车道领取时要不要再按 url 细分（同一来源分在几条车道上）。</summary>
+    internal static bool SplitsByUrl(string lane) => lane is Pawchive or Fanbox or Drive or Fantia;
 }

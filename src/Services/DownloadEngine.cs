@@ -84,10 +84,8 @@ public static class DownloadEngine
     /// <summary>作品子文件夹名：按设置以 RJ号 或 DL API 返回的作品名称命名。</summary>
     private static string FolderLeafName(string workId)
     {
-        // fanbox / E-Hentai / pixiv 作品固定以作品号命名（标题会改、会重名，且顶层扫描要靠作品号认出它们）
-        if (AppConfig.FolderNameMode != "work_name" ||
-            FanboxService.IsFanboxWorkId(workId) || EhentaiService.IsEhentaiWorkId(workId) ||
-            PixivService.IsPixivWorkId(workId))
+        // fanbox / Fantia / E-Hentai / pixiv 作品固定以作品号命名（标题会改、会重名，且顶层扫描要靠作品号认出它们）
+        if (AppConfig.FolderNameMode != "work_name" || MediaLibraryService.IsFlatImageWork(workId))
             return workId;
         var name = WorkNameCache.GetOrAdd(workId, id =>
         {
@@ -581,10 +579,10 @@ public static class DownloadEngine
     /// <summary>把某网盘（账户级则为所有论坛源）当前待下载('0')的分卷标记为流量用尽('2')暂停。</summary>
     private static void PauseHostDownloads(string key, string error)
     {
-        // 站点源（asmr / fanbox / ehentai / pixiv）不经 debrid-link，不受其流量限制，不参与暂停
+        // 站点源（asmr / fanbox / fantia / ehentai / pixiv）不经 debrid-link，不受其流量限制，不参与暂停
         var rows = Db.Select(
             "SELECT \"UUID\", \"url\" FROM \"download_list\" WHERE \"status\" = '0' " +
-            "AND (\"source\" IS NULL OR \"source\" NOT IN ('asmr', 'fanbox', 'ehentai', 'pixiv'))");
+            "AND (\"source\" IS NULL OR \"source\" NOT IN ('asmr', 'fanbox', 'ehentai', 'pixiv', 'fantia'))");
         foreach (var r in rows ?? [])
         {
             var url = r[1] as string ?? "";
@@ -673,9 +671,9 @@ public static class DownloadEngine
     {
         lock (ClaimLock)
         {
-            // fanbox 来源的三条车道（pawchive / 官方站 / 谷歌网盘）SQL 只能筛到来源，余下按 url 在这里细分；
-            // 其它车道一个来源就是一条车道，取第一行即可
-            var split = lane is DownloadLanes.Pawchive or DownloadLanes.Fanbox or DownloadLanes.Drive;
+            // fanbox 来源的三条车道（pawchive / 官方站 / 谷歌网盘）与 Fantia 的两条（站点 / 谷歌网盘）
+            // SQL 只能筛到来源，余下按 url 在这里细分；其它车道一个来源就是一条车道，取第一行即可
+            var split = DownloadLanes.SplitsByUrl(lane);
             var rows = Db.Select(
                 "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\", \"account\" FROM \"download_list\" " +
                 $"WHERE \"status\" = '0' AND {DownloadLanes.SourceFilter(lane)} ORDER BY rowid" + (split ? "" : " LIMIT 1"));
@@ -999,7 +997,7 @@ public static class DownloadEngine
                 key = k;
                 // pixiv / FANBOX 多账号：用入队时那个账号的 cookie（官方站附件只对赞助到档位的账号开放）。
                 // 这里是线程的同步循环，设进去的上下文一直有效到下一条覆盖；旧记录没有 account，用默认账号
-                if (source is FanboxService.SourceName or PixivApi.SourceName)
+                if (source is FanboxService.SourceName or PixivApi.SourceName or FantiaApi.SourceName)
                     SiteAccounts.Use(source, account.Length > 0 ? account : null);
                 // asmr.one / fanbox / pixiv 都是直链源：url 即可直接下载，且 sub_path 保留作品内目录结构
                 // （pixiv 的图片地址不绑 IP 也不过期，只是取图必须带 Referer，见下面的 referer）
@@ -1007,11 +1005,13 @@ public static class DownloadEngine
                 // E-Hentai：url 是图片页地址，直链在页面里、与 IP 绑定又会过期，必须临下载前现解析；
                 // 但和直链源一样带 sub_path（作品内的三位页码文件名）
                 var isEhentai = source == EhentaiApi.SourceName;
-                // fanbox 投稿正文里的谷歌网盘链接：队列里存的是分享页地址，直链同样要现解析
+                // fanbox / Fantia 投稿正文里的谷歌网盘链接：队列里存的是分享页地址，直链同样要现解析
                 // （大文件还要先过一道「无法病毒扫描」确认页），故不能当直链直接下
-                var drive = source == FanboxService.SourceName ? GoogleDriveClient.Parse(url) : null;
+                var drive = source is FanboxService.SourceName or FantiaApi.SourceName ? GoogleDriveClient.Parse(url) : null;
                 var isDrive = drive is { Kind: DriveLinkKind.File };
-                var keepsSubPath = isDirect || isEhentai;
+                // Fantia：url 是不过期的站内地址，签名直链几小时就过期，临下载前现换（与 E-Hentai 同构）
+                var isFantia = source == FantiaApi.SourceName && !isDrive;
+                var keepsSubPath = isDirect || isEhentai || isFantia || isDrive;
 
                 string directUrl;
                 string filename;
@@ -1038,6 +1038,25 @@ public static class DownloadEngine
                     // 入队时的扩展名是按画廊页缩略图猜的，这里拿到了真名就以它为准，
                     // 并把 sub_path 一并改掉，免得磁盘上的文件名与下载列表显示的对不上
                     subPath = FixEhentaiExtension(key, subPath, link.FileName);
+                    filename = Path.GetFileName(subPath);
+                }
+                else if (isFantia)
+                {
+                    var (fantiaUrl, fantiaError) = FantiaApi.ResolveDownload(url);
+                    if (fantiaError != null)
+                    {
+                        // 连不上站点可以重试；没登录 / 档位不够重试也没用，停下来等用户处理后「全部重新解析」
+                        Logger.Error($"{workId} Fantia 下载地址解析失败: {url} ({fantiaError})");
+                        if (fantiaError == FantiaApi.FetchError)
+                        {
+                            RequeueOrGiveUp(key, url);
+                            Thread.Sleep(5000);
+                        }
+                        else
+                            SetParseFailed(key, fantiaError);
+                        continue;
+                    }
+                    directUrl = fantiaUrl;
                     filename = Path.GetFileName(subPath);
                 }
                 else if (isDrive)
@@ -1321,13 +1340,13 @@ public static class DownloadEngine
         return done != null && Convert.ToInt64(done) > 0;
     }
 
-    /// <summary>按来源触发收尾：站点源（asmr / fanbox / ehentai / pixiv）无压缩包，下完直接入库；论坛源走自动解压。</summary>
+    /// <summary>按来源触发收尾：站点源（asmr / fanbox / fantia / ehentai / pixiv）无压缩包，下完直接入库；论坛源走自动解压。</summary>
     private static void FinalizeBySource(string workId, string source)
     {
         switch (source)
         {
             case "asmr": AsmrFinalizeIfDone(workId); break;
-            case FanboxService.SourceName: FanboxFinalizeIfDone(workId); break;
+            case FanboxService.SourceName or FantiaApi.SourceName: FanboxFinalizeIfDone(workId); break;
             case EhentaiApi.SourceName: EhentaiFinalizeIfDone(workId); break;
             case PixivApi.SourceName: PixivFinalizeIfDone(workId); break;
             default: AutoUnzipIfDone(workId); break;

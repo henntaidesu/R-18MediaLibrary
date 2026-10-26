@@ -333,8 +333,9 @@ public partial class SearchPage : UserControl
     private const string SourceFanboxCc = "fanboxcc";
     private const string SourceEhentai = "ehentai";
     private const string SourcePixiv = "pixiv";
-    // 两个 FANBOX 来源共用同一个结果区（FanboxView），只是取数的站点不同
-    private bool IsFanbox => _source is SourceFanbox or SourceFanboxCc;
+    private const string SourceFantia = "fantia";
+    // FANBOX 的两个来源与 Fantia 共用同一个结果区（FanboxView），只是取数的站点不同
+    private bool IsFanbox => _source is SourceFanbox or SourceFanboxCc or SourceFantia;
     private bool _buildingSources;   // 重建来源下拉期间不把选中项变化当成用户切来源
     // DLsite 侧最后停在哪个子视图（""=还没搜过 / "results"=帖子结果 / "maker"=社团作品网格），
     // 切到 FANBOX 再切回来时按它原样恢复
@@ -364,7 +365,7 @@ public partial class SearchPage : UserControl
         // ? 按当前来源打开使用手册对应章节（同 Web help.js 的 helpTopic）
         HelpSlot.Content = HelpPanel.Button(() => _source switch
         {
-            SourceFanbox or SourceFanboxCc => "9",
+            SourceFanbox or SourceFanboxCc or SourceFantia => "9",
             SourceEhentai => "10.1",
             SourcePixiv => "10.2",
             _ => "7",
@@ -443,6 +444,12 @@ public partial class SearchPage : UserControl
         SourceBox.Items.Add(new ComboBoxItem { Content = "Pawchive", Tag = SourceFanbox });
         foreach (var a in FanboxSource.OfficialAccounts)
             SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.OfficialLabel(a), Tag = $"{SourceFanboxCc}:{a.UserId}" });
+        // Fantia：同 pixiv，有账号时每个账号一项，一个都没有时是匿名的「Fantia」
+        var fantiaAccounts = FanboxSource.FantiaAccounts;
+        if (fantiaAccounts.Count == 0)
+            SourceBox.Items.Add(new ComboBoxItem { Content = "Fantia", Tag = SourceFantia });
+        foreach (var a in fantiaAccounts)
+            SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.FantiaLabel(a), Tag = $"{SourceFantia}:{a.UserId}" });
         SourceBox.Items.Add(new ComboBoxItem { Content = "E-Hentai", Tag = SourceEhentai });
         var pixivAccounts = SiteAccounts.List(AccountService.Pixiv);
         if (pixivAccounts.Count == 0)
@@ -488,7 +495,12 @@ public partial class SearchPage : UserControl
         _source = KindOf(key);
         // FANBOX 各来源共用一个结果区：换了站点/账号就清空（作家键两边不通用，不同账号能看的投稿也不同）
         if (IsFanbox)
-            FanboxView.SetOfficial(_source == SourceFanboxCc ? AccountOf(key) : null);
+            FanboxView.SetOfficial(_source switch
+            {
+                SourceFanboxCc => AccountOf(key),
+                SourceFantia => FanboxSource.FantiaKey(AccountOf(key)),
+                _ => null,
+            });
         if (_source == SourcePixiv)
             PixivView.SetAccount(AccountOf(key));
         ApplySource();
@@ -578,10 +590,12 @@ public partial class SearchPage : UserControl
     }
 
     /// <summary>各来源的输入框占位提示（对齐 Web 的 SEARCH_SOURCES.placeholder）。</summary>
-    private static string SourceHint(string source) => source switch
+    private string SourceHint(string source) => source switch
     {
         SourceFanbox => FanboxSearchView.InputHint,
         SourceFanboxCc => FanboxSearchView.OfficialInputHint,
+        SourceFantia => AccountOf(_sourceTag).Length > 0
+            ? FanboxSearchView.FantiaAccountInputHint : FanboxSearchView.FantiaInputHint,
         SourceEhentai => EhentaiSearchView.InputHint,
         SourcePixiv => PixivSearchView.InputHint,
         _ => I18n.Tr("输入作品号(RJ/BJ/VJ)、社团号(RG)或 DLsite 链接"),
@@ -623,10 +637,10 @@ public partial class SearchPage : UserControl
             await RunSearchAnyAsync();
     }
 
-    /// <summary>查询入口：按当前来源分流到 DLsite / FANBOX / E-Hentai / pixiv 的搜索。</summary>
+    /// <summary>查询入口：按当前来源分流到 DLsite / FANBOX（含 Fantia）/ E-Hentai / pixiv 的搜索。</summary>
     private Task RunSearchAnyAsync() => _source switch
     {
-        SourceFanbox or SourceFanboxCc => FanboxView.RunSearchAsync(InputBox.Text),
+        SourceFanbox or SourceFanboxCc or SourceFantia => FanboxView.RunSearchAsync(InputBox.Text),
         SourceEhentai => EhentaiView.RunSearchAsync(InputBox.Text),
         SourcePixiv => PixivView.RunSearchAsync(InputBox.Text),
         _ => RunSearchAsync(),

@@ -16,7 +16,7 @@ using R18MediaLibrary.Core;
 namespace R18MediaLibrary.Services;
 
 /// <summary>
-/// 账号访问的「在服务器上登录」——程序取得站点登录态的唯一途径（不提供手填 cookie）：
+/// 账号访问的「在服务器上登录」——程序取得站点登录态的唯一途径（FANBOX / Fantia / pixiv / E-Hentai）（不提供手填 cookie）：
 /// 在运行本程序的这台电脑上开一个内嵌浏览器（WebView2）窗口打开站点登录页，人在窗口里过人机验证、输账号密码，
 /// 程序每秒看一眼该站的 cookie，一变成登录态就整理成 Cookie 请求头交给 <see cref="AccountService.AddFromLoginAsync"/>，
 /// 存成一个账号（<see cref="SiteAccounts"/>）后关窗。pixiv / FANBOX 的登录带 reCAPTCHA，E-Hentai 的论坛登录常触发验证码，
@@ -48,6 +48,9 @@ public static class LoginBrowser
     {
         [AccountService.Fanbox] = new("FANBOX", "https://www.fanbox.cc/login?return_to=https%3A%2F%2Fwww.fanbox.cc%2F",
             "https://www.fanbox.cc/", "https://www.fanbox.cc/", "FANBOXSESSID"),
+        // Fantia 的登录在 fantia.jp 上（_session_id），匿名访客也有这个 cookie，登没登上要问一次 /api/v1/me
+        [AccountService.Fantia] = new("Fantia", "https://fantia.jp/sessions/signin",
+            "https://fantia.jp/", "https://fantia.jp/", "_session_id"),
         [AccountService.Pixiv] = new("Pixiv", "https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2F",
             "https://www.pixiv.net/", "https://www.pixiv.net/", "PHPSESSID"),
         [AccountService.Ehentai] = new("E-Hentai", "https://forums.e-hentai.org/index.php?act=Login&CODE=00",
@@ -216,6 +219,8 @@ public static class LoginBrowser
     {
         var target = Targets[site];
         var manager = core.CookieManager;
+        if (site == AccountService.Fantia)
+            return await HarvestFantiaAsync(manager, target);
         if (site != AccountService.Ehentai)
         {
             var session = (await manager.GetCookiesAsync(target.CookieUrl)).Find(c => c.Name == target.CookieName)?.Value ?? "";
@@ -234,6 +239,30 @@ public static class LoginBrowser
         var igneous = await ExhentaiIgneousAsync(core, member, hash);
         var cookie = $"ipb_member_id={member}; ipb_pass_hash={hash}" + (igneous.Length > 0 ? $"; igneous={igneous}" : "");
         return new Harvest(member, cookie, name);
+    }
+
+    // 上次问过 /api/v1/me 却还是匿名的会话值：登录过程中每秒轮询一次，值没变就不必再问站点
+    private static string _fantiaProbed = "";
+
+    /// <summary>
+    /// Fantia：会话 cookie 匿名时就有，看不出登没登上，只能拿它去问 /api/v1/me（登录后 Rails 会换一个新会话值，
+    /// 所以只在值变了时才问）。整串取 fantia.jp 上的 cookie——年龄确认等状态也在里面，取详情要用。
+    /// </summary>
+    private static async Task<Harvest?> HarvestFantiaAsync(CoreWebView2CookieManager manager, Target target)
+    {
+        var cookies = await manager.GetCookiesAsync(target.CookieUrl);
+        var session = cookies.Find(c => c.Name == target.CookieName)?.Value ?? "";
+        if (session.Length == 0 || session == _fantiaProbed)
+            return null;
+        var header = string.Join("; ", cookies.Select(c => $"{c.Name}={c.Value}"));
+        var (definite, userId, name) = await FantiaApi.ProbeSessionAsync(header);
+        if (userId.Length == 0)
+        {
+            if (definite)
+                _fantiaProbed = session;   // 站点明说是匿名会话；没得到答复的（网络抖动）下一秒再问
+            return null;
+        }
+        return new Harvest(userId, header, name);
     }
 
     private static async Task<string> ScrapeEhentaiNameAsync(CoreWebView2 core)

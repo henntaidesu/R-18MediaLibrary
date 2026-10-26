@@ -141,8 +141,10 @@ public partial class FanboxSearchView : UserControl
     private readonly List<PawchivePost> _posts = [];
     // 数据源：null = pawchive 归档，否则 = fanbox.cc 官方站上用这个账号（pixiv 用户号；来源下拉里的「FANBOX（账号名）」）。
     // 两边的作家键不通用（pawchive 是纯数字作家号，官方站是 creatorId），换站/换账号即清空，见 SetOfficial
+    // Fantia 也共用本视图：account 为 FanboxSource.FantiaKey(用户号)（「ft:」= 匿名），取数由 FanboxSource 分流到 fantia.jp
     private string? _account;
     private bool IsOfficial => _account != null;
+    private bool IsFantia => FanboxSource.IsFantia(_account);
     private int _offset;
     private bool _hasMore;
     private bool _loadingMore;
@@ -238,8 +240,15 @@ public partial class FanboxSearchView : UserControl
     public static string OfficialInputHint =>
         I18n.Tr("作家名 / 作家 ID，或 fanbox.cc 主页链接；留空直接查询 = 我赞助 / 关注的作家");
 
+    /// <summary>Fantia 来源的占位提示（对齐 Web 的 SEARCH_SOURCES.fantia：匿名 / 已登录两种）。</summary>
+    public static string FantiaInputHint =>
+        I18n.Tr("作者主页链接 / 粉丝团号 / 投稿链接（关键字搜索需在「账号访问」登录 Fantia）");
+
+    public static string FantiaAccountInputHint =>
+        I18n.Tr("作者名 / 粉丝团号，或 Fantia 主页 / 投稿链接；留空直接查询 = 我关注的作者");
+
     /// <summary>
-    /// 切换数据源（宿主切来源时调用）：account 为 null = pawchive，否则 = 官方站上的该账号。
+    /// 切换数据源（宿主切来源时调用）：account 为 null = pawchive，FanboxSource.FantiaKey(…) = Fantia，否则 = 官方站上的该账号。
     /// 两站结果互不通用，不同账号能看到的投稿也不同（赞助档位），换了即作废在途请求、清空结果。
     /// </summary>
     public void SetOfficial(string? account)
@@ -286,7 +295,7 @@ public partial class FanboxSearchView : UserControl
     public async Task RunSearchAsync(string raw)
     {
         raw = (raw ?? "").Trim();
-        // 官方站：留空查询 = 列出我赞助 / 关注的作家；作家链接与 creatorId 由 FanboxOfficialApi 认
+        // 官方站 / Fantia：留空查询 = 列出我赞助 / 关注的作家；作家链接与作家号由 FanboxOfficialApi / FantiaApi 认
         if (IsOfficial)
         {
             await SearchArtistsAsync(raw);
@@ -316,7 +325,8 @@ public partial class FanboxSearchView : UserControl
         ShowLevel("artists");
         _cards.Clear();
         SetStatus("");
-        LoadingText.Text = IsOfficial ? I18n.Tr("正在查询 fanbox.cc…")
+        LoadingText.Text = IsFantia ? I18n.Tr("正在查询 fantia.jp…")
+            : IsOfficial ? I18n.Tr("正在查询 fanbox.cc…")
             : PawchiveApi.CreatorsReady
                 ? I18n.Tr("正在搜索作家…")
                 : I18n.Tr("正在下载站点作家索引（约 15MB），首次搜索稍慢…");
@@ -325,7 +335,7 @@ public partial class FanboxSearchView : UserControl
         List<PawchiveArtist> artists;
         string? error;
         // 官方站留空查询列的是「我赞助 / 关注的作家」：只有一位也要让人看到列表，不直接跳进去
-        var mine = IsOfficial && keyword.Length == 0;
+        var mine = FanboxSource.ListsMine(_account) && keyword.Length == 0;
         try
         {
             (artists, error) = await FanboxSource.SearchArtistsAsync(_account, keyword);
@@ -364,7 +374,9 @@ public partial class FanboxSearchView : UserControl
 
         var cachedAt = IsOfficial ? null : PawchiveApi.CreatorsCachedAt;
         SetStatus(mine
-            ? I18n.Format(I18n.Tr("我赞助 / 关注的作家 {n} 位"), ("n", artists.Count))
+            ? IsFantia
+                ? I18n.Format(I18n.Tr("我关注的作者 {n} 位"), ("n", artists.Count))
+                : I18n.Format(I18n.Tr("我赞助 / 关注的作家 {n} 位"), ("n", artists.Count))
             : I18n.Format(I18n.Tr("搜索到 {n} 位作家"), ("n", artists.Count)) +
               (cachedAt is { } t ? "　" + I18n.Format(I18n.Tr("索引更新于 {time}"),
                   ("time", t.ToString("yyyy-MM-dd HH:mm"))) : ""));
@@ -402,9 +414,9 @@ public partial class FanboxSearchView : UserControl
         _loadingMore = false;
         ShowLevel("posts");
         UpdateSelectInfo();
-        // 监控只走 pawchive（后台轮询不该拿着登录 cookie 反复敲官方站），官方站来源不给这颗按钮
-        _watched = !IsOfficial && FanboxWatchService.IsWatched(artistId);
-        WatchToggleButton.Visibility = IsOfficial ? Visibility.Collapsed : Visibility.Visible;
+        // 监控只走 pawchive（后台轮询不该拿着登录 cookie 反复敲官方站），官方站与 Fantia 来源不给这颗按钮
+        _watched = FanboxSource.CanWatch(_account) && FanboxWatchService.IsWatched(artistId);
+        WatchToggleButton.Visibility = FanboxSource.CanWatch(_account) ? Visibility.Visible : Visibility.Collapsed;
         UpdateWatchButton();
         SetStatus("");
         LoadingText.Text = I18n.Tr("正在获取作品…");
@@ -784,11 +796,11 @@ public partial class FanboxSearchView : UserControl
         }
     }
 
-    /// <summary>以当前来源的账号入队：下载官方站附件时用它的 cookie（pawchive 为匿名），见 download_list.account。</summary>
+    /// <summary>以当前来源的账号入队：下载官方站 / Fantia 附件时用它的 cookie（pawchive 为匿名），见 download_list.account。</summary>
     private async Task<FanboxEnqueueResult> EnqueueAsAccountAsync(PawchiveArtist artist, List<PawchivePost> posts,
         string? targetFolder, string? targetLib)
     {
-        SiteAccounts.Use(AccountService.Fanbox, _account ?? "");
+        FanboxSource.Use(_account);
         return await FanboxService.EnqueuePostsAsync(artist, posts, targetFolder, targetLib);
     }
 
@@ -892,7 +904,7 @@ public partial class FanboxSearchView : UserControl
         // 列表项也只是摘要，入队前要逐篇取详情。pawchive 的列表项本身就是全的，直接用
         var artist = await FanboxSource.GetArtistAsync(_account, _artistId) ?? new PawchiveArtist
         {
-            Id = _artistId, Service = PawchiveApi.FanboxService,
+            Id = _artistId, Service = FanboxSource.ServiceOf(_account),
             Name = _artistName, PublicId = _publicId,
         };
         var posts = await FanboxSource.ResolveForEnqueueAsync(_account, _artistId, wanted, _posts);
