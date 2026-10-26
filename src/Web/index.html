@@ -50,6 +50,20 @@
   <video id="vplayer" controls playsinline></video>
 </div>
 
+<!-- 远程串流：作品里的 Windows 程序在电脑上运行，画面传到这里操作（stream.js） -->
+<div id="streamOverlay" class="soverlay">
+  <div class="vtop">
+    <span id="stitle" class="vtitle"></span>
+    <button class="icon-btn" id="saudio" onclick="GS.toggleAudio()">🔇 声音</button>
+    <button class="icon-btn" id="skeys" onclick="GS.toggleKeys()">⌨ 按键</button>
+    <button class="icon-btn" onclick="GS.fullscreen()">⛶ 全屏</button>
+    <button class="icon-btn danger" onclick="GS.quit()">⏻ 结束程序</button>
+    <button class="icon-btn" onclick="GS.close()">✕ 关闭</button>
+  </div>
+  <div id="sstage" class="sstage"><canvas id="scanvas"></canvas><div id="smsg" class="smsg"></div></div>
+  <div id="spad" class="spad"></div>
+</div>
+
 <div id="audioBar" class="abar">
   <span id="aname" class="aname"></span>
   <audio id="aplayer" controls></audio>
@@ -90,6 +104,7 @@
 <script src="/js/download.js"></script>
 <script src="/js/settings.js"></script>
 <script src="/js/viewer.js"></script>
+<script src="/js/stream.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>

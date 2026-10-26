@@ -301,6 +301,35 @@ public static class PawchiveApi
         }
     }
 
+    /// <summary>
+    /// 只凭作品号查出所属作家号；失败返回 null。
+    ///
+    /// 单篇接口要作家号与作品号两样，而扫描媒体库导回来的作品只有文件夹名里的作品号。
+    /// API 没有按作品号反查的接口（/api/v1/{service}/post/{id} 是 404），但网页路由
+    /// /{service}/post/{id} 会 302 到 /{service}/user/{作家号}/post/{id}，从跳转后的地址里取即可。
+    /// 只读响应头，不下载页面正文。
+    /// </summary>
+    public static async Task<string?> FindPostArtistAsync(string service, string postId)
+    {
+        var url = $"https://{Host}/{service}/post/{postId}";
+        try
+        {
+            using var client = Http.CreateClient(TimeSpan.FromSeconds(30), UserAgent);
+            using var resp = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            var path = resp.RequestMessage?.RequestUri?.AbsolutePath ?? "";
+            var m = System.Text.RegularExpressions.Regex.Match(path, @"/user/([^/]+)/post/");
+            if (m.Success)
+                return m.Groups[1].Value;
+            Logger.Error($"pawchive 查不到作品所属作家 HTTP {(int)resp.StatusCode}: {url}");
+            return null;
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            Logger.Error($"pawchive 网络请求失败: {e.Message} ({url})");
+            return null;
+        }
+    }
+
     /// <summary>取作家全部作品（逐页拉到尾），每页回调一次已获取总数。</summary>
     public static async Task<List<PawchivePost>> GetAllPostsAsync(
         string service, string artistId, Action<int>? onPage = null, int maxPages = 200)

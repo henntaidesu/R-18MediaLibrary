@@ -10,7 +10,24 @@ function fileIcon(ext) {
   if (IMG_EXTS.includes(ext)) return '🖼️';
   if (VIDEO_EXTS.includes(ext)) return '🎬';
   if (AUDIO_EXTS.includes(ext)) return '🎵';
+  if (ext === '.exe') return '🎮';
   return '📄';
+}
+// Windows 程序（游戏/软件类作品）：浏览器跑不了 exe，程序一律在运行本程序的那台电脑上启动，启动时让用户选：
+// 远程串流 = 画面传到这个网页里操作（stream.js）；本机运行 = 只在那台电脑上开窗口。
+// 浏览设备不是 Windows（手机/平板/Mac）时人不在那台电脑前，本机运行没有意义，只能串流。
+async function runExe(id, n) {
+  const isWin = /Windows NT/.test(navigator.userAgent) && !/Windows Phone/.test(navigator.userAgent);
+  const how = await uiChoice({
+    choices: [
+      { key: 'local', icon: '🖥', name: '本机运行', disabled: !isWin },
+      { key: 'stream', icon: '📡', name: '远程串流' },
+    ],
+  });
+  if (how === 'stream') { GS.open(id, n); return; }
+  if (how !== 'local') return;
+  let r; try { r = await apiPost('/api/runexe', { id, path: n.rel }); } catch (e) { return; }
+  await uiAlert(r.ok ? `已启动「${n.name}」。` : '启动失败：' + (r.message || ''));
 }
 // 查看作品视图模式：thumb=缩略图网格 / list=文件列表（折叠树+文件大小，对齐 WPF）
 let fileViewMode = 'thumb';
@@ -77,6 +94,8 @@ function buildTreeLevel(host, nodes, id, depth) {
       } else if (AUDIO_EXTS.includes(ext)) {
         const q = nodes.filter(x => !x.dir && AUDIO_EXTS.includes((x.ext || '').toLowerCase())).map(x => ({ url: fileUrl(id, x.rel), name: x.name }));
         row.onclick = () => playAudioQueue(q, Math.max(0, q.findIndex(a => a.url === url)));
+      } else if (ext === '.exe') {
+        row.onclick = () => runExe(id, n);
       } else {
         row.onclick = () => window.open(url, '_blank');
       }
@@ -99,7 +118,8 @@ function drawFileGrid(nodes, id, host) {
       thumb.appendChild(el('div', 'fcount', `${(n.children || []).length} 项`));
       card.onclick = () => pushView('files', { id, name: n.name, nodes: n.children || [] });
     } else if (IMG_EXTS.includes(ext)) {
-      const img = el('img'); img.loading = 'lazy'; img.src = thumbUrl(id, n.rel); thumb.appendChild(img);
+      const img = el('img'); thumb.appendChild(img);
+      thumbQueue.add(img, thumbUrl(id, n.rel));
       const url = fileUrl(id, n.rel);
       card.onclick = () => LB.open(imgs, Math.max(0, imgs.indexOf(url)));
     } else if (VIDEO_EXTS.includes(ext)) {
@@ -110,6 +130,9 @@ function drawFileGrid(nodes, id, host) {
       thumb.appendChild(el('div', 'big', '🎵'));
       const url = fileUrl(id, n.rel);
       card.onclick = () => playAudioQueue(audios, Math.max(0, audios.findIndex(a => a.url === url)));
+    } else if (ext === '.exe') {
+      thumb.appendChild(el('div', 'big', '🎮'));
+      card.onclick = () => runExe(id, n);
     } else {
       thumb.appendChild(el('div', 'big', '📄'));
       card.onclick = () => window.open(fileUrl(id, n.rel), '_blank');
@@ -118,8 +141,36 @@ function drawFileGrid(nodes, id, host) {
     return card;
   };
   const grid = el('div', 'fgrid'); host.appendChild(grid);
+  thumbQueue.reset();
   lazyGridFill(grid, nodes, makeCard);   // 分批渲染缩略图卡片（图片多时避免一次性建 DOM/加载）
 }
+// 缩略图按文件顺序加载：浏览器对同时发出的请求谁先回谁先显示，整墙会东一张西一张地冒出来。
+// 这里按卡片顺序发请求（同时最多 THUMB_PARALLEL 张，不至于退化成一张张串行地慢），
+// 并且只有前面的都到位了才显示后面那张，所以画面上永远是从第一张往后依次填满。
+const THUMB_PARALLEL = 3;
+const thumbQueue = {
+  items: [], next: 0, shown: 0, active: 0, gen: 0,
+  reset() { this.items = []; this.next = this.shown = this.active = 0; this.gen++; },
+  add(img, src) {
+    img.style.visibility = 'hidden';
+    this.items.push({ img, src, done: false });
+    this.pump();
+  },
+  pump() {
+    while (this.active < THUMB_PARALLEL && this.next < this.items.length) {
+      const it = this.items[this.next++], gen = this.gen;
+      this.active++;
+      it.img.onload = it.img.onerror = () => {
+        if (gen !== this.gen) return;   // 已切到别的作品/文件夹，旧队列作废
+        this.active--; it.done = true;
+        while (this.shown < this.items.length && this.items[this.shown].done)
+          this.items[this.shown++].img.style.visibility = '';
+        this.pump();
+      };
+      it.img.src = it.src;
+    }
+  },
+};
 // ---------- 视频播放队列 ----------
 let videoQueue = [], videoIndex = -1;
 function playVideoQueue(queue, index) {

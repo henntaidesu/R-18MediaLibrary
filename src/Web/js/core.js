@@ -29,7 +29,7 @@ function fallbackCopy(t) {
 // ---------- 页内弹窗（替代浏览器原生 alert/confirm/prompt，避免使用浏览器顶部弹窗）----------
 // 返回 Promise：alert→resolve(undefined)；confirm→resolve(true/false)；prompt→resolve(字符串或 null)
 let _modalCancel = null;   // 遮罩点击时用于取消当前弹窗的回调（保证 Promise 一定被 resolve，不悬挂）
-function uiModal({ title, message, input, defaultValue, okText = '确定', cancelText, danger }) {
+function uiModal({ title, message, input, defaultValue, okText = '确定', cancelText, altText, danger }) {
   return new Promise(resolve => {
     const ov = $('modal'), box = $('modalBox');
     box.innerHTML = '';
@@ -44,6 +44,8 @@ function uiModal({ title, message, input, defaultValue, okText = '确定', cance
     }
     const btns = el('div', 'modal-btns');
     if (cancelText) { const c = el('button', 'icon-btn', cancelText); c.onclick = () => done(input ? null : false); btns.appendChild(c); }
+    // 第三个选项（如"远程串流 / 在电脑上运行"二选一）：点它 resolve 'alt'
+    if (altText) { const a = el('button', 'icon-btn', altText); a.onclick = () => done('alt'); btns.appendChild(a); }
     const ok = el('button', 'icon-btn primary' + (danger ? ' danger' : ''), okText);
     ok.onclick = () => done(input ? field.value : true);
     btns.appendChild(ok); box.appendChild(btns);
@@ -56,6 +58,32 @@ function uiModal({ title, message, input, defaultValue, okText = '确定', cance
     document.addEventListener('keydown', onKey);
     ov.classList.add('show');
     (field || ok).focus();
+  });
+}
+// 卡片式二选一/多选一：每个选项一张卡（样式同媒体库选择器的 .pk-card），点卡即选，不另设确定/取消按钮——
+// 点遮罩或 Esc 即取消（resolve null）。disabled 的卡片置灰、不可点，sub 写明原因。
+function uiChoice({ title, message, choices }) {
+  return new Promise(resolve => {
+    const ov = $('modal'), box = $('modalBox');
+    box.innerHTML = '';
+    const done = (v) => { _modalCancel = null; ov.classList.remove('show'); document.removeEventListener('keydown', onKey); resolve(v); };
+    if (title) box.appendChild(el('h3', null, title));
+    if (message) box.appendChild(el('div', 'modal-msg', message));
+    const grid = el('div', 'pk-grid choice-grid');
+    grid.style.gridTemplateColumns = `repeat(${choices.length}, 1fr)`;
+    for (const c of choices) {
+      const card = el('div', 'pk-card' + (c.disabled ? ' disabled' : ''));
+      if (c.icon) card.appendChild(el('div', 'pk-icon', c.icon));
+      card.appendChild(el('div', 'pk-name', c.name));
+      if (c.sub) card.appendChild(el('div', 'pk-sub', c.sub));
+      if (!c.disabled) card.onclick = () => done(c.key);
+      grid.appendChild(card);
+    }
+    box.appendChild(grid);
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); done(null); } }
+    _modalCancel = () => done(null);
+    document.addEventListener('keydown', onKey);
+    ov.classList.add('show');
   });
 }
 function uiAlert(message, title) { return uiModal({ title: title || '提示', message, okText: '确定' }); }
@@ -189,7 +217,14 @@ window.addEventListener('resize', applyLayout);
 function syncStickyBars() {
   const root = document.documentElement, head = document.querySelector('header');
   const gap = parseFloat(getComputedStyle(root).getPropertyValue('--bar-gap')) || 10;
-  let top = head ? Math.round(head.getBoundingClientRect().height) : 0;
+  // 顶栏里一样东西都不显示时（搜索/下载页：标题为空、按钮全收起）整条藏掉，不留一道空白条。
+  // 不能用 offsetParent 判断子元素是否可见：顶栏藏起来后子元素的 offsetParent 全是 null，会永远出不来。
+  if (head) {
+    const empty = !Array.from($('topbar').children).some(c =>
+      !c.hidden && getComputedStyle(c).display !== 'none' && (c.tagName !== 'SPAN' || c.textContent.trim()));
+    if (head.hidden !== empty) head.hidden = empty;
+  }
+  let top = head && !head.hidden ? Math.round(head.getBoundingClientRect().height) : 0;
   const setVar = (k, v) => { if (root.style.getPropertyValue(k) !== v) root.style.setProperty(k, v); };
   const setCls = (e, c, on) => { if (e.classList.contains(c) !== on) e.classList.toggle(c, on); };
   setVar('--topbar-h', top + 'px');
@@ -349,6 +384,7 @@ async function popView() {
   return true;
 }
 window.addEventListener('popstate', () => {
+  if (GS.isOpen) { GS.hide(); return; }   // 串流页同看图：返回手势只关掉它
   if (LB.isOpen) { LB.hide(); return; }   // 看图层先退：返回手势只关看图，不离开当前页
   if (section === 'search') return;   // 搜索分区内不压历史层级（来源/查询词只 replace）
   if (section === 'download') { syncDlFromHash(); return; }

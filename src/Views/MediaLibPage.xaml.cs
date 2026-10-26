@@ -1897,13 +1897,47 @@ public partial class MediaLibPage : UserControl
             ItemAspect = 1,              // 缩略图正方形（Web .fthumb { aspect-ratio: 1 / 1 }）
             ExtraHeight = ThumbNameH,    // 再加文件名行
         };
+        var thumbs = new List<(Border Thumb, string Path)>(images.Count);
         foreach (var path in images)
-            wrap.Children.Add(MakeThumbTile(path));
+            wrap.Children.Add(MakeThumbTile(path, thumbs));
+        LoadThumbsInOrderAsync(wrap, thumbs);
         return wrap;
     }
 
+    /// <summary>
+    /// 缩略图按文件顺序逐张解码（对齐 Web viewer.js 的 thumbQueue）：整墙同时开解，谁先完成谁先出现，
+    /// 画面东一张西一张；媒体库又多在 HDD 上，并发读只会多添寻道。缩略图墙被换掉（离开视觉树）即停。
+    /// </summary>
+    private static async void LoadThumbsInOrderAsync(FrameworkElement wrap, List<(Border Thumb, string Path)> thumbs)
+    {
+        // 墙是建好后才挂进 ContentControl 的，而 ContentControl 的内容要到布局（Measure）时才进视觉树。
+        // 只让出一轮（Task.Yield）不够：续体按 Normal 优先级跑、早于布局，此时 FromVisual 仍为 null，
+        // 循环一上来就退出、整墙一张图都不画。故等它真正 Loaded 再开始。
+        if (!wrap.IsLoaded)
+        {
+            var loaded = new TaskCompletionSource();
+            void OnLoaded(object? s, RoutedEventArgs e)
+            {
+                wrap.Loaded -= OnLoaded;
+                loaded.TrySetResult();
+            }
+            wrap.Loaded += OnLoaded;
+            await loaded.Task;
+        }
+        foreach (var (thumb, path) in thumbs)
+        {
+            if (PresentationSource.FromVisual(wrap) == null)
+                return;
+            var bmp = await ThumbnailCache.LoadAsync(path, ThumbDecodeWidth);
+            if (bmp == null) continue;
+            var brush = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+            brush.Freeze();
+            thumb.Background = brush;
+        }
+    }
+
     /// <summary>单张缩略图：图片填充裁切 + 文件名，单击整页预览。</summary>
-    private Border MakeThumbTile(string path)
+    private Border MakeThumbTile(string path, List<(Border Thumb, string Path)> thumbs)
     {
         // 尺寸由 ResponsiveWrapPanel 给：整块拉伸填满单元格，缩略图占正方形那部分、文件名占固定一行
         var tile = new Border
@@ -1925,7 +1959,7 @@ public partial class MediaLibPage : UserControl
             CornerRadius = new CornerRadius(8, 8, 0, 0),
             Tag = path,
         };
-        LoadCoverAsync(thumb, path, ThumbDecodeWidth);   // 后台解码，避免整墙缩略图卡 UI
+        thumbs.Add((thumb, path));   // 由 LoadThumbsInOrderAsync 按顺序后台解码
         panel.Children.Add(thumb);
         var name = new TextBlock
         {
@@ -2170,6 +2204,7 @@ public partial class MediaLibPage : UserControl
         if (DlsitePage.ImageExts.Contains(ext)) return "🖼️";
         if (VideoExts.Contains(ext)) return "🎬";
         if (AudioExts.Contains(ext)) return "🎵";
+        if (ext == ".exe") return "🎮";
         return "📄";
     }
 
@@ -2189,7 +2224,12 @@ public partial class MediaLibPage : UserControl
             new MediaPlayerDialog(path, isVideo: false) { Owner = Window.GetWindow(this) }
                 .ShowDialog();
         else
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            // 工作目录设成文件所在目录：游戏类 exe 多按相对路径读自己的资源包（同 Web 端 /api/runexe）
+            Process.Start(new ProcessStartInfo(path)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(path)!,
+            });
     }
 
     // ---------- 整页预览 ----------

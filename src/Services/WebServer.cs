@@ -367,6 +367,8 @@ public static class WebServer
                 case "/api/asset": ApiAsset(stream, req); break;
                 case "/api/files": ApiFiles(stream, req); break;
                 case "/api/file": ApiFile(stream, req); break;
+                case "/api/runexe": ApiRunExe(stream, req); break;
+                case "/api/stream": await ApiStreamAsync(stream, req); break;
                 // 搜索
                 case "/api/search": await ApiSearchAsync(stream, req); break;
                 case "/api/maker": await ApiMakerAsync(stream, req); break;
@@ -1200,6 +1202,100 @@ public static class WebServer
             return;
         }
         WriteFileRange(stream, req, full);
+    }
+
+    /// <summary>
+    /// 在运行本程序的这台电脑上启动作品里的 .exe（游戏/软件类作品）。浏览器跑不了 Windows 程序，
+    /// 所以"网页上运行"= 网页发指令、本机开窗口，画面出现在这台电脑的屏幕上而不是手机里。
+    /// 只认 POST（防止 &lt;img src&gt; 之类的 GET 被人借道触发）、只认作品文件夹内的 .exe。
+    /// </summary>
+    private static void ApiRunExe(NetworkStream stream, Request req)
+    {
+        if (req.Method != "POST")
+        {
+            WriteJson(stream, 405, new { ok = false, message = "method not allowed" });
+            return;
+        }
+        var id = ReadStringField(req.Body, "id");
+        var rel = ReadStringField(req.Body, "path");
+        if (ResolveWorkExe(id, rel) is not { Full: var full })
+        {
+            WriteJson(stream, 404, new { ok = false, message = "找不到该程序" });
+            return;
+        }
+        try
+        {
+            // 工作目录必须设成 exe 所在目录：游戏多按相对路径读自己的资源包（如 Godot 的 .pck）
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(full)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(full)!,
+            });
+            Logger.Info($"Web 端启动程序：{id} / {rel}");
+            WriteJson(stream, 200, new { ok = true });
+        }
+        catch (Exception e)
+        {
+            Logger.Warning($"Web 端启动程序失败：{id} / {rel}：{e.Message}");
+            WriteJson(stream, 200, new { ok = false, message = e.Message });
+        }
+    }
+
+    /// <summary>
+    /// 作品文件夹里的某个 .exe → (完整路径, 作品根目录)。路径穿越防护同 ApiFile；另外只认 .exe，
+    /// 不让"运行程序"变成"执行作品目录里任意文件"。
+    /// </summary>
+    private static (string Full, string Root)? ResolveWorkExe(string id, string rel)
+    {
+        var folder = Db.Scalar("SELECT \"folder\" FROM \"works\" WHERE \"work_id\" = @w", ("@w", id)) as string;
+        if (folder == null || !Directory.Exists(folder))
+            return null;
+        var root = Path.GetFullPath(folder);
+        string full;
+        try { full = Path.GetFullPath(Path.Combine(root, rel)); }
+        catch (Exception) { return null; }
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(full) ||
+            !Path.GetExtension(full).Equals(".exe", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return (full, root);
+    }
+
+    /// <summary>
+    /// 远程串流（WebSocket）：握手后整条连接交给 <see cref="GameStream"/>，直到浏览器关掉为止。
+    /// 必须校验 Origin 与 Host 同源——WebSocket 不受同源策略约束、浏览器又会自动带上 Cookie，
+    /// 不校验的话任意网页都能借已登录的浏览器连进来远程操作这台电脑。
+    /// </summary>
+    private static async Task ApiStreamAsync(NetworkStream stream, Request req)
+    {
+        if (!req.Headers.TryGetValue("Sec-WebSocket-Key", out var key) || key.Length == 0 ||
+            !req.Headers.TryGetValue("Upgrade", out var upgrade) ||
+            !upgrade.Equals("websocket", StringComparison.OrdinalIgnoreCase))
+        {
+            WriteJson(stream, 400, new { error = "websocket required" });
+            return;
+        }
+        if (!req.Headers.TryGetValue("Origin", out var origin) ||
+            !Uri.TryCreate(origin, UriKind.Absolute, out var ou) ||
+            !req.Headers.TryGetValue("Host", out var host) ||
+            !string.Equals(ou.Authority, host, StringComparison.OrdinalIgnoreCase))
+        {
+            WriteJson(stream, 403, new { error = "forbidden origin" });
+            return;
+        }
+        var id = req.Query.GetValueOrDefault("id") ?? "";
+        var rel = req.Query.GetValueOrDefault("path") ?? "";
+        if (ResolveWorkExe(id, rel) is not { Full: var full, Root: var root })
+        {
+            WriteJson(stream, 404, new { error = "找不到该程序" });
+            return;
+        }
+        var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                   $"Sec-WebSocket-Accept: {GameStream.WebSocket.AcceptKey(key)}\r\n\r\n";
+        stream.Write(Encoding.ASCII.GetBytes(head));
+        Logger.Info($"Web 端远程串流：{id} / {rel}");
+        // 串流要跑很久，单独起一条线程，不占线程池
+        await Task.Factory.StartNew(() => GameStream.Run(stream, full, root), TaskCreationOptions.LongRunning);
     }
 
     /// <summary>按 Range 头流式写出文件（206 Partial Content）或整文件（200），分块拷贝不占内存。</summary>

@@ -74,9 +74,11 @@ public static class MediaLibraryService
                 (string.IsNullOrEmpty(oldCover) || !File.Exists(oldCover)))
             {
                 // 作品文件夹在程序外被移动过时封面路径失效（meta_scanned 已置位不会重新补全）：
-                // 从新文件夹的 DataSource 重新定位封面（不联网，仅查本地已有图片）
-                var newCover = DlsitePage.DownloadWorkImagesAsync(rj, [], folder)
-                    .GetAwaiter().GetResult();
+                // 从新文件夹重新定位封面（不联网，仅查本地已有图片）——DLsite 作品在 DataSource 里，
+                // fanbox/E-Hentai/pixiv 的图直接摊在作品目录里
+                var newCover = IsFlatImageWork(rj)
+                    ? FanboxService.FindCover(folder) ?? ""
+                    : DlsitePage.DownloadWorkImagesAsync(rj, [], folder).GetAwaiter().GetResult();
                 if (newCover.Length > 0)
                     cover = newCover;
             }
@@ -371,6 +373,21 @@ public static class MediaLibraryService
         for (var i = 0; i < rjList.Count; i++)
         {
             var rj = rjList[i];
+            // FB 作品不是 DLsite 作品：元数据回 pawchive 取（扫描媒体库导回来的作品只有作品号）
+            if (FanboxService.IsFanboxWorkId(rj))
+            {
+                var fbOk = await FanboxService.BackfillFromPawchiveAsync(rj);
+                if (fbOk) filled++; else missed++;
+                progress?.Invoke(i + 1, rjList.Count, rj, fbOk);
+                continue;
+            }
+            // E-Hentai / pixiv 同理不是 DLsite 作品，拿作品号去查 DL API 只会白发请求
+            if (IsFlatImageWork(rj))
+            {
+                missed++;
+                progress?.Invoke(i + 1, rjList.Count, rj, false);
+                continue;
+            }
             var work = await DlsiteApi.GetWorkDataAsync(rj);
             if (work != null)
             {
@@ -419,7 +436,10 @@ public static class MediaLibraryService
             // meta_scanned 是"已完整扫描"（字段+图片+正文+标签）的唯一标记
             : "SELECT \"work_id\", \"folder\" FROM \"works\" WHERE \"state\" = '已品悦' " +
               $"AND COALESCE(\"meta_scanned\", '') != '1'{cond}";
-        var rows = Db.Select(sql, args.ToArray());
+        // 作品页抓取只对 DLsite 作品有意义：fanbox/E-Hentai/pixiv 的元数据来自各自站点
+        // （见 BackfillWorksFromApiAsync），拿它们的作品号去抓 DLsite 作品页只会失败
+        var rows = Db.Select(sql, args.ToArray())?
+            .Where(r => !IsFlatImageWork(r[0] as string ?? "")).ToList();
         if (rows == null)
             return (0, 0, 0);
 
