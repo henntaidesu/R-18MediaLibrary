@@ -45,6 +45,8 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="LibVLCSharp" Version="3.8.2" />
     <PackageReference Include="LibVLCSharp.WPF" Version="3.8.2" />
+    <!-- 账号访问的「在服务器上登录」：本机开一个内嵌浏览器过 pixiv/FANBOX 的人机验证，登录后自动取 cookie（LoginBrowser） -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <!-- Microsoft.Data.Sqlite 10.0.9 传递引入的 SQLitePCLRaw 2.1.11 存在高危漏洞 GHSA-2m69-gcr7-jv3q（捆绑的 SQLite < 3.50.2），显式升级覆盖 -->

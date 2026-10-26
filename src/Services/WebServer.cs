@@ -1328,6 +1328,13 @@ public static class WebServer
             WriteJson(stream, 403, new { error = "forbidden origin" });
             return;
         }
+        // ?login=<站点>：账号访问的「在服务器上登录」，在本机开登录浏览器并串流过去（LoginBrowser）
+        var login = req.Query.GetValueOrDefault("login") ?? "";
+        if (login.Length > 0)
+        {
+            await StreamLoginBrowserAsync(stream, key, login);
+            return;
+        }
         var id = req.Query.GetValueOrDefault("id") ?? "";
         var rel = req.Query.GetValueOrDefault("path") ?? "";
         if (ResolveWorkExe(id, rel) is not { Full: var full, Root: var root })
@@ -1341,6 +1348,39 @@ public static class WebServer
         Logger.Info($"Web 端远程串流：{id} / {rel}");
         // 串流要跑很久，单独起一条线程，不占线程池
         await Task.Factory.StartNew(() => GameStream.Run(stream, full, root), TaskCreationOptions.LongRunning);
+    }
+
+    /// <summary>
+    /// 网页端登录 pixiv / FANBOX：在运行本程序的电脑上打开登录浏览器（窗口要在 UI 线程上建），
+    /// 再把这个窗口当作串流目标交给 <see cref="GameStream.RunWindow"/>。登录成功后窗口自己关掉，串流随之结束，
+    /// 结束提示取 <see cref="LoginBrowser.ResultOf"/>。
+    /// </summary>
+    private static async Task StreamLoginBrowserAsync(NetworkStream stream, string key, string site)
+    {
+        var app = System.Windows.Application.Current;
+        if (!LoginBrowser.Supports(site) || app == null)
+        {
+            WriteJson(stream, 404, new { error = "不支持的站点" });
+            return;
+        }
+        try
+        {
+            await app.Dispatcher.InvokeAsync(() => LoginBrowser.Open(site));
+        }
+        catch (Exception e)
+        {
+            WriteJson(stream, 500, new { error = e.Message });
+            return;
+        }
+        var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                   $"Sec-WebSocket-Accept: {GameStream.WebSocket.AcceptKey(key)}\r\n\r\n";
+        stream.Write(Encoding.ASCII.GetBytes(head));
+        Logger.Info($"Web 端串流登录浏览器：{site}");
+        IntPtr Window() => app.Dispatcher.Invoke(() => LoginBrowser.Handle);
+        await Task.Factory.StartNew(
+            () => GameStream.RunWindow(stream, "登录浏览器 " + site, Window,
+                () => app.Dispatcher.Invoke(() => LoginBrowser.ResultOf(site))),
+            TaskCreationOptions.LongRunning);
     }
 
     /// <summary>按 Range 头流式写出文件（206 Partial Content）或整文件（200），分块拷贝不占内存。</summary>
@@ -3035,6 +3075,10 @@ public static class WebServer
             accounts = AccountService.All().Select(a => new
             {
                 site = a.Site, title = a.Title, loggedIn = a.LoggedIn, account = a.Account,
+                // 最近一次 cookie 自动维护的结果（AccountKeeper），没维护过为 null
+                keep = AccountKeeper.StatusOf(a.Site) is { } k
+                    ? new { at = k.At.ToString("MM-dd HH:mm"), ok = k.Ok, message = k.Message }
+                    : null,
             }),
             ehUsername = AppConfig.EhentaiUsername,
             // 密码本身不回给网页，只告诉它「存过了」：输入框留空即沿用已保存的

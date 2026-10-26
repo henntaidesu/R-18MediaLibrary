@@ -26,11 +26,14 @@ public partial class App : Application
         // FANBOX 作家监控的轮询线程：到点就去 pawchive 看有没有新投稿，有就自动入队下载
         // （没有监控项时为空转；总开关关闭时只是不做事，手动「立即检查」仍可用）
         FanboxWatchService.Start();
+        // 账号 cookie 自动维护：定时检测已登录的站点，失效就从登录浏览器续上 / 用存着的账号密码重登
+        AccountKeeper.Start();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         FanboxWatchService.Stop();
+        AccountKeeper.Stop();
         ImageHostService.Stop();
         WebServer.Stop();
         Db.Checkpoint();

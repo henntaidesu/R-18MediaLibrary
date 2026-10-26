@@ -212,7 +212,11 @@ public static class AccountService
         return result;
     }
 
-    /// <summary>退出登录：清掉该站的 cookie 与显示名（E-Hentai 的账号密码留着，方便下次再登）。</summary>
+    /// <summary>
+    /// 退出登录：清掉该站的 cookie 与显示名（E-Hentai 的账号密码留着，方便下次再登）；
+    /// pixiv / FANBOX 连登录浏览器里的 cookie 一起清（<see cref="LoginBrowser.Forget"/>）。
+    /// 退出后自动维护（<see cref="AccountKeeper"/>）不再管这个站——它只维护「当前登着」的站。
+    /// </summary>
     public static void Logout(string site)
     {
         switch (site)
@@ -221,11 +225,13 @@ public static class AccountService
                 AppConfig.Write("fanbox", "sessid", "");
                 AppConfig.Write("fanbox", "username", "");
                 FanboxOfficialApi.Invalidate();
+                LoginBrowser.Forget(site);
                 break;
             case Pixiv:
                 AppConfig.Write("pixiv", "php_sessid", "");
                 AppConfig.Write("pixiv", "username", "");
                 PixivApi.Invalidate();
+                LoginBrowser.Forget(site);
                 break;
             case Ehentai:
                 AppConfig.Write("ehentai", "member_id", "");
@@ -236,6 +242,7 @@ public static class AccountService
             default:
                 return;
         }
+        AccountKeeper.Clear(site);
         Changed?.Invoke();
     }
 }

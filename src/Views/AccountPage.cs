@@ -16,6 +16,8 @@ namespace R18MediaLibrary.Views;
 /// FANBOX / pixiv / E-Hentai 三个站点各一张分区卡——标题右边是登录状态「已登录（账号名）/ 未登录」，
 /// 其下是 cookie 输入与「保存并检测 / 检测 / 退出登录」；E-Hentai 另有账号密码登录（账号密码存库，进页即回填）。
 /// 页面不放说明文字，只有 FANBOX / pixiv 留一行 cookie 的获取方法（用户指定）。
+/// FANBOX / pixiv 另有「🖥 在服务器上登录」：本机开登录浏览器（<see cref="LoginBrowser"/>），登录后自动取 cookie；
+/// 桌面端就是那台电脑，直接操作窗口即可（Web 端是把同一个窗口串流过去）。
 ///
 /// cookie 输入框只写不读（同 Web：服务端从不把 cookie 回给网页，桌面端保持同一交互），已登录时留空即保持不变。
 /// 数据与校验都在 <see cref="AccountService"/>；登录 FANBOX 后作品搜索的来源下拉多出「FANBOX（账号名）」。
@@ -67,6 +69,13 @@ public class AccountPage : UserControl
                 Refresh();
         };
         I18n.LanguageChanged += Refresh;
+        // 登录浏览器有了结果（不论是在桌面上还是经网页串流登的）：刷新状态并提示
+        LoginBrowser.Finished += (site, ok, message) =>
+        {
+            Refresh();
+            if (ok && IsVisible)
+                InAppDialog.Info(this, message, AccountService.Info(site).Title);
+        };
         Refresh();
     }
 
@@ -138,6 +147,25 @@ public class AccountPage : UserControl
             row.Children.Add(pass);
             row.Children.Add(login);
             body.Children.Add(row);
+        }
+
+        // pixiv / FANBOX：在本机开浏览器登录，登录成功自动存 cookie（结果经 LoginBrowser.Finished 回来）
+        if (LoginBrowser.Supports(a.Site))
+        {
+            var remote = new Button { Content = I18n.Tr("🖥 在服务器上登录"), Style = Res<Style>("AccentButton"),
+                Margin = new Thickness(130, 0, 0, 10), HorizontalAlignment = HorizontalAlignment.Left };
+            remote.Click += (_, _) =>
+            {
+                try
+                {
+                    LoginBrowser.Open(a.Site);
+                }
+                catch (Exception e)
+                {
+                    Say(false, e.Message);
+                }
+            };
+            body.Children.Add(remote);
         }
 
         // cookie 输入：只写不读，留空即保持原值
@@ -223,13 +251,24 @@ public class AccountPage : UserControl
         actions.Children.Add(result);
         body.Children.Add(actions);
 
+        // cookie 自动维护（AccountKeeper）的最近结果，对齐 Web 的「自动维护（时间）：…」
+        if (a.LoggedIn && AccountKeeper.StatusOf(a.Site) is { } keep)
+            body.Children.Add(new TextBlock
+            {
+                Text = I18n.Format(I18n.Tr("自动维护（{at}）：{message}"),
+                    ("at", keep.At.ToString("MM-dd HH:mm")), ("message", keep.Message)),
+                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0), FontSize = 12.5,
+                Foreground = keep.Ok ? Res<Brush>("CaptionBrush") ?? Brushes.Gray
+                    : new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71)),
+            });
+
         // 获取方法：浏览器登录 → F12 → Cookie（只有 FANBOX / pixiv 有）
         if (Where.TryGetValue(a.Site, out var where))
         {
             var (url, domain) = where;
             var tip = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0),
                 FontSize = 12.5, Foreground = Res<Brush>("CaptionBrush") };
-            tip.Inlines.Add(new Run(I18n.Tr("获取方法：在浏览器登录 ")));
+            tip.Inlines.Add(new Run(I18n.Tr("也可手动填写：在浏览器登录 ")));
             var link = new Hyperlink(new Run(url))
             {
                 Foreground = Res<Brush>("AccentLightBrush") ?? Brushes.DodgerBlue, TextDecorations = null,

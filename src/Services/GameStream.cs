@@ -25,7 +25,9 @@ namespace R18MediaLibrary.Services;
 /// - 服务端 → 浏览器，二进制帧首字节区分类型：1 = 一帧 JPEG 画面，2 = 一段 16 位交错 PCM 声音；
 ///   文本帧为 JSON 状态：{t:"status",text} / {t:"audio",rate,ch} / {t:"exit"}。
 /// - 浏览器 → 服务端，文本帧 JSON：{t:"m",a:"move|down|up",b,x,y}（x/y 是 0~1 的画面相对坐标）、
-///   {t:"w",d}（滚轮）、{t:"k",a:"down|up",code}（KeyboardEvent.code）、{t:"audio",on}、{t:"quit"}（关闭程序窗口）。
+///   {t:"w",d}（滚轮）、{t:"k",a:"down|up",code}（KeyboardEvent.code）、{t:"text",s}（整段文字按 Unicode 注入，
+///   手机软键盘发不出 KeyboardEvent.code，登录时输账号密码靠它）、{t:"audio",on}、{t:"quit"}（关闭程序窗口）。
+///   exit 可带 text：窗口模式（<see cref="RunWindow"/>）由调用方给出结束时的提示。
 ///
 /// 只保留一路串流：屏幕、鼠标、键盘都只有一套，两路同时操作只会互相打架，新连接进来就把旧的踢掉。
 /// 断开串流不结束游戏（可以重新连上继续玩），结束要走 quit。
@@ -44,9 +46,19 @@ public static class GameStream
     /// 在调用线程上跑完一整路串流（握手已由 <see cref="WebServer"/> 完成）。
     /// <paramref name="exePath"/> 所在作品目录 <paramref name="workRoot"/> 下已有程序窗口时直接接管，否则先启动它。
     /// </summary>
-    public static void Run(NetworkStream stream, string exePath, string workRoot)
+    public static void Run(NetworkStream stream, string exePath, string workRoot) =>
+        Run(new Session(stream, exePath, workRoot, null, null));
+
+    /// <summary>
+    /// 串流一个已经开好的窗口（不启动程序），如账号访问的登录浏览器 <see cref="LoginBrowser"/>。
+    /// <paramref name="window"/> 每次调用返回当前的窗口句柄（窗口关了返回 0，串流随之结束），
+    /// <paramref name="exitText"/> 给出结束时显示在网页上的提示。
+    /// </summary>
+    public static void RunWindow(NetworkStream stream, string label, Func<IntPtr> window, Func<string?> exitText) =>
+        Run(new Session(stream, label, "", window, exitText));
+
+    private static void Run(Session session)
     {
-        var session = new Session(stream, exePath, workRoot);
         lock (Sync)
         {
             _current?.Stop();
@@ -66,7 +78,8 @@ public static class GameStream
         }
     }
 
-    private sealed class Session(NetworkStream stream, string exePath, string workRoot)
+    private sealed class Session(NetworkStream stream, string exePath, string workRoot,
+        Func<IntPtr>? window, Func<string?>? exitText)
     {
         private readonly object _sendLock = new();
         private readonly ConcurrentQueue<byte[]> _audioOut = new();
@@ -160,7 +173,7 @@ public static class GameStream
                                 exitedSince = DateTime.Now;
                             else if ((DateTime.Now - exitedSince).TotalSeconds > 3)
                             {
-                                SendText(new { t = "exit" });
+                                SendText(new { t = "exit", text = exitText?.Invoke() });
                                 return;
                             }
                             Thread.Sleep(200);
@@ -198,6 +211,8 @@ public static class GameStream
 
         private IntPtr FindOrLaunch()
         {
+            if (window != null)
+                return window();
             var hwnd = FindWindow(null);
             if (hwnd != IntPtr.Zero)
                 return hwnd;
@@ -235,6 +250,8 @@ public static class GameStream
         /// <summary>找作品的程序窗口：进程是刚启动的那个，或进程的 exe 落在作品目录里（覆盖"启动器再拉起本体"的情况）。取面积最大的可见顶层窗口。</summary>
         private IntPtr FindWindow(Process? proc)
         {
+            if (window != null)
+                return window();
             var root = workRoot.TrimEnd('\\') + "\\";
             var pathCache = new Dictionary<uint, bool>();
             IntPtr best = IntPtr.Zero;
@@ -411,6 +428,17 @@ public static class GameStream
                     break;
                 case "k":
                     KeyInput(hwnd, Str(r, "a"), Str(r, "code"));
+                    break;
+                case "text":
+                    var text = Str(r, "s");
+                    if (text.Length is > 0 and <= 500)
+                    {
+                        if (Native.GetForegroundWindow() != hwnd)
+                            Native.BringToFront(hwnd);
+                        foreach (var ch in text)
+                            if (!char.IsControl(ch))
+                                Native.SendChar(ch);
+                    }
                     break;
             }
         }
@@ -648,7 +676,7 @@ public static class GameStream
         public const uint MouseMove = 0x0001, MouseLeftDown = 0x0002, MouseLeftUp = 0x0004,
             MouseRightDown = 0x0008, MouseRightUp = 0x0010, MouseMiddleDown = 0x0020, MouseMiddleUp = 0x0040,
             MouseWheel = 0x0800, MouseVirtualDesk = 0x4000, MouseAbsolute = 0x8000;
-        private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008;
+        private const uint KeyExtended = 0x0001, KeyUp = 0x0002, KeyScanCode = 0x0008, KeyUnicode = 0x0004;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct Rect { public int Left, Top, Right, Bottom; }
@@ -770,6 +798,17 @@ public static class GameStream
                 U = new InputUnion { Mouse = new MouseInputData { Dx = dx, Dy = dy, MouseData = data, Flags = flags } },
             };
             SendInput(1, [input], Marshal.SizeOf<Input>());
+        }
+
+        /// <summary>按 Unicode 注入一个字符（KEYEVENTF_UNICODE），与键盘布局、输入法无关。</summary>
+        public static void SendChar(char ch)
+        {
+            Input Make(bool up) => new()
+            {
+                Type = 1,
+                U = new InputUnion { Key = new KeyInputData { Scan = ch, Flags = KeyUnicode | (up ? KeyUp : 0) } },
+            };
+            SendInput(2, [Make(false), Make(true)], Marshal.SizeOf<Input>());
         }
 
         /// <summary>按扫描码注入：DirectInput/RawInput 读的是扫描码，只发虚拟键码的话不少游戏收不到。</summary>

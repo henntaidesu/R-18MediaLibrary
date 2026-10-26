@@ -1,5 +1,7 @@
 // accounts.js —— 账号访问（一级导航「账号访问」，分区 key accounts）：FANBOX / pixiv / E-Hentai 的登录。
-// 三个站的鉴权都是 cookie。pixiv 与 FANBOX 的登录带人机验证，程序里走不通，只能在浏览器登录后复制 cookie；
+// 三个站的鉴权都是 cookie。pixiv 与 FANBOX 的登录带人机验证，程序直接请求走不通，有两条路：
+// 「在服务器上登录」——运行本程序的电脑开一个内嵌浏览器（Services/LoginBrowser），画面串流到这里操作
+// （stream.js 的 GS.openLogin），登录后服务端自动取 cookie；或者在自己的浏览器登录后复制 cookie 粘进来。
 // E-Hentai 另有账号密码登录（服务端代登论坛、换回三个 cookie），账号密码按用户要求存库。
 // 服务端只回「登没登、账号名」，cookie 与密码从不回给网页：输入框只写不读，留空即保持不变。
 // 页面不放说明文字，只有 FANBOX / pixiv 留一行 cookie 的获取方法（用户指定）。
@@ -74,6 +76,19 @@ function accountCard(site) {
     s.appendChild(r1);
   }
 
+  // pixiv / FANBOX：在运行本程序的电脑上开浏览器登录，画面串流过来操作，登录成功服务端自动存 cookie
+  if (ACCOUNT_SITES[site]) {
+    const remote = el('button', 'icon-btn primary', '🖥 在服务器上登录');
+    remote.onclick = () => GS.openLogin(site, a.title, async msg => {
+      if (section !== 'accounts') return;
+      await renderAccountsPage();
+      if (msg) uiAlert(msg, a.title);
+    });
+    const r0 = el('div', 'frow');
+    r0.append(el('label'), remote);
+    s.appendChild(r0);
+  }
+
   // Cookie 输入：只写不读，留空 = 保持原值不变
   const inputs = {};
   ACCOUNT_FIELDS[site].forEach(([key, label]) => {
@@ -120,10 +135,17 @@ function accountCard(site) {
   actions.append(el('label'), save, check, out, result);
   s.appendChild(actions);
 
+  // cookie 自动维护（服务端 AccountKeeper 定时检测，失效就从登录浏览器续上 / 用保存的账号密码重登）的最近结果
+  if (a.loggedIn && a.keep) {
+    const keep = el('div', 'note acct-tip', `自动维护（${a.keep.at}）：${a.keep.message}`);
+    keep.style.color = a.keep.ok ? '' : '#f87171';
+    s.appendChild(keep);
+  }
+
   const where = ACCOUNT_SITES[site];
   if (where) {
     const tip = el('div', 'note acct-tip');
-    tip.append('获取方法：在浏览器登录 ');
+    tip.append('也可手动填写：在浏览器登录 ');
     const link = el('a', null, where.url); link.href = where.url; link.target = '_blank'; link.rel = 'noreferrer';
     tip.append(link, ` 后按 F12 →「应用 / Application」→ Cookie → ${where.domain}，复制对应名称的「值」粘到上面。`);
     s.appendChild(tip);
