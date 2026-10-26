@@ -128,6 +128,7 @@ public partial class PixivSearchView : UserControl
     // 用哪个 pixiv 账号访问（pixiv 用户号；"" = 匿名）：来源下拉里每个账号一项「pixiv（账号名）」，宿主经 SetAccount 设定。
     // 下面每个访问站点的 async 方法开头都把它设进 SiteAccounts 的上下文
     private string _account = "";
+    private bool _fav;   // 来源是「pixiv 收藏（账号名）」
 
     // 作品详情
     private readonly ObservableCollection<PixivImageItem> _detailImages = [];
@@ -209,6 +210,10 @@ public partial class PixivSearchView : UserControl
     public static string InputHint =>
         I18n.Tr("关键字 / 标签，或粘贴 pixiv 作品链接 / 作品号");
 
+    /// <summary>「pixiv 收藏（账号名）」来源的输入框占位提示。</summary>
+    public static string FavInputHint =>
+        I18n.Tr("收藏标签筛选；留空直接查询 = 全部收藏");
+
     /// <summary>当前结果计数/提示文案；宿主切回本来源时用它恢复计数行。</summary>
     public string CurrentStatus { get; private set; } = "";
 
@@ -237,15 +242,15 @@ public partial class PixivSearchView : UserControl
     // ---------- 搜索 ----------
 
     /// <summary>
-    /// 由宿主的「查询」触发。输入可以是关键字/标签，也可以直接粘贴作品链接或作品号
-    /// （粘链接时跳过搜索，径直把那一件列出来）。
+    /// 切换账号 / 搜索与收藏互切（宿主切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即作废在途请求、清空结果。
+    /// fav = 来源「pixiv 收藏（账号名）」：查询列出该账号的收藏（<see cref="PixivApi.GetBookmarksAsync"/>），输入框是收藏标签筛选。
     /// </summary>
-    /// <summary>切换账号（宿主切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即作废在途请求、清空结果。</summary>
-    public void SetAccount(string account)
+    public void SetAccount(string account, bool fav = false)
     {
-        if (account == _account)
+        if (account == _account && fav == _fav)
             return;
         _account = account;
+        _fav = fav;
         ++_generation;
         ++_detailGen;
         _cards.Clear();
@@ -256,11 +261,15 @@ public partial class PixivSearchView : UserControl
         SetStatus("");
     }
 
+    /// <summary>
+    /// 由宿主的「查询」触发。输入可以是关键字/标签，也可以直接粘贴作品链接或作品号
+    /// （粘链接时跳过搜索，径直把那一件列出来）；收藏来源下是收藏标签筛选，可留空（= 全部收藏）。
+    /// </summary>
     public async Task RunSearchAsync(string raw)
     {
         SiteAccounts.Use(AccountService.Pixiv, _account);
         raw = (raw ?? "").Trim();
-        if (raw.Length == 0)
+        if (raw.Length == 0 && !_fav)
             return;
 
         var generation = ++_generation;
@@ -274,14 +283,16 @@ public partial class PixivSearchView : UserControl
         ShowLevel("results");
         UpdateSelectInfo();
         SetStatus("");
-        LoadingText.Text = I18n.Tr("正在搜索作品…");
+        LoadingText.Text = _fav ? I18n.Tr("正在读取收藏…") : I18n.Tr("正在搜索作品…");
         LoadingOverlay.Visibility = Visibility.Visible;
 
         PixivSearchResult result;
         try
         {
+            if (_fav)
+                result = await PixivApi.GetBookmarksAsync(raw, 1);
             // 贴的是作品链接/作品号：跳过搜索，直接取这一件的详情
-            if (PixivApi.ParseArtworkInput(raw) is { } direct)
+            else if (PixivApi.ParseArtworkInput(raw) is { } direct)
             {
                 var (one, error) = await PixivApi.GetArtworkAsync(direct);
                 result = one is null
@@ -308,8 +319,8 @@ public partial class PixivSearchView : UserControl
         }
         if (result.Items.Count == 0)
         {
-            SetStatus(_anonymous
-                ? I18n.Tr("没有匹配的作品（未登录，R-18 作品不会出现在结果里）")
+            SetStatus(_fav ? (raw.Length > 0 ? I18n.Tr("没有带这个标签的收藏") : I18n.Tr("这个账号还没有收藏作品"))
+                : _anonymous ? I18n.Tr("没有匹配的作品（未登录，R-18 作品不会出现在结果里）")
                 : I18n.Tr("没有匹配的作品"));
             return;
         }
@@ -329,7 +340,9 @@ public partial class PixivSearchView : UserControl
         _loadingMore = true;
         try
         {
-            var result = await PixivApi.SearchAsync(_keyword, _page + 1);
+            var result = _fav
+                ? await PixivApi.GetBookmarksAsync(_keyword, _page + 1)
+                : await PixivApi.SearchAsync(_keyword, _page + 1);
             if (generation != _generation)
                 return;
             if (result.Error is { Length: > 0 } || result.Items.Count == 0)
@@ -385,7 +398,7 @@ public partial class PixivSearchView : UserControl
 
     /// <summary>网格的计数行文案（加载完与从详情返回时共用同一处）。</summary>
     private string CountText() =>
-        I18n.Format(I18n.Tr("已加载 {n} 件作品"), ("n", _cards.Count)) +
+        I18n.Format(_fav ? I18n.Tr("已加载 {n} 件收藏") : I18n.Tr("已加载 {n} 件作品"), ("n", _cards.Count)) +
         (_hasMore ? I18n.Tr("（下拉加载更多）") : "") +
         (_anonymous ? I18n.Tr("　未登录：结果中不含 R-18") : "");
 

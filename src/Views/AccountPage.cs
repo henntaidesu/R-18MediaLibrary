@@ -51,12 +51,13 @@ public class AccountPage : UserControl
         };
         I18n.LanguageChanged += Refresh;
         // 登录浏览器有了结果（不论是在桌面上还是经网页串流登的）：刷新列表并提示
-        LoginBrowser.Finished += (site, ok, message) =>
+        // 对话框是阻塞式的，挪到事件之后再弹，别卡住 LoginBrowser 的收尾
+        LoginBrowser.Finished += (site, ok, message) => Dispatcher.BeginInvoke(new Action(() =>
         {
             Refresh();
             if (ok && IsVisible)
                 InAppDialog.Info(this, message, AccountService.Title(site));
-        };
+        }));
         AccountService.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (IsVisible)

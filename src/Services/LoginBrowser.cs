@@ -22,8 +22,8 @@ namespace R18MediaLibrary.Services;
 /// 存成一个账号（<see cref="SiteAccounts"/>）后关窗。pixiv / FANBOX 的登录带 reCAPTCHA，E-Hentai 的论坛登录常触发验证码，
 /// 程序拿账号密码直接请求都走不通。
 ///
-/// 桌面端直接在本机操作这个窗口；Web 端经 <see cref="GameStream.RunWindow"/> 把它串流到浏览器里操作
-/// （同作品 exe 的远程串流）。同一时刻只开一个窗口，再开就关掉旧的。
+/// 桌面端直接在本机操作这个窗口；Web 端经 <see cref="LoginStream"/> 把它串流到浏览器里操作
+/// （协议同作品 exe 的远程串流，但画面与输入都直接走 WebView2，不依赖服务器桌面）。同一时刻只开一个窗口，再开就关掉旧的。
 ///
 /// <b>每次登录用一个新的浏览器资料（profile）</b>，账号与资料一一对应：同一站点登多个账号时互不串号，
 /// 资料里留着的登录态也只属于这一个账号——<see cref="AccountKeeper"/> 发现某账号的 cookie 失效时，
@@ -85,11 +85,45 @@ public static class LoginBrowser
     /// <summary>登录窗口正开着（人正在登录）：自动维护此时不插手。</summary>
     public static bool IsOpen => _window != null;
 
+    /// <summary>关掉登录窗口（网页端串流里点「关闭浏览器」）。</summary>
+    public static void Close() => _window?.Close();
+
+    /// <summary>当前登录窗口里的浏览器（还在初始化或没开着为 null）：网页端串流（<see cref="LoginStream"/>）直接抓它的画面、往里送输入。</summary>
+    public static CoreWebView2? Core => _web?.CoreWebView2;
+
+    /// <summary>浏览器视口的 CSS 像素尺寸（WPF 的 DIP 即 CSS px），网页端的相对坐标按它换算。</summary>
+    public static (double Width, double Height) ViewportSize => _web is { } w ? (w.ActualWidth, w.ActualHeight) : (0, 0);
+
+    /// <summary>
+    /// 这台电脑能不能开登录浏览器；能则返回 null，否则返回给人看的原因。
+    /// Windows Server 不一定装了 WebView2 运行时；以服务/计划任务（会话 0）运行时根本没有可显示窗口的桌面。
+    /// </summary>
+    public static string? CheckAvailable()
+    {
+        if (System.Diagnostics.Process.GetCurrentProcess().SessionId == 0)
+            return "本程序运行在系统服务会话（会话 0）里，无法打开浏览器窗口：请在已登录的 Windows 用户桌面里运行本程序";
+        try
+        {
+            CoreWebView2Environment.GetAvailableBrowserVersionString();
+            return null;
+        }
+        catch (WebView2RuntimeNotFoundException)
+        {
+            return "这台电脑没有安装 Microsoft Edge WebView2 运行时，请先安装：https://go.microsoft.com/fwlink/p/?LinkId=2124703";
+        }
+        catch (Exception e)
+        {
+            return "内嵌浏览器不可用：" + e.Message;
+        }
+    }
+
     /// <summary>打开某站的登录窗口（用一个全新的浏览器资料），返回窗口句柄。已开着的登录窗口先关掉。</summary>
     public static IntPtr Open(string site)
     {
         if (!Targets.TryGetValue(site, out var target))
             throw new ArgumentException("不支持的站点：" + site);
+        if (CheckAvailable() is { } unavailable)
+            throw new InvalidOperationException(unavailable);
         _window?.Close();
         LastResult.Remove(site);
         _site = site;
@@ -117,10 +151,13 @@ public static class LoginBrowser
         if (_env is { IsFaulted: false })
             return _env;
         Directory.CreateDirectory(ProfileDir);
-        var options = new CoreWebView2EnvironmentOptions();
+        // 关掉「窗口被遮挡就停止绘制」：服务器上远程桌面断开/锁屏时窗口算被遮挡，浏览器停画，
+        // 网页端串流（CapturePreviewAsync）就只能拿到一张不动的旧画面
+        var args = "--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows";
         var (proxyOn, proxy) = AppConfig.ReadProxy();
         if (proxyOn && proxy.Address != null)
-            options.AdditionalBrowserArguments = $"--proxy-server={proxy.Address.Authority}";
+            args += $" --proxy-server={proxy.Address.Authority}";
+        var options = new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = args };
         return _env = CoreWebView2Environment.CreateAsync(null, ProfileDir, options);
     }
 
@@ -327,9 +364,11 @@ public static class LoginBrowser
     {
         var site = _site;
         LastResult[site] = message;
-        Finished?.Invoke(site, ok, message);
-        // 成功就关窗；失败（多半是 WebView2 起不来）也关，留着一个空窗口没有意义
+        // 先关窗再通知：成功就关窗；失败（多半是 WebView2 起不来）也关，留着一个空窗口没有意义。
+        // 顺序不能反——订阅方可能弹阻塞式对话框（桌面账号页），先通知的话窗口要等人点了「确定」才关，
+        // 网页端的串流也就一直等不到结束
         _window?.Close();
+        Finished?.Invoke(site, ok, message);
     }
 
     private static void OnClosed()

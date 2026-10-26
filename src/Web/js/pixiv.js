@@ -16,6 +16,7 @@ let pxAnonymous = false;   // 服务端报告的登录态：未登录时站点�
 let pxDetail = null;       // 当前详情的作品 { id, state }，工具栏「下载」据此定文案
 let pxPageIo = null;       // 详情页尾图流的懒加载观察器
 let pxAccount = '';        // 用哪个 pixiv 账号（用户号；'' = 匿名），来源下拉「pixiv（账号名）」经 pxSetAccount 设定
+let pxFav = false;         // 来源是「pixiv 收藏（账号名）」：查询列出该账号的收藏，输入框是收藏标签筛选（可留空）
 
 // 站上的图统一走服务端代理：i.pximg.net 带防盗链，浏览器直接引用一律 403
 const pxImg = (url) => '/api/px/image?url=' + enc(url);
@@ -41,10 +42,10 @@ function pxResetState() {
   pxGen++; pxDetailGen++;
 }
 
-// 切账号（search.js 切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即清空面板
-function pxSetAccount(uid) {
-  if (uid === pxAccount) return;
-  pxAccount = uid;
+// 切账号 / 搜索与收藏互切（search.js 切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即清空面板
+function pxSetAccount(uid, fav) {
+  if (uid === pxAccount && !!fav === pxFav) return;
+  pxAccount = uid; pxFav = !!fav;
   pxResetState();
   ['pxListPane', 'pxDetailPane'].forEach(id => { const p = $(id); if (p) p.innerHTML = ''; });
   if ($('pxListPane')) pxShowListPane();
@@ -101,7 +102,7 @@ function pxUpdateCount() {
   if (!pxItems.length) { $('count').textContent = ''; return; }
   const more = pxPaging && pxPaging.hasMore ? '（下拉加载更多）' : '';
   const anon = pxAnonymous ? '　未登录：结果中不含 R-18' : '';
-  $('count').textContent = `已加载 ${pxItems.length} 件作品${more}${anon}`;
+  $('count').textContent = `已加载 ${pxItems.length} 件${pxFav ? '收藏' : '作品'}${more}${anon}`;
 }
 
 // ---------- 搜索 ----------
@@ -109,7 +110,7 @@ function pxUpdateCount() {
 // 由 search.js 的「查询」按钮 / 回车触发
 async function pxRunSearch() {
   const raw = ($('sId') && $('sId').value.trim()) || '';
-  if (!raw) return;
+  if (!raw && !pxFav) return;   // 收藏可以不填：留空 = 全部收藏
   const gen = ++pxGen;
   pxKeyword = raw;
   pxItems = []; pxSel = new Set();
@@ -118,15 +119,15 @@ async function pxRunSearch() {
 
   pxShowListPane();
   const box = $('pxListPane');
-  box.innerHTML = '<div class="empty"><span class="spin"></span> 正在搜索作品…</div>';
+  box.innerHTML = `<div class="empty"><span class="spin"></span> ${pxFav ? '正在读取收藏…' : '正在搜索作品…'}</div>`;
   $('count').textContent = '';
 
   const first = await pxFetch(gen, 1);
   if (gen !== pxGen || !first) return;
   box.innerHTML = '';
   if (!first.length) {
-    box.appendChild(el('div', 'empty', pxAnonymous
-      ? '没有匹配的作品（未登录，R-18 作品不会出现在结果里）'
+    box.appendChild(el('div', 'empty', pxFav ? (raw ? '没有带这个标签的收藏' : '这个账号还没有收藏作品')
+      : pxAnonymous ? '没有匹配的作品（未登录，R-18 作品不会出现在结果里）'
       : '没有匹配的作品'));
     return;
   }
@@ -151,6 +152,7 @@ async function pxFetch(gen, page) {
   q.set('q', pxKeyword);
   q.set('p', page);
   q.set('account', pxAccount);
+  if (pxFav) q.set('fav', '1');
   let d;
   try { d = await api('/api/px/search?' + q); } catch (e) { return null; }
   if (gen !== pxGen) return null;

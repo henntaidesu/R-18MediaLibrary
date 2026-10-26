@@ -1349,16 +1349,28 @@ public static class WebServer
     }
 
     /// <summary>
-    /// 网页端登录 pixiv / FANBOX：在运行本程序的电脑上打开登录浏览器（窗口要在 UI 线程上建），
-    /// 再把这个窗口当作串流目标交给 <see cref="GameStream.RunWindow"/>。登录成功后窗口自己关掉，串流随之结束，
-    /// 结束提示取 <see cref="LoginBrowser.ResultOf"/>。
+    /// 网页端登录：在运行本程序的电脑上打开登录浏览器（窗口要在 UI 线程上建），再交给 <see cref="LoginStream"/>
+    /// 把画面推过去、把操作送回来。登录成功后窗口自己关掉，串流随之结束，结束提示取 <see cref="LoginBrowser.ResultOf"/>。
+    ///
+    /// <b>先完成 WebSocket 握手再开窗口</b>：开不了（没装 WebView2 运行时、以服务方式运行…）时把原因当消息发过去，
+    /// 而不是回一个 HTTP 错误——握手阶段的错误码浏览器拿不到（经门户代理更是只剩一个「连接已断开」），用户无从知道为什么。
     /// </summary>
     private static async Task StreamLoginBrowserAsync(NetworkStream stream, string key, string site)
     {
+        var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                   $"Sec-WebSocket-Accept: {GameStream.WebSocket.AcceptKey(key)}\r\n\r\n";
+        stream.Write(Encoding.ASCII.GetBytes(head));
+        void Fail(string message)
+        {
+            Logger.Warning($"Web 端登录浏览器打不开（{site}）：{message}");
+            var json = JsonSerializer.Serialize(new { t = "exit", text = message });
+            GameStream.WebSocket.WriteFrame(stream, GameStream.WebSocket.OpText, Encoding.UTF8.GetBytes(json));
+            GameStream.WebSocket.WriteFrame(stream, GameStream.WebSocket.OpClose, []);
+        }
         var app = System.Windows.Application.Current;
         if (!LoginBrowser.Supports(site) || app == null)
         {
-            WriteJson(stream, 404, new { error = "不支持的站点" });
+            Fail("不支持的站点");
             return;
         }
         try
@@ -1367,18 +1379,11 @@ public static class WebServer
         }
         catch (Exception e)
         {
-            WriteJson(stream, 500, new { error = e.Message });
+            Fail(e.Message);
             return;
         }
-        var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-                   $"Sec-WebSocket-Accept: {GameStream.WebSocket.AcceptKey(key)}\r\n\r\n";
-        stream.Write(Encoding.ASCII.GetBytes(head));
         Logger.Info($"Web 端串流登录浏览器：{site}");
-        IntPtr Window() => app.Dispatcher.Invoke(() => LoginBrowser.Handle);
-        await Task.Factory.StartNew(
-            () => GameStream.RunWindow(stream, "登录浏览器 " + site, Window,
-                () => app.Dispatcher.Invoke(() => LoginBrowser.ResultOf(site))),
-            TaskCreationOptions.LongRunning);
+        await Task.Factory.StartNew(() => LoginStream.Run(stream, site), TaskCreationOptions.LongRunning);
     }
 
     /// <summary>按 Range 头流式写出文件（206 Partial Content）或整文件（200），分块拷贝不占内存。</summary>
@@ -3491,12 +3496,24 @@ public static class WebServer
     {
         UsePixivAccount(req);
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
+        var page = Math.Max(1, GetInt(req, "p"));
+        // fav=1：来源「pixiv 收藏（账号名）」——列出该账号的收藏，关键字是收藏标签筛选（可空 = 全部）
+        if (req.Query.GetValueOrDefault("fav") == "1")
+        {
+            var fav = await PixivApi.GetBookmarksAsync(keyword, page);
+            WriteJson(stream, 200, new
+            {
+                items = fav.Items.Select(PixivArtworkJson),
+                total = fav.Total, page = fav.Page, hasMore = fav.HasMore, error = fav.Error,
+                anonymous = false,
+            });
+            return;
+        }
         if (keyword.Length == 0)
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
-        var page = Math.Max(1, GetInt(req, "p"));
 
         // 贴的是作品链接/作品号：跳过搜索，直接取这一件的详情
         if (page == 1 && PixivApi.ParseArtworkInput(keyword) is { } direct)

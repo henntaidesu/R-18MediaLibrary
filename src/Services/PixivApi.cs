@@ -356,10 +356,78 @@ public static class PixivApi
         };
     }
 
-    /// <summary>搜索结果里的一条。没有 id（广告位/占位条目）返回 null。</summary>
+    // ---------- 收藏 ----------
+
+    /// <summary>收藏列表每页件数（与站点自家收藏页一致）。</summary>
+    public const int BookmarkPageSize = 48;
+
+    /// <summary>
+    /// 当前账号（<see cref="SiteAccounts.Active"/>）的收藏列表，作品搜索里的「pixiv 收藏（账号名）」来源用它。
+    /// <paramref name="tag"/> 为收藏标签筛选，空 = 全部。
+    ///
+    /// 站点把收藏分成公开（rest=show）与非公开（rest=hide）两份，各自分页；这里把两份接成一条：
+    /// 先排完公开的，再接非公开的，按位置算偏移，所以翻页不会漏也不会重。
+    /// 接口是 <c>/ajax/user/{用户号}/illusts/bookmarks</c>，非公开那份只对本人可见，故必须用账号自己的 cookie。
+    /// </summary>
+    public static async Task<PixivSearchResult> GetBookmarksAsync(string tag, int page = 1)
+    {
+        var account = SiteAccounts.Active(AccountService.Pixiv);
+        if (account == null)
+            return new PixivSearchResult { Error = "查看收藏要先在「账号访问」登录 pixiv 账号" };
+        page = Math.Max(1, page);
+        var offset = (page - 1) * BookmarkPageSize;
+
+        var shown = await FetchBookmarksAsync(account.UserId, tag, "show", offset, BookmarkPageSize);
+        if (shown.Error != null)
+            return new PixivSearchResult { Error = shown.Error };
+        var items = shown.Items;
+        // 公开的不够一页（或已翻过公开那份）就接非公开的；够一页也取一条，只为拿到非公开的总数
+        var need = BookmarkPageSize - shown.Raw;
+        var hidden = await FetchBookmarksAsync(account.UserId, tag, "hide",
+            Math.Max(0, offset - shown.Total), Math.Max(1, need));
+        if (need > 0 && hidden.Error == null)
+            items.AddRange(hidden.Items);
+
+        var total = shown.Total + (hidden.Error == null ? hidden.Total : 0);
+        return new PixivSearchResult
+        {
+            Items = items,
+            Total = total,
+            Page = page,
+            LastPage = Math.Max(1, (total + BookmarkPageSize - 1) / BookmarkPageSize),
+        };
+    }
+
+    /// <summary>取一段收藏。Raw = 站点返回的条数（含已删除/不可见的占位条目，偏移要按它算）。</summary>
+    private static async Task<(List<PixivArtwork> Items, int Raw, int Total, string? Error)> FetchBookmarksAsync(
+        string userId, string tag, string rest, int offset, int limit)
+    {
+        var url = $"{Origin}/ajax/user/{userId}/illusts/bookmarks?tag={Uri.EscapeDataString(tag ?? "")}" +
+                  $"&offset={offset}&limit={limit}&rest={rest}&lang=zh";
+        var (body, error) = await GetBodyAsync(url);
+        if (body is not { } b)
+            return ([], 0, 0, error ?? "获取收藏失败");
+        var items = new List<PixivArtwork>();
+        var raw = 0;
+        if (b.TryGetProperty("works", out var works) && works.ValueKind == JsonValueKind.Array)
+            foreach (var w in works.EnumerateArray())
+            {
+                raw++;
+                // 作者删除或设为不公开的作品还占着收藏位，但标记 isMasked、内容全空，下不了，挑掉
+                if (w.TryGetProperty("isMasked", out var masked) && masked.ValueKind == JsonValueKind.True)
+                    continue;
+                if (ParseListItem(w) is { } artwork)
+                    items.Add(artwork);
+            }
+        return (items, raw, JInt(b, "total"), null);
+    }
+
+    /// <summary>搜索结果 / 收藏列表里的一条。没有 id（广告位/占位条目）返回 null。</summary>
     private static PixivArtwork? ParseListItem(JsonElement item)
     {
         var id = JStr(item, "id");
+        if (id.Length == 0 && item.TryGetProperty("id", out var numId) && numId.ValueKind == JsonValueKind.Number)
+            id = numId.GetRawText();   // 收藏接口的 id 有时是数字
         if (id.Length == 0)
             return null;
         return new PixivArtwork

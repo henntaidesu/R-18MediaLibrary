@@ -4,7 +4,7 @@
 
 // 当前页面对应的手册章节：? 按钮不传 topic 时按所在分区 / 层级 / 搜索来源推断
 function helpTopic() {
-  if (section === 'search') return { dlsite: '7', fanbox: '9', fanboxcc: '9', ehentai: '10.1', pixiv: '10.2' }[srcKind(searchSrc)] || '7';
+  if (section === 'search') return { dlsite: '7', fanbox: '9', fanboxcc: '9', ehentai: '10.1', pixiv: '10.2', pixivfav: '10.2' }[srcKind(searchSrc)] || '7';
   if (section === 'download') return dlView === 'downloaded' ? '11.5' : '11';
   if (section === 'watch') return '12';
   if (section === 'accounts') return '13';

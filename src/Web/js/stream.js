@@ -2,6 +2,8 @@
 // 鼠标/触摸/键盘回传给电脑注入。协议见 Services/GameStream.cs：二进制帧首字节 1=JPEG 画面、2=16 位 PCM 声音。
 // 同看图一样算一层历史：返回手势只关掉串流页（core.js popstate），关掉串流不结束程序，结束要点「结束程序」。
 // 账号访问的「在服务器上登录」也走这里（openLogin）：电脑上开的是登录浏览器，登录成功它自己关窗、串流随之结束。
+// 那一路由服务端 Services/LoginStream 直接用浏览器自己出图、收输入（不依赖服务器桌面），协议相同；
+// 键盘事件因此额外带上 key（可打印字符直接插入页面），游戏串流忽略这个字段。
 
 // 触屏按键：RPG Maker 系 Z/Enter/空格=确定、X/Esc=取消、Shift=冲刺，其它引擎也大多沿用这套
 const GS_DPAD = [null, ['ArrowUp', '↑'], null, ['ArrowLeft', '←'], null, ['ArrowRight', '→'], null, ['ArrowDown', '↓'], null];
@@ -9,22 +11,22 @@ const GS_KEYS = [['KeyZ', 'Z 确定'], ['KeyX', 'X 取消'], ['Enter', 'Enter'],
                  ['ShiftLeft', 'Shift'], ['ControlLeft', 'Ctrl'], ['Space', '空格'], ['Tab', 'Tab']];
 
 const GS = {
-  isOpen: false, ws: null, frameW: 0, frameH: 0, login: false, onHide: null, exitText: '',
+  isOpen: false, ws: null, frameW: 0, frameH: 0, login: false, onHide: null, exitText: '', gotAny: false,
   decoding: false, pending: null, held: new Set(), lastMove: 0, exited: false,
   audioOn: false, actx: null, rate: 48000, nextT: 0,
 
   open(id, n) {
-    this.start(`/api/stream?id=${enc(id)}&path=${enc(n.rel)}`, n.name, false);
+    this.start(`api/stream?id=${enc(id)}&path=${enc(n.rel)}`, n.name, false);
   },
   // 登录 pixiv / FANBOX：电脑上开内嵌浏览器，在这里操作它；关掉串流页时 onHide 刷新账号页
   openLogin(site, title, onHide) {
-    this.start(`/api/stream?login=${enc(site)}`, `登录 ${title}（电脑上的浏览器）`, true);
+    this.start(`api/stream?login=${enc(site)}`, `登录 ${title}（电脑上的浏览器）`, true);
     this.onHide = onHide;
   },
   start(path, title, login) {
     this.hide();
     this.isOpen = true; this.exited = false; this.frameW = this.frameH = 0;
-    this.login = login; this.onHide = null; this.exitText = '';
+    this.login = login; this.onHide = null; this.exitText = ''; this.gotAny = false;
     $('stitle').textContent = title;
     $('saudio').style.display = login ? 'none' : '';
     $('squit').textContent = login ? '✕ 关闭浏览器' : '⏻ 结束程序';
@@ -36,14 +38,22 @@ const GS = {
     $('spad').classList.toggle('show', !login && matchMedia('(pointer: coarse)').matches);
     this.syncBtns();
     history.pushState({ nav: true, gs: true }, '');
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}${path}`);
+    // 地址按页面所在目录解析（相对路径），不能写成 /api/stream：经门户代理打开时页面在 /api/proxy/<卡片>/ 底下，
+    // 根绝对地址会落到门户自己的根路径上。普通请求有门户按 Referer 兜底转回来，WebSocket 握手不带 Referer，
+    // 直接被门户拒掉（浏览器只看到关闭码 1006）
+    const url = new URL(path, location.href);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.hash = '';
+    const ws = new WebSocket(url.href);
     ws.binaryType = 'arraybuffer';
     ws.onmessage = e => this.onMessage(e.data);
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       if (this.ws !== ws) return;
       this.ws = null;
-      if (!this.exited) this.msg(this.login ? '连接已断开' : '连接已断开（程序仍在电脑上运行，重新打开即可接着玩）');
+      if (this.exited) return;
+      // 一条消息都没收到就断了：多半根本没连上本程序（门户代理连不上上游、被拒），把关闭码带上便于排查
+      if (!this.gotAny) this.msg(`连接已断开：没有连上电脑上的串流（关闭码 ${e.code}）`);
+      else this.msg(this.login ? '连接已断开' : '连接已断开（程序仍在电脑上运行，重新打开即可接着玩）');
     };
     this.ws = ws;
     if (this.audioOn) ws.addEventListener('open', () => this.send({ t: 'audio', on: true }));
@@ -69,6 +79,7 @@ const GS = {
   msg(text) { $('smsg').textContent = text || ''; },
 
   onMessage(data) {
+    this.gotAny = true;
     if (typeof data === 'string') {
       let m; try { m = JSON.parse(data); } catch (e) { return; }
       if (m.t === 'status') this.msg(m.text);
@@ -142,9 +153,9 @@ const GS = {
     const r = $('scanvas').getBoundingClientRect();
     return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
   },
-  key(code, down) {
+  key(code, down, key) {
     if (down) this.held.add(code); else if (!this.held.delete(code)) return;
-    this.send({ t: 'k', a: down ? 'down' : 'up', code });
+    this.send({ t: 'k', a: down ? 'down' : 'up', code, key: key || '' });
   },
   releaseAll() { [...this.held].forEach(c => this.key(c, false)); },
   toggleKeys() { $('spad').classList.toggle('show'); this.syncBtns(); setTimeout(() => this.fit(), 0); },
@@ -213,7 +224,7 @@ const GS = {
   const onKey = down => e => {
     if (!GS.isOpen || $('modal').classList.contains('show')) return;
     e.preventDefault();
-    GS.key(e.code, down);
+    GS.key(e.code, down, e.key);
   };
   document.addEventListener('keydown', onKey(true));
   document.addEventListener('keyup', onKey(false));
