@@ -200,13 +200,14 @@ public static class PixivService
     }
 
     /// <summary>写一条下载任务。sub_path 即该文件在作品目录内的名字（图片为三位页码，动图为 ugoira.zip）。</summary>
+    /// account 记下是从哪个 pixiv 账号入队的：取图本身不看 cookie，但收尾时补取动图帧延迟（R-18 动图要登录）要用它。
     private static void AddRow(string workId, string url, string subPath) =>
         Db.Execute(
             "INSERT OR REPLACE INTO \"download_list\" " +
-            "(\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\", \"source\", \"sub_path\") " +
-            "VALUES (@uuid, @w, @url, '0', '0', '1', @src, @sub)",
+            "(\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\", \"source\", \"sub_path\", \"account\") " +
+            "VALUES (@uuid, @w, @url, '0', '0', '1', @src, @sub, @acct)",
             ("@uuid", Guid.NewGuid().ToString()), ("@w", workId), ("@url", url),
-            ("@src", SourceName), ("@sub", subPath));
+            ("@src", SourceName), ("@sub", subPath), ("@acct", SiteAccounts.ActiveUserId(AccountService.Pixiv)));
 
     /// <summary>展示用标题；站上允许空标题，那就退回作品号，免得媒体库里出现无名卡片。</summary>
     private static string Display(PixivArtwork art) =>

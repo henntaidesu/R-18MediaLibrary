@@ -390,7 +390,13 @@
   .acct-st { font-size: 13px; font-weight: 400; color: var(--muted); padding: 1px 10px;
              border: 1px solid var(--line); border-radius: 999px; }
   .acct-st.on { color: #4ade80; border-color: #2f6b45; }
-  .acct-tip { margin-top: 12px; }
+  /* 账号行：名称（用户号）· 检测 · 退出登录，下一行是自动维护结果；各行之间一条细分隔线 */
+  .acct-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .acct-row .frow { margin: 0; }
+  .acct-name { font-weight: 600; min-width: 160px; }
+  .acct-uid { margin-left: 8px; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+  .acct-keep { margin-top: 6px; }
+  .acct-add { margin-top: 12px; }
   /* 媒体库管理卡片 */
   .libcard { background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
   .libcard .lh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

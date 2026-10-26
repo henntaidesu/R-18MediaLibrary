@@ -409,9 +409,7 @@ public static class WebServer
                 case "/api/help/img": ApiHelpImage(stream, req); break;
                 // 账号访问（FANBOX / pixiv / E-Hentai 的登录 cookie）
                 case "/api/accounts": ApiAccounts(stream); break;
-                case "/api/account/save": ApiAccountSave(stream, req); break;
                 case "/api/account/check": await ApiAccountCheckAsync(stream, req); break;
-                case "/api/account/login": await ApiAccountLoginAsync(stream, req); break;
                 case "/api/account/logout": ApiAccountLogout(stream, req); break;
                 // FANBOX 作家监控（有新投稿就自动下载）
                 case "/api/fanbox/watches": ApiFanboxWatches(stream); break;
@@ -2849,13 +2847,21 @@ public static class WebServer
     // ---------- API：FANBOX（pawchive）----------
 
     /// <summary>
-    /// 请求是否针对 fanbox.cc 官方站（作品搜索里的「FANBOX（账号名）」来源）：查询串或请求体里 site=cc。
-    /// 没登录时一律当 pawchive 处理——来源下拉里本来也不会出现官方站这一项。
+    /// 请求针对 fanbox.cc 官方站的哪个账号（作品搜索里的「FANBOX（账号名）」来源）：查询串或请求体里
+    /// site=cc:&lt;pixiv 用户号&gt;（只写 cc 即第一个账号）。返回该账号的用户号；null = pawchive。
+    /// 账号不存在（已退出登录）时一律当 pawchive 处理——来源下拉里本来也不会再有这一项。
     /// </summary>
-    private static bool FanboxOfficial(Request req) =>
-        ((req.Query.GetValueOrDefault("site") ?? "") == "cc" ||
-         (req.Body.Length > 0 && ReadStringField(req.Body, "site") == "cc")) &&
-        FanboxSource.OfficialAvailable;
+    private static string? FanboxAccount(Request req)
+    {
+        var site = req.Query.GetValueOrDefault("site") ?? "";
+        if (site.Length == 0 && req.Body.Length > 0)
+            site = ReadStringField(req.Body, "site");
+        if (site != "cc" && !site.StartsWith("cc:", StringComparison.Ordinal))
+            return null;
+        var accounts = FanboxSource.OfficialAccounts;
+        var uid = site.Length > 3 ? site[3..] : accounts.FirstOrDefault()?.UserId;
+        return uid != null && accounts.Any(a => a.UserId == uid) ? uid : null;
+    }
 
     /// <summary>
     /// 搜索作家。pawchive 站点无服务端搜索接口，由 PawchiveApi 在本地缓存的作家表上过滤；
@@ -2863,14 +2869,15 @@ public static class WebServer
     /// </summary>
     private static async Task ApiFanboxArtistsAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
         if (keyword.Length == 0 && !official)
         {
             WriteJson(stream, 200, new { artists = Array.Empty<object>() });
             return;
         }
-        var (list, error) = await FanboxSource.SearchArtistsAsync(official, keyword);
+        var (list, error) = await FanboxSource.SearchArtistsAsync(account, keyword);
         WriteJson(stream, 200, new
         {
             artists = list.Select(a => new
@@ -2888,7 +2895,8 @@ public static class WebServer
     /// <summary>作家主页的一批作品（pawchive 每页 50 条，官方站一次拼几页），附带本地已下载/下载中状态。</summary>
     private static async Task ApiFanboxPostsAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         if (!FanboxSource.IsArtistKey(official, artistId))
         {
@@ -2896,7 +2904,7 @@ public static class WebServer
             return;
         }
         var offset = GetInt(req, "o");
-        var (posts, hasMore, error) = await FanboxSource.GetPostsAsync(official, artistId, offset);
+        var (posts, hasMore, error) = await FanboxSource.GetPostsAsync(account, artistId, offset);
         if (posts is null)
         {
             WriteJson(stream, 502, new { error = error ?? "获取作品列表失败" });
@@ -2904,10 +2912,10 @@ public static class WebServer
         }
         // 首页顺带带上作家信息，供标题与入队时落库使用
         object? artist = null;
-        if (offset == 0 && await FanboxSource.GetArtistAsync(official, artistId) is { } a)
+        if (offset == 0 && await FanboxSource.GetArtistAsync(account, artistId) is { } a)
             artist = new { id = a.Id, service = a.Service, name = a.Name, publicId = a.PublicId };
 
-        var states = await FanboxSource.PostStatesAsync(official, artistId);
+        var states = await FanboxSource.PostStatesAsync(account, artistId);
         WriteJson(stream, 200, new
         {
             artist,
@@ -2936,7 +2944,8 @@ public static class WebServer
     /// </summary>
     private static async Task ApiFanboxPostAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         var postId = (req.Query.GetValueOrDefault("post") ?? "").Trim();
         if (!FanboxSource.IsArtistKey(official, artistId) || !IsPlainId(postId))
@@ -2944,14 +2953,14 @@ public static class WebServer
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
-        var (post, error) = await FanboxSource.GetPostAsync(official, artistId, postId);
+        var (post, error) = await FanboxSource.GetPostAsync(account, artistId, postId);
         if (post is null)
         {
             WriteJson(stream, 502, new { error = error ?? "获取作品详情失败" });
             return;
         }
         var images = post.Files.Where(f => PawchiveApi.IsImageName(f.Name)).ToList();
-        var states = await FanboxSource.PostStatesAsync(official, artistId);
+        var states = await FanboxSource.PostStatesAsync(account, artistId);
         WriteJson(stream, 200, new
         {
             id = post.Id, title = post.Title, published = post.Published,
@@ -2975,7 +2984,8 @@ public static class WebServer
     /// </summary>
     private static async Task ApiFanboxEnqueueAsync(NetworkStream stream, Request req)
     {
-        var official = FanboxOfficial(req);
+        var account = FanboxAccount(req);
+        var official = account != null;
         var artistId = ReadStringField(req.Body, "id").Trim();
         var wanted = ReadStringArray(req.Body, "posts").Where(IsPlainId).Distinct().ToList();
         var lib = ReadStringField(req.Body, "lib");
@@ -2986,15 +2996,17 @@ public static class WebServer
             return;
         }
 
-        var artist = await FanboxSource.GetArtistAsync(official, artistId)
+        var artist = await FanboxSource.GetArtistAsync(account, artistId)
                      ?? new PawchiveArtist { Id = artistId, Service = PawchiveApi.FanboxService };
-        var picked = await FanboxSource.ResolveForEnqueueAsync(official, artistId, wanted);
+        var picked = await FanboxSource.ResolveForEnqueueAsync(account, artistId, wanted);
         if (picked.Count == 0)
         {
             WriteJson(stream, 404, new { error = "未找到选中的作品" });
             return;
         }
 
+        // 记下是哪个账号入的队：下载官方站附件时用它的 cookie（pawchive 为匿名）
+        SiteAccounts.Use(AccountService.Fanbox, account ?? "");
         var result = await FanboxService.EnqueuePostsAsync(
             artist, picked, folder.Length > 0 ? folder : null, lib.Length > 0 ? lib : null);
         if (!result.Ok)
@@ -3022,7 +3034,8 @@ public static class WebServer
         }
         try
         {
-            var (bytes, type) = await FanboxSource.GetImageAsync(url);
+            // 官方站的预览图同样只对有权限的账号开放：带上来源账号（site=cc:用户号）
+            var (bytes, type) = await FanboxSource.GetImageAsync(url, FanboxAccount(req));
             // 站点的头像/横幅不带扩展名且常返回 application/octet-stream，按图片交付浏览器才会渲染
             if (!type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 type = ContentType(url);
@@ -3065,69 +3078,38 @@ public static class WebServer
     // ---------- API：账号访问 ----------
 
     /// <summary>
-    /// 各站点的登录状态。只回「登没登、账号名」，cookie 本身一律不回给浏览器——
-    /// 外部访问可能没设密码，凭据不该经网页再流出去。
+    /// 各站点已登录的账号。只回用户号、账号名与自动维护结果，cookie 本身一律不回给浏览器——
+    /// 外部访问可能没设密码，凭据不该经网页再流出去。账号只能经「在服务器上登录」（/api/stream?login=）加入。
     /// </summary>
     private static void ApiAccounts(NetworkStream stream)
     {
         WriteJson(stream, 200, new
         {
-            accounts = AccountService.All().Select(a => new
+            sites = AccountService.Sites.Select(site => new
             {
-                site = a.Site, title = a.Title, loggedIn = a.LoggedIn, account = a.Account,
-                // 最近一次 cookie 自动维护的结果（AccountKeeper），没维护过为 null
-                keep = AccountKeeper.StatusOf(a.Site) is { } k
-                    ? new { at = k.At.ToString("MM-dd HH:mm"), ok = k.Ok, message = k.Message }
-                    : null,
+                site, title = AccountService.Title(site), multi = AccountService.AllowsMultiple(site),
+                accounts = AccountService.List(site).Select(a => new
+                {
+                    uid = a.UserId, name = a.Name, canKeep = a.CanKeep,
+                    // 最近一次 cookie 自动维护的结果（AccountKeeper），没维护过为 null
+                    keep = a.Keep is { } k
+                        ? new { at = k.At.ToString("MM-dd HH:mm"), ok = k.Ok, message = k.Message }
+                        : null,
+                }),
             }),
-            ehUsername = AppConfig.EhentaiUsername,
-            // 密码本身不回给网页，只告诉它「存过了」：输入框留空即沿用已保存的
-            ehHasPassword = AppConfig.EhentaiPassword.Length > 0,
         });
-    }
-
-    /// <summary>保存手工填写的 cookie（只写不读）。</summary>
-    private static void ApiAccountSave(NetworkStream stream, Request req)
-    {
-        var site = ReadStringField(req.Body, "site");
-        if (Array.IndexOf(AccountService.Sites, site) < 0)
-        {
-            WriteJson(stream, 400, new { ok = false, message = "未知站点" });
-            return;
-        }
-        var values = new Dictionary<string, string>();
-        foreach (var key in new[] { "sessid", "php_sessid", "member_id", "pass_hash", "igneous" })
-        {
-            var v = ReadStringField(req.Body, key).Trim();
-            if (v.Length > 0)
-                values[key] = v;
-        }
-        AccountService.SaveCookies(site, values);
-        WriteJson(stream, 200, new { ok = true });
     }
 
     private static async Task ApiAccountCheckAsync(NetworkStream stream, Request req)
     {
-        var (ok, message) = await AccountService.CheckAsync(ReadStringField(req.Body, "site"));
+        var (ok, message) = await AccountService.CheckAsync(
+            ReadStringField(req.Body, "site"), ReadStringField(req.Body, "uid"));
         WriteJson(stream, 200, new { ok, message });
-    }
-
-    /// <summary>E-Hentai 账号密码登录（账号密码存库；password 留空即用已保存的）。</summary>
-    private static async Task ApiAccountLoginAsync(NetworkStream stream, Request req)
-    {
-        if (ReadStringField(req.Body, "site") != AccountService.Ehentai)
-        {
-            WriteJson(stream, 400, new { ok = false, message = "该站点只能填写 Cookie 登录" });
-            return;
-        }
-        var result = await AccountService.LoginEhentaiAsync(
-            ReadStringField(req.Body, "username"), ReadStringField(req.Body, "password"));
-        WriteJson(stream, 200, new { ok = result.Ok, message = result.Message, captcha = result.Captcha });
     }
 
     private static void ApiAccountLogout(NetworkStream stream, Request req)
     {
-        AccountService.Logout(ReadStringField(req.Body, "site"));
+        AccountService.Remove(ReadStringField(req.Body, "site"), ReadStringField(req.Body, "uid"));
         WriteJson(stream, 200, new { ok = true });
     }
 
@@ -3490,8 +3472,22 @@ public static class WebServer
     /// 搜索作品。贴作品链接/作品号时直接认出那一件并只返回它（等价于站内直达），
     /// 否则按关键字搜；p 为页号（站点按页翻页，每页 60 件）。
     /// </summary>
+    /// <summary>
+    /// 这次 pixiv 请求用哪个账号：查询串或请求体里 account=&lt;pixiv 用户号&gt;（来源下拉「pixiv（账号名）」），
+    /// 空或已不存在 = 匿名。设进 <see cref="SiteAccounts"/> 上下文后只对调用它的路由方法有效。
+    /// </summary>
+    private static void UsePixivAccount(Request req)
+    {
+        var uid = req.Query.GetValueOrDefault("account") ?? "";
+        if (uid.Length == 0 && req.Body.Length > 0)
+            uid = ReadStringField(req.Body, "account");
+        SiteAccounts.Use(AccountService.Pixiv,
+            uid.Length > 0 && SiteAccounts.Find(AccountService.Pixiv, uid) != null ? uid : "");
+    }
+
     private static async Task ApiPixivSearchAsync(NetworkStream stream, Request req)
     {
+        UsePixivAccount(req);
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
         if (keyword.Length == 0)
         {
@@ -3537,6 +3533,7 @@ public static class WebServer
     /// </summary>
     private static async Task ApiPixivArtworkAsync(NetworkStream stream, Request req)
     {
+        UsePixivAccount(req);
         var id = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         if (id.Length == 0 || !id.All(char.IsAsciiDigit))
         {
@@ -3564,6 +3561,7 @@ public static class WebServer
     /// </summary>
     private static async Task ApiPixivEnqueueAsync(NetworkStream stream, Request req)
     {
+        UsePixivAccount(req);
         var ids = ReadStringArray(req.Body, "items")
             .Where(x => x.Length > 0 && x.All(char.IsAsciiDigit))
             .Distinct()
@@ -3606,6 +3604,7 @@ public static class WebServer
         {
             using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            SiteAccounts.Use(AccountService.Pixiv, "");   // 取图只认 Referer，不必把登录 cookie 交给图床
             PixivApi.ApplyHeaders(request);
             using var resp = await client.SendAsync(request);
             resp.EnsureSuccessStatusCode();

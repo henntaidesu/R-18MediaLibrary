@@ -375,7 +375,8 @@ function parseHash() {
   if (!s) return null;
   if (s.key === 'search') {
     // parts[1]：来源（按 SEARCH_SOURCES 校验，缺省 dlsite）；parts[2..]：查询词（整段 URI 编码）
-    const known = typeof SEARCH_SOURCES !== 'undefined' && SEARCH_SOURCES.some(x => x.key === parts[1]);
+    // 多账号来源写成「种类:用户号」，按种类校验；账号已不在时由 setSearchSource 退回同类第一项
+    const known = typeof SEARCH_SOURCES !== 'undefined' && !!parts[1] && SEARCH_SOURCES.some(x => x.key === parts[1].split(':')[0]);
     const src = known ? parts[1] : 'dlsite';
     let query = '';
     if (parts[2]) { try { query = decodeURIComponent(parts.slice(2).join('/')); } catch (e) { } }

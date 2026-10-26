@@ -78,6 +78,8 @@ public static class FanboxService
 
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.ffffff");
         int postCount = 0, fileCount = 0, skipped = 0;
+        // 调用方经 FanboxSource 设好的账号上下文（Task.Run 会带过来）
+        var account = SiteAccounts.ActiveUserId(AccountService.Fanbox);
 
         foreach (var post in posts)
         {
@@ -125,14 +127,16 @@ public static class FanboxService
 
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var index = 0;
+            // account：从哪个 FANBOX 账号入队（来源下拉选的那个），下载官方站附件时用它的 cookie——
+            // 附件只对赞助到该档位的账号开放，多账号时不能随便拿一个去下
             void Enqueue(string url, string subPath)
             {
                 Db.Execute(
                     "INSERT OR REPLACE INTO \"download_list\" " +
-                    "(\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\", \"source\", \"sub_path\") " +
-                    "VALUES (@uuid, @w, @url, '0', '0', '1', @src, @sub)",
+                    "(\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\", \"source\", \"sub_path\", \"account\") " +
+                    "VALUES (@uuid, @w, @url, '0', '0', '1', @src, @sub, @acct)",
                     ("@uuid", Guid.NewGuid().ToString()), ("@w", workId),
-                    ("@url", url), ("@src", SourceName), ("@sub", subPath));
+                    ("@url", url), ("@src", SourceName), ("@sub", subPath), ("@acct", account));
                 fileCount++;
             }
 

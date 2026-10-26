@@ -59,26 +59,14 @@ public static class AppConfig
         // FANBOX 作家监控：总开关 + 新建监控时的默认轮询间隔（分钟）。
         // 总开关只管后台自动轮询，手动「立即检查」不受它影响；没有监控项时轮询是空转。
         ["fanbox_watch"] = new() { ["enabled"] = "True", ["interval"] = "360" },
-        // E-Hentai 数据源：表站(e-hentai.org)可匿名浏览，里站(exhentai.org)必须带登录 cookie；
-        // original=True 时下原图（fullimg），否则下站点显示用的缩放图（省看图额度）
-        ["ehentai"] = new()
-        {
-            ["host"] = "e-hentai.org", ["member_id"] = "", ["pass_hash"] = "", ["igneous"] = "",
-            ["username"] = "", ["password"] = "",
-            ["original"] = "True",
-        },
-        // pixiv 数据源：匿名也能搜，但结果里不含 R-18，要看 R-18 就得填浏览器里的 PHPSESSID。
+        // E-Hentai 数据源：表站(e-hentai.org)可匿名浏览，里站(exhentai.org)必须登录；
+        // original=True 时下原图（fullimg），否则下站点显示用的缩放图（省看图额度）。
+        // 三个站点的登录账号不在这里，在 site_accounts 表（SiteAccounts，经「账号访问 → 在服务器上登录」加入）
+        ["ehentai"] = new() { ["host"] = "e-hentai.org", ["original"] = "True" },
+        // pixiv 数据源：匿名也能搜，但结果里不含 R-18，要看 R-18 就得登录。
         // mode=搜索分级(all/safe/r18)，s_mode=匹配方式(标签部分/完全一致、标题说明文)，
         // original=True 时下原图，否则下 1200px 缩放图
-        ["pixiv"] = new()
-        {
-            ["php_sessid"] = "", ["mode"] = "all", ["s_mode"] = "s_tag", ["original"] = "True",
-            ["username"] = "",
-        },
-        // FANBOX 官方站（fanbox.cc）登录：浏览器里复制的 FANBOXSESSID。
-        // 未填时 FANBOX 只走 pawchive 归档；填了则作品搜索多出一个「FANBOX（账号名）」来源，直连官方 API。
-        // username 只是检测登录时顺手记下的显示名，鉴权只认 sessid。
-        ["fanbox"] = new() { ["sessid"] = "", ["username"] = "" },
+        ["pixiv"] = new() { ["mode"] = "all", ["s_mode"] = "s_tag", ["original"] = "True" },
         // 图床存储（自建 Image_hosting 服务）：开启后作品卡封面由图床直供，不再逐张唤醒 HDD
         ["image_host"] = new()
         {
@@ -449,41 +437,18 @@ public static class AppConfig
         set => Write("ehentai", "host", value.Trim());
     }
 
-    /// <summary>
-    /// 站点账号名。只为「登录并获取 Cookie」按钮回填输入框而存，鉴权一律用下面三个 cookie。
-    /// 密码有意不存：cookie 本身就是长期凭据，留一份明文口令没有额外用处。
-    /// </summary>
-    public static string EhentaiUsername => (Read("ehentai", "username", "") ?? "").Trim();
-
-    /// <summary>站点账号密码（「账号访问」页按用户要求保存，cookie 失效时可直接再登一次）。</summary>
-    public static string EhentaiPassword => Read("ehentai", "password", "") ?? "";
-
-    /// <summary>登录 cookie 的 ipb_member_id（浏览器登录后从 Cookie 里复制）。</summary>
-    public static string EhentaiMemberId => (Read("ehentai", "member_id", "") ?? "").Trim();
-
-    /// <summary>登录 cookie 的 ipb_pass_hash。</summary>
-    public static string EhentaiPassHash => (Read("ehentai", "pass_hash", "") ?? "").Trim();
-
-    /// <summary>登录 cookie 的 igneous（仅 exhentai 需要，表站留空即可）。</summary>
-    public static string EhentaiIgneous => (Read("ehentai", "igneous", "") ?? "").Trim();
+    // E-Hentai / pixiv / FANBOX 的登录 cookie 不在 conf 表：账号经「在服务器上登录」存进 site_accounts 表（SiteAccounts）
 
     /// <summary>
     /// 是否下载原图。关闭时下站点显示用的缩放图（默认 1280px 宽）——画质略低，
     /// 但每张只算一次看图额度，大批量下载不容易触发站点的限额封锁。
     ///
-    /// 注意：原图走站点的 fullimg 接口，**必须登录**（填了 member_id / pass_hash）。
+    /// 注意：原图走站点的 fullimg 接口，**必须登录**（「账号访问」里登录了 E-Hentai）。
     /// 未登录时 EhentaiApi 会自动退回显示图，不会因此下载失败。
     /// </summary>
     public static bool EhentaiOriginal => Read("ehentai", "original", "True") != "False";
 
     // ---------- pixiv 数据源 ----------
-
-    /// <summary>
-    /// 登录 cookie 的 PHPSESSID（浏览器登录 pixiv 后从 Cookie 里复制，形如 <c>12345678_abcdef…</c>）。
-    /// 留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉，单独打开也会被拒。
-    /// 只存这一个 cookie：pixiv 的鉴权只认它，别的 cookie 存了也没用。
-    /// </summary>
-    public static string PixivSessionId => (Read("pixiv", "php_sessid", "") ?? "").Trim();
 
     /// <summary>
     /// 搜索分级（站点的 mode 参数）：all=全部 / safe=全年龄 / r18=仅 R-18。
@@ -516,20 +481,6 @@ public static class AppConfig
     /// 与 E-Hentai 不同，pixiv 的原图不需要登录（只有 R-18 作品本身才需要）。
     /// </summary>
     public static bool PixivOriginal => Read("pixiv", "original", "True") != "False";
-
-    /// <summary>检测登录时记下的 pixiv 显示名（只用于「账号访问」页与来源下拉的展示，鉴权只认 PHPSESSID）。</summary>
-    public static string PixivUsername => (Read("pixiv", "username", "") ?? "").Trim();
-
-    // ---------- FANBOX 官方站（fanbox.cc）----------
-
-    /// <summary>
-    /// 登录 cookie 的 FANBOXSESSID（浏览器登录 fanbox.cc 后从 Cookie 里复制，形如 <c>12345678_abcdef…</c>）。
-    /// 留空即不登录：FANBOX 只能经 pawchive 归档访问。
-    /// </summary>
-    public static string FanboxSessionId => (Read("fanbox", "sessid", "") ?? "").Trim();
-
-    /// <summary>检测登录时记下的 FANBOX 显示名（来源下拉写成「FANBOX（显示名）」）。</summary>
-    public static string FanboxUsername => (Read("fanbox", "username", "") ?? "").Trim();
 
     // ---------- 图床存储（自建 Image_hosting）----------
 

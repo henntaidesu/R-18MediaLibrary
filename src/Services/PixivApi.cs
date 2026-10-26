@@ -141,43 +141,51 @@ public static class PixivApi
 
     public static string UserUrl(string userId) => $"{Origin}/users/{userId}";
 
-    /// <summary>已配置登录 cookie。未登录也能搜索，但结果里不会有 R-18。</summary>
-    public static bool HasCookie => AppConfig.PixivSessionId.Length > 0;
+    /// <summary>
+    /// 当前上下文用的是登录账号（<see cref="SiteAccounts.Active"/>：来源下拉选中的那个 pixiv 账号）。
+    /// 匿名也能搜索，但结果里不会有 R-18。
+    /// </summary>
+    public static bool HasCookie => SiteAccounts.Active(AccountService.Pixiv) != null;
 
-    /// <summary>请求用的 Cookie 头；未配置时为空串（匿名访问）。</summary>
-    public static string CookieHeader => HasCookie ? $"PHPSESSID={AppConfig.PixivSessionId}" : "";
+    /// <summary>请求用的 Cookie 头；匿名时为空串。</summary>
+    public static string CookieHeader => SiteAccounts.Active(AccountService.Pixiv)?.Cookie ?? "";
 
     // ---------- HTTP ----------
 
     // 一件作品动辄几十张图，且详情页要逐张取预览：客户端必须复用，否则新建 HttpClient
-    // 会把本机端口耗尽。配置（cookie / 代理）变了才重建。
+    // 会把本机端口耗尽。多个账号并行使用，每个账号（cookie）各留一个——共用一个的话
+    // 客户端的 cookie 罐会把站点给 A 账号种的 cookie 带到 B 账号的请求上。代理变了全部重建。
     private static readonly object ClientLock = new();
-    private static HttpClient? _client;
-    private static string _clientKey = "";
+    private static readonly Dictionary<string, HttpClient> Clients = [];
+    private static string _proxyKey = "";
 
     private static HttpClient Client()
     {
         var (proxyOn, proxy) = AppConfig.ReadProxy();
-        var key = $"{CookieHeader}|{(proxyOn ? proxy.Address?.ToString() : "")}";
+        var proxyKey = proxyOn ? proxy.Address?.ToString() ?? "" : "";
         lock (ClientLock)
         {
-            if (_client != null && _clientKey == key)
-                return _client;
-            _client?.Dispose();
-            _client = Http.CreateClient(TimeSpan.FromSeconds(30));
-            _clientKey = key;
-            return _client;
+            if (proxyKey != _proxyKey)
+            {
+                foreach (var c in Clients.Values)
+                    c.Dispose();
+                Clients.Clear();
+                _proxyKey = proxyKey;
+            }
+            if (!Clients.TryGetValue(CookieHeader, out var client))
+                Clients[CookieHeader] = client = Http.CreateClient(TimeSpan.FromSeconds(30));
+            return client;
         }
     }
 
-    /// <summary>配置（cookie / 代理）变更后调用，下次请求会用新配置重建客户端。</summary>
+    /// <summary>账号增删后调用，丢掉按旧 cookie 建的客户端。</summary>
     public static void Invalidate()
     {
         lock (ClientLock)
         {
-            _client?.Dispose();
-            _client = null;
-            _clientKey = "";
+            foreach (var c in Clients.Values)
+                c.Dispose();
+            Clients.Clear();
         }
     }
 
@@ -248,7 +256,7 @@ public static class PixivApi
         // 该接口只对已登录会话返回数据，匿名一律 error —— 拿它当登录态探针
         var (body, _) = await GetBodyAsync($"{Origin}/ajax/user/extra?lang=zh");
         return body is null
-            ? (false, "已连上 pixiv，但 PHPSESSID 无效或已过期（请重新从浏览器复制）")
+            ? (false, "已连上 pixiv，但登录已失效（请在「账号访问」重新登录）")
             : (true, "连接正常（已登录）");
     }
 

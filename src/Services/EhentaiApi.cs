@@ -162,8 +162,14 @@ public static class EhentaiApi
     public static bool IsExHentai => Host.Contains("exhentai", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>已配置登录 cookie（里站必需；表站可选）。</summary>
-    public static bool HasCookie =>
-        AppConfig.EhentaiMemberId.Length > 0 && AppConfig.EhentaiPassHash.Length > 0;
+    public static bool HasCookie => Account("ipb_member_id").Length > 0 && Account("ipb_pass_hash").Length > 0;
+
+    /// <summary>
+    /// 账号的某个 cookie（账号经「账号访问 → 在服务器上登录」得来，见 <see cref="SiteAccounts"/> / <see cref="LoginBrowser"/>）。
+    /// 站点没有登录 API、账号密码入口只在论坛且常触发验证码，故不再由程序代登，只在内嵌浏览器里由人登录后取 cookie。
+    /// </summary>
+    private static string Account(string name) =>
+        SiteAccounts.CookieValue(SiteAccounts.Active(AccountService.Ehentai)?.Cookie, name);
 
     /// <summary>
     /// 请求用的 Cookie 头。
@@ -180,196 +186,11 @@ public static class EhentaiApi
         get
         {
             var parts = new List<string> { "nw=1", "sl=dm_2" };
-            if (AppConfig.EhentaiMemberId is { Length: > 0 } id)
-                parts.Add($"ipb_member_id={id}");
-            if (AppConfig.EhentaiPassHash is { Length: > 0 } hash)
-                parts.Add($"ipb_pass_hash={hash}");
-            if (AppConfig.EhentaiIgneous is { Length: > 0 } igneous)
-                parts.Add($"igneous={igneous}");
+            foreach (var name in new[] { "ipb_member_id", "ipb_pass_hash", "igneous" })
+                if (Account(name) is { Length: > 0 } value)
+                    parts.Add($"{name}={value}");
             return string.Join("; ", parts);
         }
-    }
-
-    // ---------- 账号登录 ----------
-
-    /// <summary>
-    /// 账号密码的登录入口只有论坛这一个：e-hentai / exhentai 主站本身没有登录表单，
-    /// 页面上的「Login」也是跳到这里。
-    /// </summary>
-    private const string LoginUrl = "https://forums.e-hentai.org/index.php?act=Login&CODE=01";
-
-    /// <summary>里站领取 igneous 的落点；随便哪个需要登录的页面都行，取收藏页是各实现的惯例。</summary>
-    private const string IgneousProbeUrl = "https://exhentai.org/favorites.php";
-
-    /// <summary>
-    /// 登录结果。<paramref name="Captcha"/> 要单独区分：触发验证码时程序无路可走，
-    /// 只能提示用户改用浏览器复制 cookie，而不是让他反复重试账号密码。
-    /// </summary>
-    public readonly record struct EhLoginResult(bool Ok, string Message, bool Captcha = false);
-
-    /// <summary>
-    /// 用账号密码登录并取回 cookie，成功后写入配置。
-    ///
-    /// 站点的鉴权认三个 cookie，而它们**不是一次拿全的**：
-    ///   1. POST 论坛登录 → 下发 <c>ipb_member_id</c> / <c>ipb_pass_hash</c>；
-    ///   2. 带着这两个再访问一次里站（<see cref="IgneousProbeUrl"/>）→ 里站才下发 <c>igneous</c>。
-    /// 第二步不能省：只有前两个 cookie 时里站照样回空白页，这正是「cookie 都填了却进不去里站」
-    /// 最常见的原因。
-    ///
-    /// 密码只在本次调用里用一次、不落库：cookie 本身就是长期凭据，存下口令没有额外用处，
-    /// 却多一处明文。
-    /// </summary>
-    public static async Task<EhLoginResult> LoginAsync(string username, string password)
-    {
-        username = username.Trim();
-        if (username.Length == 0 || password.Length == 0)
-            return new EhLoginResult(false, "请先填写账号与密码");
-
-        // 三步请求要共用同一个 cookie 罐，否则第 2 步带不上第 1 步下发的登录 cookie
-        var jar = new CookieContainer();
-        // nw=1 要进罐里而不是手写 Cookie 头：同时用手写头和 cookie 罐会互相覆盖
-        SeedCookie(jar, "e-hentai.org", "nw", "1");
-        SeedCookie(jar, "exhentai.org", "nw", "1");
-        using var client = Http.CreateClient(TimeSpan.FromSeconds(30), cookies: jar);
-
-        string body;
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, LoginUrl)
-            {
-                Content = new FormUrlEncodedContent(new Dictionary<string, string>
-                {
-                    // CookieDate=1 = 勾上「记住我」；不给的话只发会话级 cookie，关掉进程就没了
-                    ["CookieDate"] = "1",
-                    ["b"] = "d",
-                    ["bt"] = "1-1",
-                    ["UserName"] = username,
-                    ["PassWord"] = password,
-                    ["ipb_login_submit"] = "Login!",
-                }),
-            };
-            // 论坛会校验来路，缺了这个 Referer 会被当成站外提交打回
-            request.Headers.Referrer = new Uri("https://e-hentai.org/bounce_login.php?b=d&bt=1-1");
-            using var response = await client.SendAsync(request);
-            body = await response.Content.ReadAsStringAsync();
-        }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
-        {
-            Logger.Error($"E-Hentai 登录失败（连不上论坛）: {e.Message}");
-            return new EhLoginResult(false, $"连不上登录服务器，检查网络与代理：{e.Message}");
-        }
-
-        // 论坛登录成败都回 HTTP 200，只能看正文里的提示文案
-        if (body.Contains("The captcha was not entered correctly", StringComparison.Ordinal))
-        {
-            Logger.Error("E-Hentai 登录被要求输入验证码，无法自动登录");
-            return new EhLoginResult(false,
-                "站点要求输入验证码，程序无法自动登录。请在浏览器里登录一次，再把三个 cookie 手工填到下面。",
-                Captcha: true);
-        }
-        if (!body.Contains("You are now logged in as", StringComparison.Ordinal))
-        {
-            Logger.Error("E-Hentai 登录失败：账号或密码错误");
-            return new EhLoginResult(false, "登录失败：账号或密码不正确");
-        }
-
-        var memberId = ReadCookie(jar, "ipb_member_id");
-        var passHash = ReadCookie(jar, "ipb_pass_hash");
-        if (memberId.Length == 0 || passHash.Length == 0)
-        {
-            Logger.Error("E-Hentai 登录成功但没取到 ipb_member_id / ipb_pass_hash");
-            return new EhLoginResult(false, "登录成功但没取到 cookie，站点可能改版了");
-        }
-
-        // 论坛把 cookie 种在 .e-hentai.org 上，而 exhentai.org 是另一个顶级域，cookie 罐
-        // 不会把它们发过去——不显式复制一份到里站域，下一步就是匿名请求，永远领不到 igneous。
-        // （EhViewer 等客户端同样是两个域各写一份，原因就在这里。）
-        SeedCookie(jar, "exhentai.org", "ipb_member_id", memberId);
-        SeedCookie(jar, "exhentai.org", "ipb_pass_hash", passHash);
-
-        var (igneous, reached) = await FetchIgneousAsync(client, jar);
-
-        AppConfig.Write("ehentai", "member_id", memberId);
-        AppConfig.Write("ehentai", "pass_hash", passHash);
-
-        if (igneous.Length > 0)
-        {
-            AppConfig.Write("ehentai", "igneous", igneous);
-            Invalidate();
-            Logger.Info($"E-Hentai 登录成功（member_id={memberId}），已取得里站 cookie");
-            return new EhLoginResult(true, "登录成功，已取得里站(exhentai)访问权限");
-        }
-
-        // 连不上里站 ≠ 账号没有里站权限。前者多半是代理没通，此时绝不能动已有的 igneous——
-        // 那可能是用户手工填进来、本来能用的值，冲掉了就要重新去浏览器扒一遍。
-        if (!reached)
-        {
-            Invalidate();
-            Logger.Info($"E-Hentai 登录成功（member_id={memberId}），但连不上 exhentai，未更新 igneous");
-            return new EhLoginResult(true,
-                "登录成功，但连不上 exhentai(里站)，igneous 保持原值。若要用里站请检查代理后重试登录。");
-        }
-
-        // 连上了却不下发 igneous：这个账号确实没有里站权限（新号通常要满一段时间才开放）
-        AppConfig.Write("ehentai", "igneous", "");
-        Invalidate();
-        Logger.Info($"E-Hentai 登录成功（member_id={memberId}），但该账号没有里站权限");
-        return new EhLoginResult(true,
-            "登录成功，但站点未下发 igneous——该账号暂无 exhentai(里站) 权限，可先用 e-hentai(表站)。");
-    }
-
-    /// <summary>
-    /// 领取 igneous：只有带着登录 cookie 访问里站，里站才会下发它。
-    /// 首次访问常先吃一次重定向（种 cookie 发生在重定向那一跳上），所以没拿到时再试一次。
-    ///
-    /// 返回值里的 Reached 用来区分两种"没拿到"：连不上里站（不能动已有配置）
-    /// 与连上了但没下发（账号确实没权限）。
-    /// </summary>
-    private static async Task<(string Igneous, bool Reached)> FetchIgneousAsync(
-        HttpClient client, CookieContainer jar)
-    {
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Get, IgneousProbeUrl);
-                request.Headers.Referrer = new Uri("https://e-hentai.org/");
-                using var response = await client.SendAsync(request);
-                await response.Content.ReadAsStringAsync();   // 读完正文才算走完一次请求
-            }
-            catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
-            {
-                Logger.Error($"E-Hentai 领取 igneous 失败（连不上 exhentai）: {e.Message}");
-                return ("", false);
-            }
-
-            var value = ReadCookie(jar, "igneous");
-            // "mystery" 是站点在说「我不认这个会话」，不是真令牌；存下来只会让人以为配好了
-            if (value.Equals("mystery", StringComparison.OrdinalIgnoreCase))
-            {
-                Logger.Error("E-Hentai 里站下发的 igneous 为 mystery（会话未被认可），按未取得处理");
-                return ("", true);
-            }
-            if (value.Length > 0)
-                return (value, true);
-        }
-        return ("", true);
-    }
-
-    /// <summary>往 cookie 罐里按指定域塞一个 cookie（域不带前导点即按主机精确匹配）。</summary>
-    private static void SeedCookie(CookieContainer jar, string domain, string name, string value) =>
-        jar.Add(new Cookie(name, value, "/", domain));
-
-    /// <summary>从 cookie 罐里取一个值：同名 cookie 可能种在论坛域或两个主站域上，挨个找。</summary>
-    private static string ReadCookie(CookieContainer jar, string name)
-    {
-        foreach (var origin in new[]
-                 { "https://exhentai.org", "https://e-hentai.org", "https://forums.e-hentai.org" })
-        {
-            if (jar.GetCookies(new Uri(origin))[name] is { Value.Length: > 0 } cookie)
-                return cookie.Value;
-        }
-        return "";
     }
 
     // ---------- HTTP ----------

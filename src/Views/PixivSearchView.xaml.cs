@@ -125,6 +125,9 @@ public partial class PixivSearchView : UserControl
     private bool _hasMore;
     private bool _loadingMore;
     private bool _anonymous;        // 未登录：站点会把 R-18 从结果里滤掉，计数行要说明
+    // 用哪个 pixiv 账号访问（pixiv 用户号；"" = 匿名）：来源下拉里每个账号一项「pixiv（账号名）」，宿主经 SetAccount 设定。
+    // 下面每个访问站点的 async 方法开头都把它设进 SiteAccounts 的上下文
+    private string _account = "";
 
     // 作品详情
     private readonly ObservableCollection<PixivImageItem> _detailImages = [];
@@ -237,8 +240,25 @@ public partial class PixivSearchView : UserControl
     /// 由宿主的「查询」触发。输入可以是关键字/标签，也可以直接粘贴作品链接或作品号
     /// （粘链接时跳过搜索，径直把那一件列出来）。
     /// </summary>
+    /// <summary>切换账号（宿主切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即作废在途请求、清空结果。</summary>
+    public void SetAccount(string account)
+    {
+        if (account == _account)
+            return;
+        _account = account;
+        ++_generation;
+        ++_detailGen;
+        _cards.Clear();
+        _artworks.Clear();
+        LoadingOverlay.Visibility = Visibility.Collapsed;
+        ShowLevel("results");
+        UpdateSelectInfo();
+        SetStatus("");
+    }
+
     public async Task RunSearchAsync(string raw)
     {
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         raw = (raw ?? "").Trim();
         if (raw.Length == 0)
             return;
@@ -303,6 +323,7 @@ public partial class PixivSearchView : UserControl
     /// <summary>取下一页并追加到网格。</summary>
     private async Task LoadMoreAsync(int generation)
     {
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         if (_loadingMore || !_hasMore)
             return;
         _loadingMore = true;
@@ -394,6 +415,7 @@ public partial class PixivSearchView : UserControl
     /// </summary>
     private async Task OpenArtworkAsync(PixivCardItem card)
     {
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         var generation = ++_detailGen;
         _detailState = card.State;
         _detailArtwork = _artworks.FirstOrDefault(a => a.Id == card.Id);
@@ -597,6 +619,7 @@ public partial class PixivSearchView : UserControl
     /// <summary>串行下载队列里的图：并发拉几十张只会互相抢带宽，看的人始终只等最上面那张。</summary>
     private async Task PumpDetailImagesAsync(int generation)
     {
+        SiteAccounts.Use(AccountService.Pixiv, "");   // 取图只认 Referer，不必带登录 cookie
         _detailPumping = true;
         try
         {
@@ -693,6 +716,8 @@ public partial class PixivSearchView : UserControl
     /// </summary>
     private async Task EnqueueAsync(IReadOnlyList<string> ids)
     {
+        // 入队时记下账号（download_list.account），收尾补取动图帧延迟时要用
+        SiteAccounts.Use(AccountService.Pixiv, _account);
         var wanted = ids.ToHashSet();
         if (wanted.Count == 0)
             return;
@@ -760,6 +785,7 @@ public partial class PixivSearchView : UserControl
     /// <summary>后台下载卡片封面，新一轮请求即作废旧加载。</summary>
     private async Task LoadThumbnailsAsync(int generation)
     {
+        SiteAccounts.Use(AccountService.Pixiv, "");   // 取图只认 Referer，不必带登录 cookie
         using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
         foreach (var card in _cards.ToList())
         {

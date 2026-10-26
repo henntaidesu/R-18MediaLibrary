@@ -668,12 +668,12 @@ public static class DownloadEngine
     }
 
     /// <summary>从队列原子地领取一条待下载任务并立即标记为下载中；无任务返回 null。</summary>
-    private static (string Key, string WorkId, string Url, string Source, string SubPath)? ClaimNext()
+    private static (string Key, string WorkId, string Url, string Source, string SubPath, string Account)? ClaimNext()
     {
         lock (ClaimLock)
         {
             var rows = Db.Select(
-                "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\" FROM \"download_list\" WHERE \"status\" = '0' LIMIT 1");
+                "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\", \"account\" FROM \"download_list\" WHERE \"status\" = '0' LIMIT 1");
             if (rows is not { Count: > 0 })
                 return null;
             var key = rows[0][0] as string ?? "";
@@ -682,7 +682,7 @@ public static class DownloadEngine
                 "UPDATE \"download_list\" SET \"status\" = '3', \"long\" = '0', \"error\" = NULL WHERE \"UUID\" = @k",
                 ("@k", key));
             return (key, rows[0][1] as string ?? "", rows[0][2] as string ?? "",
-                rows[0][3] as string ?? "", rows[0][4] as string ?? "");
+                rows[0][3] as string ?? "", rows[0][4] as string ?? "", rows[0][5] as string ?? "");
         }
     }
 
@@ -932,8 +932,12 @@ public static class DownloadEngine
                     continue;
                 }
 
-                var (k, workId, url, source, subPath) = claimed.Value;
+                var (k, workId, url, source, subPath, account) = claimed.Value;
                 key = k;
+                // pixiv / FANBOX 多账号：用入队时那个账号的 cookie（官方站附件只对赞助到档位的账号开放）。
+                // 这里是线程的同步循环，设进去的上下文一直有效到下一条覆盖；旧记录没有 account，用默认账号
+                if (source is FanboxService.SourceName or PixivApi.SourceName)
+                    SiteAccounts.Use(source, account.Length > 0 ? account : null);
                 // asmr.one / fanbox / pixiv 都是直链源：url 即可直接下载，且 sub_path 保留作品内目录结构
                 // （pixiv 的图片地址不绑 IP 也不过期，只是取图必须带 Referer，见下面的 referer）
                 var isDirect = source is "asmr" or FanboxService.SourceName or PixivApi.SourceName;

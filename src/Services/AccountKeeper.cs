@@ -9,15 +9,14 @@ namespace R18MediaLibrary.Services;
 
 /// <summary>
 /// 账号 cookie 自动维护：启动后稍等片刻查一轮，之后每 <see cref="Interval"/> 再查一轮，
-/// 对「当前登着」的站点逐个检测，失效了就自己续上，用户不必回来重新粘 cookie。
+/// 对已登录的每个账号（<see cref="SiteAccounts"/>）逐个检测，失效了就自己续上，用户不必回来重新登录。
 ///
-///   pixiv / FANBOX —— 从登录浏览器（<see cref="LoginBrowser"/>）的资料目录里取：后台开一个不显示的浏览器打开站点首页，
-///                     浏览器手上的会话还有效就会被站点续期，读出来存回程序里。浏览器那份也失效了（要重新过人机验证）
-///                     就只能记下「需重新登录」，程序替不了人。
-///   E-Hentai       —— 用存着的账号密码（ehentai.username / password）重新登录换 cookie。
+/// 续的来源是该账号登录时所用的浏览器资料（<see cref="LoginBrowser"/>）：后台开一个不显示的浏览器打开站点首页，
+/// 浏览器手上的会话还有效就会被站点续期，读出来存回账号（E-Hentai 顺带重新领一次里站的 igneous）。
+/// 浏览器那份也失效了（要重新过人机验证）就只能记下「需要重新登录」，程序替不了人；
+/// 旧版手填迁来的账号没有浏览器资料，同样只能重新登录。
 ///
-/// 只维护登着的站：没登过或用户点了「退出登录」的站一概不碰，免得把刚退出的登录又续回来。
-/// 每个站点最近一次维护的结果（<see cref="StatusOf"/>）显示在账号访问页的卡片上。
+/// 每个账号最近一次维护的结果（<see cref="StatusOf"/>）显示在账号访问页的账号行上。
 /// </summary>
 public static class AccountKeeper
 {
@@ -31,6 +30,8 @@ public static class AccountKeeper
     private static Timer? _timer;
     private static int _running;
 
+    private static string Key(string site, string userId) => site + ":" + userId;
+
     public static void Start() =>
         _timer ??= new Timer(_ => _ = RunAsync(), null, FirstDelay, Interval);
 
@@ -40,46 +41,50 @@ public static class AccountKeeper
         _timer = null;
     }
 
-    /// <summary>该站最近一次自动维护的结果；还没维护过返回 null。</summary>
-    public static KeepStatus? StatusOf(string site)
+    /// <summary>某账号最近一次自动维护的结果；还没维护过返回 null。</summary>
+    public static KeepStatus? StatusOf(string site, string userId)
     {
         lock (Sync)
-            return Status.GetValueOrDefault(site);
+            return Status.GetValueOrDefault(Key(site, userId));
     }
 
-    /// <summary>退出登录后清掉该站的维护记录（卡片上不再显示）。</summary>
-    public static void Clear(string site)
+    /// <summary>账号退出或重新登录后清掉它的维护记录。</summary>
+    public static void Clear(string site, string userId)
     {
         lock (Sync)
-            Status.Remove(site);
+            Status.Remove(Key(site, userId));
     }
 
-    /// <summary>维护一轮（所有站点串行）；上一轮还没跑完就直接返回。</summary>
+    /// <summary>维护一轮（所有账号串行）；上一轮还没跑完就直接返回。</summary>
     public static async Task RunAsync()
     {
         if (Interlocked.Exchange(ref _running, 1) == 1)
             return;
         try
         {
-            foreach (var site in AccountService.Sites)
+            foreach (var account in SiteAccounts.All())
             {
-                KeepStatus? result;
+                // 人正在登录窗口里登录时不插手：那边随时会写入同一站点的账号
+                if (LoginBrowser.IsOpen)
+                    break;
+                KeepStatus result;
                 try
                 {
-                    result = await MaintainAsync(site);
+                    result = await MaintainAsync(account);
                 }
                 catch (Exception e)
                 {
                     result = new KeepStatus(DateTime.Now, false, "维护出错：" + e.Message);
                 }
-                if (result == null)
-                    continue;
+                if (SiteAccounts.Find(account.Site, account.UserId) == null)
+                    continue;   // 维护期间被退出登录了
                 lock (Sync)
-                    Status[site] = result;
+                    Status[Key(account.Site, account.UserId)] = result;
+                var label = $"账号维护 {AccountService.Title(account.Site)} {account.DisplayName}：{result.Message}";
                 if (result.Ok)
-                    Logger.Info($"账号维护 {site}：{result.Message}");
+                    Logger.Info(label);
                 else
-                    Logger.Warning($"账号维护 {site}：{result.Message}");
+                    Logger.Warning(label);
             }
         }
         finally
@@ -88,47 +93,27 @@ public static class AccountKeeper
         }
     }
 
-    /// <summary>维护一个站点；不归它管（没登录 / 正在登录窗口里登录）返回 null。</summary>
-    private static async Task<KeepStatus?> MaintainAsync(string site)
+    private static async Task<KeepStatus> MaintainAsync(SiteAccount account)
     {
-        if (!AccountService.IsLoggedIn(site))
-            return null;
-        if (site == AccountService.Ehentai)
-            return await MaintainEhentaiAsync();
-        if (LoginBrowser.IsOpen)
-            return null;
-
-        var (ok, message) = await AccountService.CheckAsync(site);
+        var (site, uid) = (account.Site, account.UserId);
+        var (ok, message) = await AccountService.CheckAsync(site, uid);
         if (ok)
             return new KeepStatus(DateTime.Now, true, "登录有效");
-        if (!LoginBrowser.HasProfile || Application.Current is not { } app)
+        if (account.Profile.Length == 0 || Application.Current is not { } app)
             return new KeepStatus(DateTime.Now, false, $"登录已失效（{message}），需要重新登录");
 
-        // 程序里那份失效了：去登录浏览器里取它手上的（打开一次站点首页，站点会顺手续期）
-        var session = await app.Dispatcher.InvokeAsync(() => LoginBrowser.ReadSessionAsync(site)).Task.Unwrap();
-        if (session == null)
+        // 存着的那份失效了：去该账号的浏览器资料里取它手上的（打开一次站点首页，站点会顺手续期）
+        var harvest = await app.Dispatcher.InvokeAsync(() => LoginBrowser.ReadAsync(site, account.Profile)).Task.Unwrap();
+        if (harvest == null || harvest.UserId != uid)
             return new KeepStatus(DateTime.Now, false, $"登录已失效（{message}），浏览器里的登录也已过期，需要重新登录");
-        AccountService.SaveCookies(site, new Dictionary<string, string>
+        if (harvest.Cookie != account.Cookie)
         {
-            [site == AccountService.Fanbox ? "sessid" : "php_sessid"] = session,
-        });
-        (ok, message) = await AccountService.CheckAsync(site);
+            SiteAccounts.Save(account with { Cookie = harvest.Cookie });
+            AccountService.InvalidateClients(site);
+        }
+        (ok, message) = await AccountService.CheckAsync(site, uid);
         return ok
             ? new KeepStatus(DateTime.Now, true, "已从登录浏览器续上 cookie")
             : new KeepStatus(DateTime.Now, false, $"从登录浏览器取到的 cookie 也无效（{message}），需要重新登录");
-    }
-
-    private static async Task<KeepStatus> MaintainEhentaiAsync()
-    {
-        var (ok, message) = await AccountService.CheckAsync(AccountService.Ehentai);
-        // TestAsync 在表站上匿名也算「连接正常」，要看到「已登录」才算 cookie 有效
-        if (ok && message.Contains("已登录"))
-            return new KeepStatus(DateTime.Now, true, "登录有效");
-        if (AppConfig.EhentaiUsername.Length == 0 || AppConfig.EhentaiPassword.Length == 0)
-            return new KeepStatus(DateTime.Now, false, $"登录可能已失效（{message}），没有保存账号密码，无法自动重新登录");
-        var r = await AccountService.LoginEhentaiAsync(AppConfig.EhentaiUsername, "");
-        return r.Ok
-            ? new KeepStatus(DateTime.Now, true, "已用保存的账号密码重新登录")
-            : new KeepStatus(DateTime.Now, false, "自动重新登录失败：" + r.Message);
     }
 }

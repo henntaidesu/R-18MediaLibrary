@@ -15,6 +15,7 @@ let pxGridScroll = 0;      // 进详情前网格的滚动位置，返回时恢�
 let pxAnonymous = false;   // 服务端报告的登录态：未登录时站点会把 R-18 滤掉，要提示用户
 let pxDetail = null;       // 当前详情的作品 { id, state }，工具栏「下载」据此定文案
 let pxPageIo = null;       // 详情页尾图流的懒加载观察器
+let pxAccount = '';        // 用哪个 pixiv 账号（用户号；'' = 匿名），来源下拉「pixiv（账号名）」经 pxSetAccount 设定
 
 // 站上的图统一走服务端代理：i.pximg.net 带防盗链，浏览器直接引用一律 403
 const pxImg = (url) => '/api/px/image?url=' + enc(url);
@@ -38,6 +39,15 @@ function pxResetState() {
   pxItems = []; pxSel = new Set();
   pxLevel = 'results'; pxKeyword = ''; pxGridScroll = 0; pxAnonymous = false;
   pxGen++; pxDetailGen++;
+}
+
+// 切账号（search.js 切来源时调用）：不同账号看到的结果不同（R-18 设置），换了即清空面板
+function pxSetAccount(uid) {
+  if (uid === pxAccount) return;
+  pxAccount = uid;
+  pxResetState();
+  ['pxListPane', 'pxDetailPane'].forEach(id => { const p = $(id); if (p) p.innerHTML = ''; });
+  if ($('pxListPane')) pxShowListPane();
 }
 
 function pxStopPageIo() {
@@ -140,6 +150,7 @@ async function pxFetch(gen, page) {
   const q = new URLSearchParams();
   q.set('q', pxKeyword);
   q.set('p', page);
+  q.set('account', pxAccount);
   let d;
   try { d = await api('/api/px/search?' + q); } catch (e) { return null; }
   if (gen !== pxGen) return null;
@@ -298,7 +309,7 @@ async function pxOpenArtwork(a) {
   window.scrollTo(0, 0);
 
   let d;
-  try { d = await api('/api/px/artwork?id=' + enc(a.id)); } catch (e) { return; }
+  try { d = await api('/api/px/artwork?id=' + enc(a.id) + '&account=' + enc(pxAccount)); } catch (e) { return; }
   // 期间已返回列表或换了作品就丢弃本次结果
   if (gen !== pxDetailGen || pxLevel !== 'detail') return;
   box.innerHTML = '';
@@ -397,7 +408,7 @@ async function pxEnqueue(ids, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '入队中…'; }
   let r;
   try {
-    r = await apiPost('/api/px/enqueue', { items: ids, lib, folder });
+    r = await apiPost('/api/px/enqueue', { items: ids, lib, folder, account: pxAccount });
   } catch (e) {
     if (btn) { btn.textContent = orig; btn.disabled = false; }
     return;

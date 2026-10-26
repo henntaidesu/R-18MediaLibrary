@@ -326,6 +326,8 @@ public partial class SearchPage : UserControl
     // "ehentai"（画廊）或 "pixiv"（插画/漫画/动图）。
     // 各来源共用同一条搜索栏，结果区互斥显示（对齐 Web 端 renderSearchArea 的来源下拉）。
     private string _source = SourceDlsite;
+    // 下拉选项的完整 Tag：多账号的来源写成「种类:账号」（fanboxcc:用户号 / pixiv:用户号），_source 只存种类
+    private string _sourceTag = SourceDlsite;
     private const string SourceDlsite = "dlsite";
     private const string SourceFanbox = "fanbox";
     private const string SourceFanboxCc = "fanboxcc";
@@ -423,8 +425,9 @@ public partial class SearchPage : UserControl
 
     /// <summary>
     /// 来源下拉的选项（顺序即显示顺序，对齐 Web 的 SEARCH_SOURCES / searchSources）。
-    /// 登录了 FANBOX 才多出「FANBOX（账号名）」一项，与未登录的「FANBOX」（pawchive 归档）并列；
-    /// 正选着它时退出了登录，就退回「FANBOX」。
+    /// FANBOX：「FANBOX」（pawchive 归档）之后，每个已登录的 FANBOX 账号各一项「FANBOX（账号名）」（多账号并行使用）；
+    /// pixiv：有账号时每个账号各一项「pixiv（账号名）」，一个都没有时是匿名的「pixiv」。
+    /// 正选着的账号退出了登录，就退回同类的第一项（FANBOX 退回 pawchive）。
     /// </summary>
     private void BuildSourceBox()
     {
@@ -432,14 +435,30 @@ public partial class SearchPage : UserControl
         SourceBox.Items.Clear();
         SourceBox.Items.Add(new ComboBoxItem { Content = "DLsite", Tag = SourceDlsite });
         SourceBox.Items.Add(new ComboBoxItem { Content = "FANBOX", Tag = SourceFanbox });
-        if (FanboxSource.OfficialAvailable)
-            SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.OfficialLabel, Tag = SourceFanboxCc });
+        foreach (var a in FanboxSource.OfficialAccounts)
+            SourceBox.Items.Add(new ComboBoxItem { Content = FanboxSource.OfficialLabel(a), Tag = $"{SourceFanboxCc}:{a.UserId}" });
         SourceBox.Items.Add(new ComboBoxItem { Content = "E-Hentai", Tag = SourceEhentai });
-        SourceBox.Items.Add(new ComboBoxItem { Content = "pixiv", Tag = SourcePixiv });
+        var pixivAccounts = SiteAccounts.List(AccountService.Pixiv);
+        if (pixivAccounts.Count == 0)
+            SourceBox.Items.Add(new ComboBoxItem { Content = "pixiv", Tag = SourcePixiv });
+        foreach (var a in pixivAccounts)
+            SourceBox.Items.Add(new ComboBoxItem { Content = $"pixiv（{a.DisplayName}）", Tag = $"{SourcePixiv}:{a.UserId}" });
         _buildingSources = false;
-        if (!SelectSource(_source) && _source == SourceFanboxCc)
-            SelectSource(SourceFanbox);   // 触发 SelectionChanged → 换回 pawchive
+        if (SelectSource(_sourceTag))
+            return;
+        // 选着的项没了（退出了那个账号）：退回同类第一项，FANBOX 官方站退回 pawchive
+        var fallback = _source == SourceFanboxCc ? SourceFanbox : _source;
+        foreach (var item in SourceBox.Items)
+            if (item is ComboBoxItem { Tag: string tag } && KindOf(tag) == fallback && SelectSource(tag))
+                return;
+        SelectSource(SourceDlsite);
     }
+
+    /// <summary>下拉 Tag 的种类部分（「pixiv:123」→「pixiv」）。</summary>
+    private static string KindOf(string tag) => tag.Split(':')[0];
+
+    /// <summary>下拉 Tag 的账号部分（「pixiv:123」→「123」；没有账号为 ""）。</summary>
+    private static string AccountOf(string tag) => tag.Contains(':') ? tag[(tag.IndexOf(':') + 1)..] : "";
 
     /// <summary>在下拉里选中某个来源（会触发 SelectionChanged）；下拉里没有这一项时返回 false。</summary>
     private bool SelectSource(string key)
@@ -457,12 +476,15 @@ public partial class SearchPage : UserControl
     {
         if (_buildingSources || SourceBox.SelectedItem is not ComboBoxItem item || item.Tag is not string key)
             return;
-        if (key == _source)
+        if (key == _sourceTag)
             return;
-        _source = key;
-        // 两个 FANBOX 来源共用一个结果区：换了站点就清空（作家键两边不通用）
+        _sourceTag = key;
+        _source = KindOf(key);
+        // FANBOX 各来源共用一个结果区：换了站点/账号就清空（作家键两边不通用，不同账号能看的投稿也不同）
         if (IsFanbox)
-            FanboxView.SetOfficial(_source == SourceFanboxCc);
+            FanboxView.SetOfficial(_source == SourceFanboxCc ? AccountOf(key) : null);
+        if (_source == SourcePixiv)
+            PixivView.SetAccount(AccountOf(key));
         ApplySource();
     }
 
@@ -580,7 +602,7 @@ public partial class SearchPage : UserControl
         if (_source != SourceDlsite)
         {
             SourceBox.SelectedIndex = 0;   // 触发 SelectionChanged → ApplySource
-            _source = SourceDlsite;
+            _source = _sourceTag = SourceDlsite;
             ApplySource();
         }
         InputBox.Text = workId;
