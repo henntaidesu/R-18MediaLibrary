@@ -469,7 +469,9 @@ public static class I18n
         ["媒体库设置"] = new() { ["zh_TW"] = "媒體庫設定", ["ja"] = "ライブラリ設定", ["en"] = "Library settings" },
         ["打开文件夹"] = new() { ["zh_TW"] = "開啟資料夾", ["ja"] = "フォルダを開く", ["en"] = "Open folder" },
         ["移动媒体库"] = new() { ["zh_TW"] = "移動媒體庫", ["ja"] = "ライブラリを移動", ["en"] = "Move library" },
-        ["查看作品"] = new() { ["zh_TW"] = "查看作品", ["ja"] = "作品を見る", ["en"] = "Browse files" },
+        ["作品详情"] = new() { ["zh_TW"] = "作品詳情", ["ja"] = "作品詳細", ["en"] = "Details" },
+        ["作品文件"] = new() { ["zh_TW"] = "作品檔案", ["ja"] = "作品ファイル", ["en"] = "Files" },
+        ["跳转作品"] = new() { ["zh_TW"] = "跳轉作品", ["ja"] = "作品へ移動", ["en"] = "Open work" },
         ["删除作品"] = new() { ["zh_TW"] = "刪除作品", ["ja"] = "作品を削除", ["en"] = "Delete work" },
         ["解压密码库"] = new()
         {

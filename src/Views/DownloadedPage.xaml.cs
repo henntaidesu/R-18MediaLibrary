@@ -23,6 +23,7 @@ public class DownloadedRow
     public string StateText { get; init; } = "";  // 显示译文
     public Brush StateBrush { get; init; } = Brushes.Gray;
     public string DownTime { get; init; } = "";
+    public string OpenText => I18n.Tr("跳转作品");
 }
 
 /// <summary>已下载页（对应 Python 版 downloaded_UI.py）。</summary>
@@ -61,6 +62,15 @@ public partial class DownloadedPage : UserControl
 
     /// <summary>点击"← 下载"按钮时触发，由主窗口切回下载视图。</summary>
     public event Action? BackToDownloadRequested;
+
+    /// <summary>行内"跳转作品"：由主窗口切到媒体库并打开该作品详情（对齐 Web gotoWork）。</summary>
+    public event Action<string>? OpenWorkRequested;
+
+    private void OpenWork_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is DownloadedRow row)
+            OpenWorkRequested?.Invoke(row.WorkId);
+    }
 
     public DownloadedPage()
     {

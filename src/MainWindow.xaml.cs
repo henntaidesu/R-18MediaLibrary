@@ -69,6 +69,7 @@ public partial class MainWindow : Window
                 NavSearch.IsChecked = true;   // 触发 Nav_Checked 切页
                 SearchPage.SearchFor(workId);
             };
+            page.OpenWorkRequested += OpenWorkInLibrary;
             return page;
         }
     }
@@ -83,8 +84,16 @@ public partial class MainWindow : Window
             var page = new DownloadedPage();
             _downloadedPage = page;
             page.BackToDownloadRequested += () => PageHost.Content = DownloadPage;
+            page.OpenWorkRequested += OpenWorkInLibrary;
             return page;
         }
+    }
+
+    /// <summary>下载管理的"跳转作品"：跨分区切到媒体库并直接打开该作品详情（同"重新搜索"的跨分区跳转）。</summary>
+    private void OpenWorkInLibrary(string workId)
+    {
+        NavMediaLib.IsChecked = true;   // 触发 Nav_Checked 切页
+        _mediaLibPage.OpenWork(workId);
     }
 
     public MainWindow()

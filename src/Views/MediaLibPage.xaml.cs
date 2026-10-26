@@ -157,9 +157,10 @@ public partial class MediaLibPage : UserControl
     private int _workSort;    // 0=发售日↓ 1=发售日↑ 2=RJ号↓ 3=RJ号↑
     private bool _suppressSort;  // 重填 SortBox 时抑制 SelectionChanged
 
-    // 文件树作为独立页面显示，记录其所属作品文件夹（用于语言切换/重新可见时重建）
-    private string? _treeFolder;
-    private bool _treeThumbView = true;   // 查看作品默认采用缩略图视图（false=文件列表）
+    // 详情页下方的作品文件（原「查看作品」独立页并入详情）默认缩略图视图（false=文件列表）
+    private bool _treeThumbView = true;
+    // 「作品详情」折叠块默认收起；记下被展开的是哪部作品，重新可见/切语言重建详情时保持展开
+    private string? _detailOpenWork;
 
     // 整页预览状态
     private InlineMediaPlayer? _inlinePlayer;
@@ -213,8 +214,7 @@ public partial class MediaLibPage : UserControl
     {
         BackButton.Content = I18n.Tr("← 返回");
         OpenFolderButton.Content = I18n.Tr("打开文件夹");
-        // 图标对齐 Web library.js（查看作品 📂 / 移动媒体库 📦）
-        ViewFilesButton.Content = "📂 " + I18n.Tr("查看作品");
+        // 图标对齐 Web library.js（移动媒体库 📦）
         MoveLibButton.Content = "📦 " + I18n.Tr("移动媒体库");
         DeleteWorkButton.Content = "🗑 " + I18n.Tr("删除作品");
         SearchBox.ToolTip = I18n.Tr("搜索 RJ号 / 作品名");
@@ -248,9 +248,6 @@ public partial class MediaLibPage : UserControl
     {
         switch (_level)
         {
-            case "filetree":
-                ShowDetail();   // 文件树页返回作品详情
-                break;
             case "filtered_works":
                 ShowDetail();
                 break;
@@ -271,6 +268,7 @@ public partial class MediaLibPage : UserControl
                         case "lib_works": ShowLibWorks(); break;
                         case "favorites": ShowFavorites(); break;
                         case "filtered_works": ShowFilteredWorks(); break;
+                        case "root": ShowRoot(); break;   // 由下载管理「跳转作品」直接打开（OpenWork）
                         default: ShowWorks(); break;
                     }
                 }
@@ -461,13 +459,18 @@ public partial class MediaLibPage : UserControl
         BackButton_Click(this, new RoutedEventArgs());
     }
 
-    private void ViewFilesButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 下载管理「跳转作品」：直接打开该作品详情（对齐 Web gotoWork），返回即回到本页根视图。
+    /// 调用方先切导航到本页；随之而来的 IsVisibleChanged → Refresh 会按 detail 层级原样重建。
+    /// </summary>
+    public void OpenWork(string workId)
     {
-        // "查看作品"：从详情页再跳转到独立的文件树页面（等同卡片跳详情的二次页面跳转）
-        if (_currentWorkFolder == null)
-            return;
-        _treeFolder = _currentWorkFolder;
-        ShowFileTree();
+        _currentLib = _currentMaker = _currentGenre = _currentType = null;
+        _detailFromSearch = false;
+        _detailReturnLevel = "root";
+        _worksScrollPos = 0;
+        _currentWork = workId;
+        ShowDetail();
     }
 
     public void Refresh()
@@ -476,8 +479,6 @@ public partial class MediaLibPage : UserControl
         var names = AppConfig.ReadMediaLibs().Select(l => l.Name).ToHashSet();
         if (_currentLib != null && !names.Contains(_currentLib))
             ShowRoot();  // 当前库已被删除/改名，回到根视图
-        else if (_level == "filetree" && _treeFolder != null && Directory.Exists(_treeFolder))
-            ShowFileTree();
         else if (_level == "filtered_works" && _filterCol != null)
             ShowFilteredWorks();
         else if (_level == "detail" && _currentWork != null)
@@ -527,9 +528,6 @@ public partial class MediaLibPage : UserControl
     private void ClearCards()
     {
         OpenFolderButton.Visibility = Visibility.Collapsed;
-        ViewModeBar.Visibility = Visibility.Collapsed;   // 仅文件树页显示视图切换
-        ViewFilesButton.Visibility = Visibility.Collapsed;
-        ViewFilesButton.Content = I18n.Tr("查看作品");
         MoveLibButton.Visibility = Visibility.Collapsed;
         DeleteWorkButton.Visibility = Visibility.Collapsed;
         ReadButton.Visibility = Visibility.Collapsed;
@@ -1435,7 +1433,6 @@ public partial class MediaLibPage : UserControl
         {
             _currentWorkFolder = workFolder;
             OpenFolderButton.Visibility = Visibility.Visible;
-            ViewFilesButton.Visibility = Visibility.Visible;
             MoveLibButton.Visibility = Visibility.Visible;
         }
         // 删除作品：文件夹不在了也要能删（清理孤儿记录），故不放进上面的文件夹分支
@@ -1461,6 +1458,49 @@ public partial class MediaLibPage : UserControl
             FontWeight = FontWeights.SemiBold, FontSize = 18, TextWrapping = TextWrapping.Wrap,
         });
 
+        // 「▸ 作品详情」折叠块（对齐 Web .dfold）：封面/字段/正文都收在里面，默认收起；
+        // 没有作品文件可看时详情就是全部内容，直接展开
+        var hasFiles = _currentWorkFolder != null;
+        var foldBody = new StackPanel
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = !hasFiles || _detailOpenWork == workId ? Visibility.Visible : Visibility.Collapsed,
+        };
+        var foldArrow = new TextBlock
+        {
+            Text = foldBody.Visibility == Visibility.Visible ? "▾" : "▸",
+            Width = 14, Foreground = (Brush)FindResource("CaptionBrush"),
+        };
+        var foldHead = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 8, 0, 0),
+            Background = Brushes.Transparent,   // 整行可点，不只是文字
+            Cursor = Cursors.Hand,
+        };
+        foldHead.Children.Add(foldArrow);
+        foldHead.Children.Add(new TextBlock
+        {
+            Text = I18n.Tr("作品详情"), FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 8, 0),
+        });
+        var makerName = r[2] as string ?? "";
+        foldHead.Children.Add(new TextBlock
+        {
+            Text = makerName.Length > 0 ? $"{workId} · {makerName}" : workId,
+            Style = (Style)FindResource("CaptionText"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        foldHead.MouseLeftButtonUp += (_, _) =>
+        {
+            var open = foldBody.Visibility != Visibility.Visible;
+            foldBody.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            foldArrow.Text = open ? "▾" : "▸";
+            _detailOpenWork = open ? workId : null;
+        };
+        layout.Children.Add(foldHead);
+        layout.Children.Add(foldBody);
+
         // fanbox / E-Hentai 作品的图片就摊在作品目录里（没有 DLsite 那套 DataSource 子目录与正文占位图）
         var isFlat = MediaLibraryService.IsFlatImageWork(workId);
         var folder = workFolder ?? "";
@@ -1480,9 +1520,18 @@ public partial class MediaLibPage : UserControl
         rightHost.Children.Add(infoPanel);
         Grid.SetColumn(rightHost, 1);
         content.Children.Add(rightHost);
-        layout.Children.Add(content);
-        // 先显示标题 + 字段，正文与轮播图在读盘完成后填充（大量文件/长正文时不冻结 UI）
-        ContentHost.Content = root;
+        foldBody.Children.Add(content);
+        // 先显示标题 + 字段，正文与轮播图在读盘完成后填充（大量文件/长正文时不冻结 UI）。
+        // 作品文件（原「查看作品」页）接在详情卡下方，对齐 Web renderDetail → drawFiles
+        var page = new StackPanel();
+        page.Children.Add(root);
+        if (hasFiles)
+        {
+            var files = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+            page.Children.Add(files);
+            BuildDetailFiles(files, workId, _currentWorkFolder!);
+        }
+        ContentHost.Content = page;
         CardsScroll.ScrollToVerticalOffset(0);
 
         // 正文文本与轮播图列表在后台线程读盘/解析。
@@ -1510,7 +1559,7 @@ public partial class MediaLibPage : UserControl
             {
                 if (value.Trim().Length == 0)
                     continue;
-                layout.Children.Add(new TextBox
+                foldBody.Children.Add(new TextBox
                 {
                     Text = value,
                     IsReadOnly = true,
@@ -1531,7 +1580,7 @@ public partial class MediaLibPage : UserControl
                     Margin = new Thickness(0, 10, 0, 0),
                     Tag = path,
                 };
-                layout.Children.Add(img);   // 正文图后台解码（缺失/损坏时留空占位，不影响其它块）
+                foldBody.Children.Add(img);   // 正文图后台解码（缺失/损坏时留空占位，不影响其它块）
                 LoadImageAsync(img, path, (int)Math.Ceiling(maxWidth * 2));
             }
         }
@@ -1713,51 +1762,78 @@ public partial class MediaLibPage : UserControl
         return tb;
     }
 
-    // ---------- 文件树（独立页面，多级折叠列表） ----------
+    // ---------- 作品文件（详情页下方，多级折叠列表 / 缩略图墙） ----------
 
     private const double TreeIndentStep = 22;    // 每深一级的左缩进
     private const double TreeRowBaseIndent = 8;  // 行基础左缩进
     private static readonly FontFamily EmojiFont = new("Segoe UI Emoji");
 
-    /// <summary>"查看作品"独立页面：以多级折叠列表展示作品文件树（默认仅显示根目录文件，文件夹折叠）。</summary>
-    private async void ShowFileTree()
+    /// <summary>
+    /// 详情页下方的「作品文件」小节（原「查看作品」独立页并入详情，对齐 Web renderDetail → drawFiles）：
+    /// 标题 + 缩略图/文件列表切换，内容在后台枚举完再填入。
+    /// </summary>
+    private void BuildDetailFiles(StackPanel section, string workId, string folder)
     {
-        var folder = _treeFolder;
-        if (folder == null || !Directory.Exists(folder))
+        section.Children.Clear();
+        var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+        // 选中的视图用主色按钮（Web .icon-btn.primary）
+        var thumbBtn = new Button
         {
-            ShowDetail();
-            return;
-        }
-        _level = "filetree";
-        ClearCards();
-        ShowContentHost();   // 文件树用 ContentHost 承载，隐藏卡片列表
-        BackButton.Visibility = Visibility.Visible;
-        SearchBox.Visibility = Visibility.Collapsed;   // 文件树页不需要搜索框
-        CountLabel.Text = "";
-        // 顶部居左显示当前作品 RJ 号
-        RjLabel.Inlines.Clear();
-        RjLabel.Inlines.Add(new Run(_currentWork ?? Path.GetFileName(folder)));
-        RjLabel.Visibility = Visibility.Visible;
-        // 恢复"打开文件夹"按钮（ClearCards 已置空 _currentWorkFolder）
-        _currentWorkFolder = folder;
-        OpenFolderButton.Visibility = Visibility.Visible;
-        ViewModeBar.Visibility = Visibility.Visible;
-        UpdateViewModeButtons();
+            Content = "▦ " + I18n.Tr("缩略图"),
+            Style = (Style)FindResource(_treeThumbView ? "AccentButton" : typeof(Button)),
+        };
+        var listBtn = new Button
+        {
+            Content = "☰ " + I18n.Tr("文件列表"),
+            Margin = new Thickness(8, 0, 0, 0),
+            Style = (Style)FindResource(_treeThumbView ? typeof(Button) : "AccentButton"),
+        };
+        thumbBtn.Click += (_, _) =>
+        {
+            if (_treeThumbView)
+                return;
+            _treeThumbView = true;
+            BuildDetailFiles(section, workId, folder);
+        };
+        listBtn.Click += (_, _) =>
+        {
+            if (!_treeThumbView)
+                return;
+            _treeThumbView = false;
+            BuildDetailFiles(section, workId, folder);
+        };
+        buttons.Children.Add(thumbBtn);
+        buttons.Children.Add(listBtn);
+        DockPanel.SetDock(buttons, Dock.Right);
+        bar.Children.Add(buttons);
+        bar.Children.Add(new TextBlock
+        {
+            Text = I18n.Tr("作品文件"), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center,
+        });
+        section.Children.Add(bar);
+        var body = new ContentControl();
+        section.Children.Add(body);
+        FillDetailFiles(body, workId, folder, _treeThumbView);
+    }
 
-        var thumbView = _treeThumbView;
+    private async void FillDetailFiles(ContentControl host, string workId, string folder, bool thumbView)
+    {
+        // 枚举期间已离开详情 / 换了作品 / 又切了视图：丢弃结果
+        bool Stale() => _level != "detail" || _currentWork != workId || _treeThumbView != thumbView;
         if (thumbView)
         {
             // 递归收集图片（可能上千文件）放后台线程，避免枚举时冻结 UI
             var images = await Task.Run(() => CollectThumbImages(folder));
-            if (_level != "filetree" || _treeFolder != folder || _treeThumbView != thumbView)
+            if (Stale())
                 return;
-            ContentHost.Content = BuildThumbWrap(images);
+            host.Content = BuildThumbWrap(images);
         }
         else
         {
             // 仅根层级在后台枚举；子文件夹在首次展开时才按需枚举（懒展开），不一次性递归建满整棵树
             var level = await Task.Run(() => ListLevel(folder, isRoot: true));
-            if (_level != "filetree" || _treeFolder != folder || _treeThumbView != thumbView)
+            if (Stale())
                 return;
             var list = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
             BuildLevelInto(list, level, depth: 0);
@@ -1768,34 +1844,8 @@ public partial class MediaLibPage : UserControl
                     Style = (Style)FindResource("CaptionText"),
                     Margin = new Thickness(TreeRowBaseIndent, 8, 0, 0),
                 });
-            ContentHost.Content = list;
+            host.Content = list;
         }
-        CardsScroll.ScrollToVerticalOffset(0);
-    }
-
-    /// <summary>把缩略图/文件列表按钮按当前视图高亮（选中态用主色按钮样式）。</summary>
-    private void UpdateViewModeButtons()
-    {
-        ThumbViewButton.Style = _treeThumbView
-            ? (Style)FindResource("AccentButton") : (Style)FindResource(typeof(Button));
-        ListViewButton.Style = _treeThumbView
-            ? (Style)FindResource(typeof(Button)) : (Style)FindResource("AccentButton");
-    }
-
-    private void ThumbViewButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_treeThumbView)
-            return;
-        _treeThumbView = true;
-        ShowFileTree();
-    }
-
-    private void ListViewButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_treeThumbView)
-            return;
-        _treeThumbView = false;
-        ShowFileTree();
     }
 
     // 缩略图墙对齐 Web 的 .fgrid：列宽下限 150、单行最多 10 列、gap 10、缩略图 1:1，

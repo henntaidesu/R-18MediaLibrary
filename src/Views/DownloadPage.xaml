@@ -189,6 +189,10 @@
                                                Foreground="{Binding StatusBrush}" FontWeight="SemiBold"
                                                VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="5" Orientation="Horizontal">
+                                        <!-- 跳转作品排第一（对齐 Web download.js 的 .dacts） -->
+                                        <Button Content="{Binding OpenText}" FontSize="12" Padding="10,3"
+                                                Margin="0,0,6,0" Visibility="{Binding OpenVisibility}"
+                                                Click="OpenWork_Click" />
                                         <Button Content="{Binding DownloadText}" FontSize="12" Padding="10,3"
                                                 Visibility="{Binding ResumeVisibility}" Click="DownloadOne_Click" />
                                         <Button Content="{Binding StopText}" FontSize="12" Padding="10,3"

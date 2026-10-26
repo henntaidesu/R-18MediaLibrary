@@ -227,7 +227,7 @@ new MutationObserver(scheduleStickyBars).observe(document.body,
 
 function stopTimers() { if (pollTimer) clearInterval(pollTimer); if (usageTimer) clearInterval(usageTimer); pollTimer = usageTimer = null; }
 
-function selectSection(key) {
+function selectSection(key, noRender) {
   section = key; stopTimers(); closeVideo(); closeAudio(); closeDrawer();
   if (key === 'download') dlView = 'download';   // 进入分区先归位到下载列表视图，再写基线历史（encodeHash 依赖 dlView）
   const s = SECTIONS.find(x => x.key === key);
@@ -244,7 +244,7 @@ function selectSection(key) {
   if (s.root) { makerSort = 0; workSort = 0; stack = [{ view: s.root, ctx: {} }]; }
   // 反映到地址栏；切换分区重置历史基线（不累积层级），但 URL 可见当前分区
   history.replaceState({ nav: true, depth: s.root ? 1 : 0 }, '', encodeHash());
-  if (s.root) render();
+  if (s.root) { if (!noRender) render(); }
   else if (key === 'search') renderSearchArea();
   else if (key === 'download') renderDownloadArea();
   else if (key === 'settings') renderSettings();
@@ -259,7 +259,7 @@ function encodeHash() {
   if (section === 'download') return encodeDlHash();         // 下载管理有两视图，走独立编码
   if (!s || !s.root) return '#/' + section;             // 其它叶子分区（设置）
   const segs = stack.slice(1).map(e => {
-    const ctx = { ...e.ctx }; delete ctx.nodes;          // nodes 为运行时文件树缓存，过大不入 URL
+    const ctx = { ...e.ctx }; delete ctx.nodes; delete ctx.open;   // nodes 文件树缓存过大、open 详情折叠态是运行时状态，均不入 URL
     const c = Object.keys(ctx).length ? '~' + encodeURIComponent(JSON.stringify(ctx)) : '';
     return e.view + c;
   });
@@ -327,6 +327,12 @@ function parseHash() {
 
 // ========== 卡片区（媒体库/标签/作品形式/收藏）==========
 // 每深入一级 push 一个历史项：iOS/安卓的"返回"手势触发 popstate 即可逐级回退，并恢复浏览位置
+// 跨分区跳到媒体库里的某个作品详情（下载管理的「跳转作品」）：落在媒体库根之上一层，返回即回媒体库首页。
+// 不先画媒体库首页——两次 render 并发时先发的那次可能后回来，把详情页盖掉
+function gotoWork(id) {
+  selectSection('medialib', true);
+  pushView('detail', { id });
+}
 function pushView(view, ctx) {
   if (stack.length) { const cur = stack[stack.length - 1]; cur.scroll = window.scrollY; cur.loaded = _cardLoaded; }
   stack.push({ view, ctx: ctx || {} });
@@ -343,6 +349,7 @@ async function popView() {
   return true;
 }
 window.addEventListener('popstate', () => {
+  if (LB.isOpen) { LB.hide(); return; }   // 看图层先退：返回手势只关看图，不离开当前页
   if (section === 'search') return;   // 搜索分区内不压历史层级（来源/查询词只 replace）
   if (section === 'download') { syncDlFromHash(); return; }
   const s = SECTIONS.find(x => x.key === section);
@@ -371,7 +378,7 @@ async function render() {
     else if (st.view === 'genreworks') await renderWorks('/api/genreworks?genre=' + enc(st.ctx.genre), st.ctx.label || st.ctx.genre, true);
     else if (st.view === 'works') await renderWorks(worksUrl(st.ctx), st.ctx.label || st.ctx.maker || '未知社团', true, st.ctx);
     else if (st.view === 'filter') await renderWorks(`/api/filter?col=${enc(st.ctx.col)}&val=${enc(st.ctx.val)}`, st.ctx.label, true);
-    else if (st.view === 'detail') await renderDetail(st.ctx.id);
+    else if (st.view === 'detail') await renderDetail(st.ctx);
     else if (st.view === 'files') await renderFiles(st.ctx);
   } catch (e) { if (e.message !== 'unauth') $('content').appendChild(el('div', 'empty', '加载失败')); }
 }

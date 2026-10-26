@@ -85,6 +85,7 @@
                 <ColumnDefinition Width="130" />
                 <ColumnDefinition Width="90" />
                 <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="100" />
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="HdrId" Style="{StaticResource HeaderCell}"
                        Tag="WorkId" MouseLeftButtonUp="Header_Click" />
@@ -119,6 +120,7 @@
                             <ColumnDefinition Width="130" />
                             <ColumnDefinition Width="90" />
                             <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="100" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{Binding WorkId}" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" Text="{Binding WorkName}" Margin="0,0,12,0"
@@ -133,6 +135,9 @@
                                    FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="{Binding DownTime}"
                                    Foreground="{StaticResource CaptionBrush}" VerticalAlignment="Center" />
+                        <!-- 跳转作品：切到媒体库打开该作品详情（对齐 Web 已下载表的行内按钮） -->
+                        <Button Grid.Column="6" Content="{Binding OpenText}" FontSize="12" Padding="10,3"
+                                Margin="8,0,0,0" Click="OpenWork_Click" />
                     </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>

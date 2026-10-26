@@ -14,10 +14,14 @@ function fileIcon(ext) {
 }
 // 查看作品视图模式：thumb=缩略图网格 / list=文件列表（折叠树+文件大小，对齐 WPF）
 let fileViewMode = 'thumb';
-// 文件夹进入时携带子节点（ctx.nodes），无则首次拉取整棵树
+// 子文件夹页：文件夹进入时携带子节点（ctx.nodes）。作品根目录直接画在详情页里（renderDetail → drawFiles）
 async function renderFiles(ctx) {
   $('title').textContent = ctx.name || ctx.id;
-  const host = $('content');
+  await drawFiles($('content'), ctx);
+}
+// 把文件视图画进 host：视图切换栏 + 缩略图网格/文件列表。ctx.nodes 无则首次拉取整棵树。
+// label 有值即嵌在详情页里：切换栏改为行内的小节标题，不当页顶工具栏吸顶
+async function drawFiles(host, ctx, label) {
   let nodes = ctx.nodes;
   if (!nodes) {
     host.innerHTML = '<div class="empty"><span class="spin"></span> 加载中…</div>';
@@ -28,11 +32,12 @@ async function renderFiles(ctx) {
   ctx.nodes = nodes;   // 缓存：切换视图无需重新请求
   host.innerHTML = '';
   // 视图切换栏：缩略图 / 文件列表
-  const bar = el('div', 'toolbar');
+  const bar = el('div', label ? 'toolbar inline dfiles-bar' : 'toolbar');
+  if (label) bar.appendChild(el('span', 'dfiles-title', label));
   const tb = el('button', 'icon-btn' + (fileViewMode === 'thumb' ? ' primary' : ''), '▦ 缩略图');
   const lb = el('button', 'icon-btn' + (fileViewMode === 'list' ? ' primary' : ''), '☰ 文件列表');
-  tb.onclick = () => { if (fileViewMode !== 'thumb') { fileViewMode = 'thumb'; renderFiles(ctx); } };
-  lb.onclick = () => { if (fileViewMode !== 'list') { fileViewMode = 'list'; renderFiles(ctx); } };
+  tb.onclick = () => { if (fileViewMode !== 'thumb') { fileViewMode = 'thumb'; drawFiles(host, ctx, label); } };
+  lb.onclick = () => { if (fileViewMode !== 'list') { fileViewMode = 'list'; drawFiles(host, ctx, label); } };
   bar.append(tb, lb); host.appendChild(bar);
   if (!nodes.length) { host.appendChild(el('div', 'empty', '此文件夹为空')); return; }
   if (fileViewMode === 'list') host.appendChild(drawFileTree(nodes, ctx.id));
@@ -261,19 +266,34 @@ function clearSleep() {
 }
 
 // ---------- 灯箱 ----------
+// 看图也算一层历史：打开时压一个历史项，系统返回手势/返回键（popstate，见 core.js）只关掉看图、不离开当前页，
+// 与逐级返回同一套逻辑。✕、点空白、Esc、上下滑也都经 history.back() 关闭，历史栈里不会残留多出的一层。
 const LB = {
-  list: [], idx: 0,
-  open(list, idx) { this.list = list; this.idx = idx; $('lbimg').src = list[idx]; $('lightbox').classList.add('show'); },
-  close() { $('lightbox').classList.remove('show'); $('lbimg').src = ''; },
+  list: [], idx: 0, isOpen: false,
+  open(list, idx) {
+    this.list = list; this.idx = idx; $('lbimg').src = list[idx]; $('lightbox').classList.add('show');
+    if (!this.isOpen) { this.isOpen = true; history.pushState({ nav: true, lb: true }, ''); }
+  },
+  close() {
+    if (!this.isOpen) return;
+    if (history.state && history.state.lb) history.back();   // 由 popstate 再调 hide()
+    else this.hide();
+  },
+  hide() { this.isOpen = false; $('lightbox').classList.remove('show'); $('lbimg').src = ''; },
   step(d) { if (!this.list.length) return; this.idx = (this.idx + d + this.list.length) % this.list.length; $('lbimg').src = this.list[this.idx]; },
 };
 $('lightbox').addEventListener('click', e => { if (e.target.id === 'lightbox') LB.close(); });
-// 触屏左右滑动切换图片：右滑看上一张、左滑看下一张
-let _lbTouchX = null;
-$('lightbox').addEventListener('touchstart', e => { if (e.touches.length === 1) _lbTouchX = e.touches[0].clientX; }, { passive: true });
+// 触屏滑动：左右滑切换图片（右滑上一张、左滑下一张），上下滑退出看图（同返回）
+let _lbTouchX = null, _lbTouchY = null;
+$('lightbox').addEventListener('touchstart', e => {
+  if (e.touches.length === 1) { _lbTouchX = e.touches[0].clientX; _lbTouchY = e.touches[0].clientY; }
+  else _lbTouchX = _lbTouchY = null;   // 双指缩放不算滑动
+}, { passive: true });
 $('lightbox').addEventListener('touchend', e => {
   if (_lbTouchX == null) return;
-  const dx = e.changedTouches[0].clientX - _lbTouchX; _lbTouchX = null;
-  if (Math.abs(dx) > 40) LB.step(dx > 0 ? -1 : 1);
+  const dx = e.changedTouches[0].clientX - _lbTouchX, dy = e.changedTouches[0].clientY - _lbTouchY;
+  _lbTouchX = _lbTouchY = null;
+  if (Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(dx)) LB.close();
+  else if (Math.abs(dx) > 40) LB.step(dx > 0 ? -1 : 1);
 }, { passive: true });
 document.addEventListener('keydown', e => { if (!$('lightbox').classList.contains('show')) return; if (e.key === 'Escape') LB.close(); else if (e.key === 'ArrowLeft') LB.step(-1); else if (e.key === 'ArrowRight') LB.step(1); });

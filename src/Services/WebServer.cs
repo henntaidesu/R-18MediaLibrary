@@ -1861,6 +1861,8 @@ public static class WebServer
                 canPause = statuses.Any(s => s is "0" or "3") && workId.Length > 0,
                 canResume = statuses.Contains("4") && workId.Length > 0,
                 canDelete = workId.Length > 0,
+                // 「跳转作品」：works 里有这一行才有详情可看（论坛源刚入队的占位番号可能还没有）
+                canOpen = nameMap.ContainsKey(workId),
                 children,
             };
         });

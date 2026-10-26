@@ -56,8 +56,6 @@
   .layout-desktop .drawer-backdrop { display: none !important; }
   .layout-desktop #menuBtn { display: none !important; }
   .layout-desktop .abar { left: var(--nav-w); }
-  /* 返回键放到顶栏最右边（标题 margin-right:auto 已把其后的元素推到右侧，order 再保证它排在最后） */
-  .layout-desktop #back { order: 10; margin-left: 8px; }
 
   /* 移动端（iOS/Android 手机）：侧栏改为左侧抽屉，顶部左侧目录键、返回键移到右侧 */
   .layout-mobile .nav { width: 264px; transform: translateX(-100%);
@@ -69,12 +67,13 @@
   .layout-mobile #menuBtn { display: inline-block; order: 0; }
   .layout-mobile .topbar { flex-wrap: wrap; }
   .layout-mobile #title { order: 1; margin-right: auto; }
-  .layout-mobile #back { order: 2; }
   .layout-mobile #search { order: 5; flex-basis: 100%; }
   .layout-mobile #sort { order: 6; }
 
   main { padding: 12px var(--pad) 40px; }
   .count { color: var(--muted); font-size: 13px; margin: 4px 2px 12px; }
+  /* 没有计数的页（详情/搜索/下载/设置）整行不占位，否则空行的外边距会在页顶多垫出一截空白 */
+  .count:empty { display: none; }
   /* 页内工具栏：一张常驻页顶的悬浮卡片，不随内容滚走。
      top 不能写死：顶栏在窄屏会换行、详情页还会多出一排操作按钮，高度不固定；
      且一页可能叠两条（搜索栏 + 选择条）——叠起来要拼成同一张卡，中间不留缝也不重复描边。
@@ -225,12 +224,23 @@
   .toggle.danger { color: #f87171; border-color: #6b3030; }
   .toggle.danger:hover { border-color: #f87171; }
   .topbar-actions .toggle { padding: 5px 12px; font-size: 13px; }
-  /* 作品详情页：顶栏不显示作品名（正文已有 h1），仅留按钮 —— 操作按钮靠左成组，返回键靠右 */
+  /* 作品详情页：顶栏不显示作品名（正文已有 h1），仅留按钮 —— 返回键在最左（各页一致），操作按钮紧随其后 */
   #topbar.detail-mode #title { display: none; }
   #topbar.detail-mode #detailActions { order: 1; margin-right: auto; }
-  /* 详情页移动端：返回键与目录键同一行、靠右；操作按钮另起一行铺满 */
-  .layout-mobile #topbar.detail-mode #back { order: 1; margin-left: auto; }
+  /* 详情页移动端：目录键、返回键一行；操作按钮另起一行铺满 */
   .layout-mobile #topbar.detail-mode #detailActions { order: 2; flex-basis: 100%; margin-right: 0; }
+  /* 详情折叠：标题下一行「▸ 作品详情」，默认收起，点开显示封面/字段/正文 */
+  .dfold-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer; user-select: none;
+                padding: 6px 0; color: var(--text); font-weight: 600; }
+  .dfold-head .arrow { width: 14px; color: var(--muted); }
+  .dfold-head .dfold-sub { color: var(--muted); font-size: 13px; font-weight: 400;
+                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dfold-body { display: none; padding-top: 8px; }
+  .dfold.open .dfold-body { display: block; }
+  /* 详情页下方的作品文件（原「查看作品」页） */
+  .dfiles { margin-top: 14px; }
+  .dfiles .dfiles-bar { margin-bottom: 10px; }
+  .dfiles-title { font-weight: 600; margin-right: auto; }
   .body { margin-top: 16px; }
   .body p { white-space: pre-wrap; word-break: break-word; margin: 10px 0; }
   .body img { max-width: 100%; border-radius: 8px; margin: 10px 0; display: block; cursor: zoom-in; }
