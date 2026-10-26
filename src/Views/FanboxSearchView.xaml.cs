@@ -875,7 +875,7 @@ public partial class FanboxSearchView : UserControl
 
     // ---------- 作家监控（有新作品自动下载） ----------
     //
-    // 监控列表、轮询间隔与总开关都在「系统设置 → FANBOX 作家监控」（FanboxWatchSettings），
+    // 监控列表、轮询间隔与总开关都在一级导航「作家监控」（WatchPage），
     // 本视图只留两处：作家主页选择条上的「+ 监控作家 / ✓ 已监控」，以及设置页「打开主页」回跳到这里。
     // 数据与轮询都在 FanboxWatchService。
 

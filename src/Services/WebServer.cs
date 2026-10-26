@@ -423,6 +423,7 @@ public static class WebServer
                 // 设置
                 case "/api/settings": if (req.Method == "POST") ApiSettingsWrite(stream, req); else ApiSettings(stream); break;
                 case "/api/debridtest": await ApiDebridTestAsync(stream, req); break;
+                case "/api/debridkey": if (req.Method == "POST") ApiDebridKeyReveal(stream, req); else WriteJson(stream, 400, new { ok = false }); break;
                 case "/api/imagehost/test": await ApiImageHostTestAsync(stream, req); break;
                 case "/api/imagehost/migrate": ApiImageHostMigrate(stream); break;
                 case "/api/imagehost/status": ApiImageHostStatus(stream); break;
@@ -430,8 +431,10 @@ public static class WebServer
                 case "/api/medialibs": ApiMediaLibs(stream); break;
                 case "/api/lib/create": ApiLibCreate(stream, req); break;
                 case "/api/lib/delete": ApiLibDelete(stream, req); break;
+                case "/api/lib/update": ApiLibUpdate(stream, req); break;
                 case "/api/lib/addfolder": ApiLibAddFolder(stream, req); break;
                 case "/api/lib/removefolder": ApiLibRemoveFolder(stream, req); break;
+                case "/api/lib/editfolder": ApiLibEditFolder(stream, req); break;
                 case "/api/lib/scan": ApiLibScan(stream, req); break;
                 case "/api/lib/scanall": ApiLibScanAll(stream); break;
                 case "/api/lib/scanstatus": ApiLibScanStatus(stream); break;
@@ -671,6 +674,7 @@ public static class WebServer
             name = lib.Name,
             works = counts.GetValueOrDefault(lib.Name),
             folders = lib.Folders.Count,
+            view = lib.View,
         });
         WriteJson(stream, 200, new { libs });
     }
@@ -2481,6 +2485,43 @@ public static class WebServer
         });
     }
 
+    /// <summary>
+    /// 设置页 Debrid-Link API Key 的「👁 查看」：要再输一次访问密码才回传明文。
+    /// 没设访问密码时没有可核对的东西，一律拒绝（否则局域网里谁打开页面都能看）。
+    /// 失败次数与登录共用同一套限流，免得这里成了绕开登录锁定的猜密码口子。
+    /// </summary>
+    private static void ApiDebridKeyReveal(NetworkStream stream, Request req)
+    {
+        lock (Sync)
+        {
+            if (DateTime.UtcNow < _lockoutUntil)
+            {
+                WriteJson(stream, 429, new { ok = false, error = "尝试过于频繁，请稍后再试" });
+                return;
+            }
+        }
+        if (!_authRequired)
+        {
+            WriteJson(stream, 200, new { ok = false, error = "未设置访问密码，无法在网页查看，请在桌面端查看" });
+            return;
+        }
+        if (!TokensEqual(Sha256Hex(ReadStringField(req.Body, "password")), _expectedToken))
+        {
+            lock (Sync)
+            {
+                if (++_loginFails >= MaxLoginFails)
+                {
+                    _lockoutUntil = DateTime.UtcNow + LockoutWindow;
+                    _loginFails = 0;
+                }
+            }
+            WriteJson(stream, 200, new { ok = false, error = "密码错误" });
+            return;
+        }
+        lock (Sync) { _loginFails = 0; }
+        WriteJson(stream, 200, new { ok = true, key = AppConfig.DebridApiKey });
+    }
+
     private static void ApiSettingsWrite(NetworkStream stream, Request req)
     {
         string section = "", key = "", value = "";
@@ -2520,8 +2561,26 @@ public static class WebServer
     /// <summary>媒体库列表（含文件夹），供设置页管理区渲染/刷新。</summary>
     private static void ApiMediaLibs(NetworkStream stream)
     {
-        var libs = AppConfig.ReadMediaLibs().Select(l => new { name = l.Name, folders = l.Folders });
+        var libs = AppConfig.ReadMediaLibs().Select(l => new { name = l.Name, folders = l.Folders, view = l.View });
         WriteJson(stream, 200, new { libs });
+    }
+
+    /// <summary>媒体库卡片 ⚙ 设置里的改名 / 默认视图（字段缺省即不改）。改名成功回传新名字。</summary>
+    private static void ApiLibUpdate(NetworkStream stream, Request req)
+    {
+        var name = ReadStringField(req.Body, "name").Trim();
+        var rename = ReadStringField(req.Body, "rename").Trim();
+        var view = ReadStringField(req.Body, "view");
+        string? err = null;
+        lock (LibSync)
+        {
+            if (view.Length > 0)
+                MediaLibraryService.SetLibraryView(name, view);
+            if (rename.Length > 0)
+                err = MediaLibraryService.RenameLibrary(name, rename);
+        }
+        if (err != null) WriteJson(stream, 400, new { error = err });
+        else WriteJson(stream, 200, new { ok = true, name = rename.Length > 0 ? rename : name });
     }
 
     private static void ApiLibCreate(NetworkStream stream, Request req)
@@ -2616,6 +2675,18 @@ public static class WebServer
             }
         }
         WriteJson(stream, 200, new { ok = removed });
+    }
+
+    private static void ApiLibEditFolder(NetworkStream stream, Request req)
+    {
+        var name = ReadStringField(req.Body, "name").Trim();
+        var folder = ReadStringField(req.Body, "folder");
+        var to = ReadStringField(req.Body, "to");
+        string? err;
+        lock (LibSync)
+            err = MediaLibraryService.ChangeLibraryFolder(name, folder, to);
+        if (err != null) WriteJson(stream, 400, new { error = err });
+        else WriteJson(stream, 200, new { ok = true });
     }
 
     private static void ApiLibScan(NetworkStream stream, Request req)

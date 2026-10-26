@@ -583,13 +583,16 @@ public partial class MediaLibPage : UserControl
     /// 画在卡片左侧、名称与作品数的左边，异步载入，取不到就保持占位底色——不阻塞卡片先出来。
     /// </param>
     /// <param name="iconHostUrl">该头像在图床上的地址；非空则优先走图床，失败再回退 <paramref name="iconUrl"/>。</param>
-    /// <param name="onEdit">非空则在卡片右上角挂一个 🖊 按钮（目前只有社团卡用它改显示名）。</param>
+    /// <param name="onEdit">非空则在卡片右上角挂一个按钮（社团卡 🖊 改显示名、媒体库卡 ⚙ 设置）。</param>
+    /// <param name="editIcon">右上角按钮的图标，缺省 🖊。</param>
+    /// <param name="editTip">右上角按钮的提示，缺省「自定义显示名称」。</param>
     /// <param name="avatarSlot">
     /// 是否留出左侧头像位。社团卡一律传 true：没有头像的社团那一格空着，
     /// 同一行里的卡片版式才对得齐（名称起始位置一致）。
     /// </param>
     private Border MakeClickCard(string title, string caption, Action onClick,
-        string iconUrl = "", string iconHostUrl = "", Action? onEdit = null, bool avatarSlot = false)
+        string iconUrl = "", string iconHostUrl = "", Action? onEdit = null, bool avatarSlot = false,
+        string editIcon = "🖊", string? editTip = null)
     {
         // 尺寸交给网格：卡片拉伸填满单元格（宽由 CardGrid 算、高为 ClickCardH），间距也由网格排
         var card = new Border
@@ -655,8 +658,8 @@ public partial class MediaLibPage : UserControl
             overlay.Children.Add(content);
             var edit = new Button
             {
-                Content = "🖊",
-                ToolTip = I18n.Tr("自定义显示名称"),
+                Content = editIcon,
+                ToolTip = editTip ?? I18n.Tr("自定义显示名称"),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(0, -8, -8, 0),   // 抵消卡片 14px 内距，贴近右上角
@@ -738,14 +741,24 @@ public partial class MediaLibPage : UserControl
             var name = lib.Name;
             var caption = I18n.Format(I18n.Tr("{works} 个作品 · {folders} 个文件夹"),
                 ("works", counts.GetValueOrDefault(name)), ("folders", lib.Folders.Count));
+            var view = lib.View;
             return new GridCard(() => MakeClickCard(name, caption, () =>
             {
                 _currentLib = name;
                 _currentMaker = null;
                 _currentGenre = null;
                 _currentType = null;
-                ShowLibWorks();   // 进入媒体库默认显示作品（可切换到社团视图）
-            }), name.ToLowerInvariant());
+                // 进库先显示什么由该库的「默认显示」决定（缺省作品），进去后仍可就地切换
+                if (view == MediaLib.ViewMakers)
+                    ShowMakers();
+                else
+                    ShowLibWorks();
+            }, onEdit: () =>
+            {
+                LibSettingsDialog.Show(this, name);
+                if (_level == "libs")
+                    ShowLibs();   // 名称 / 文件夹数 / 库本身都可能变了
+            }, editIcon: "⚙", editTip: I18n.Tr("媒体库设置")), name.ToLowerInvariant());
         }).ToList();
         ApplyCardFilter();
     }

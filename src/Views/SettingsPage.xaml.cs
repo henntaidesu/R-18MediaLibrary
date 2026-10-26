@@ -18,10 +18,6 @@ public partial class SettingsPage : UserControl
     private bool _loading;  // 回填控件时不触发保存
     private readonly List<string> _unzipPwds = new();  // 解压密码库：一条一个输入框
     private readonly MediaLibSettingDialog _mediaLibSection = new();  // 内联的媒体库管理区块（常驻，扫描随其存活）
-    private readonly FanboxWatchSettings _fanboxWatchSection = new();  // 内联的 FANBOX 作家监控区块
-
-    /// <summary>监控卡的「打开主页」：请求跨分区切到 作品搜索 → FANBOX 并打开这位作家（参数：作家号 / 作家名）。</summary>
-    public event Action<string, string>? OpenFanboxArtistRequested;
 
     public SettingsPage()
     {
@@ -32,8 +28,6 @@ public partial class SettingsPage : UserControl
         // 媒体库管理内联进设置页（对齐 Web 设置页），构建一次；扫描状态在页面切换间保持
         MediaLibHost.Content = _mediaLibSection.BuildSection(this);
         // FANBOX 作家监控同样内联进设置页（对齐 Web），「打开主页」转交宿主跨分区跳转
-        _fanboxWatchSection.OpenArtistRequested += (id, name) => OpenFanboxArtistRequested?.Invoke(id, name);
-        FanboxWatchHost.Content = _fanboxWatchSection.BuildSection(this);
         I18n.LanguageChanged += RetranslateUi;
         // 模型依赖下载在后台线程推进度，切回调度线程再动控件
         TranslateDeps.Changed += OnTranslateDepsChanged;
@@ -191,7 +185,6 @@ public partial class SettingsPage : UserControl
         BuildPixivCombos();
         SystemGroup.Header = I18n.Tr("系统");
         MediaLibGroup.Header = I18n.Tr("媒体库");
-        FanboxWatchGroup.Header = I18n.Tr("FANBOX 作家监控");
         PathLabel.Text = I18n.Tr("缓存路径");
         PathChooseButton.Content = I18n.Tr("保存");
         AutoDownloadLabel.Text = I18n.Tr("自动下载");
@@ -200,7 +193,7 @@ public partial class SettingsPage : UserControl
         DebridTestButton.Content = I18n.Tr("测试");
         DownProcLabel.Text = I18n.Tr("单文件线程数");
         DownProcLabel.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段");
-        DownProcBox.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段，最大 16");
+        DownProcBox.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段，最大 6");
         MinSpeedLabel.Text = I18n.Tr("最低速度 (KB/s)");
         MinSpeedBox.ToolTip = I18n.Tr("持续低于该速度 30 秒后自动重试，0 表示不限制");
         SpeedLimitLabel.Text = I18n.Tr("速度限制 (KB/s)");
@@ -269,10 +262,7 @@ public partial class SettingsPage : UserControl
     private void Page_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (!(bool)e.NewValue)
-        {
-            _fanboxWatchSection.Suspend();   // 离开设置页即停掉监控状态轮询，没人看时不必每 1.5 秒查一次
             return;
-        }
         // 切换到本页时若配置版本变过才重读数据库（未变则用进程缓存，避免每次进页都打库）
         if (AppConfig.Version != _cfgVersionSeen)
         {
@@ -281,7 +271,6 @@ public partial class SettingsPage : UserControl
         }
         ReadConf();
         _mediaLibSection.RefreshLibs();   // 拾取外部对媒体库的改动
-        _fanboxWatchSection.Refresh();    // 监控状态可能被后台轮询改过
     }
 
     /// <summary>用户的"下载"文件夹。</summary>
@@ -344,7 +333,7 @@ public partial class SettingsPage : UserControl
 
         AutoDownloadCombo.SelectedIndex = AppConfig.AutoDownload ? 0 : 1;
         AutoUnzipCombo.SelectedIndex = AppConfig.AutoUnzip ? 0 : 1;
-        DownProcBox.Text = AppConfig.DownloadProcesses.ToString();
+        DownProcBox.SelectedIndex = AppConfig.DownloadProcesses - 1;
         MinSpeedBox.Text = AppConfig.MinSpeedKb.ToString();
         SpeedLimitBox.Text = AppConfig.SpeedLimitKb.ToString();
         _unzipPwds.Clear();
@@ -771,11 +760,11 @@ public partial class SettingsPage : UserControl
         AppConfig.Write("down_list", "auto_unzip", AutoUnzipCombo.SelectedIndex == 0 ? "True" : "False");
     }
 
-    private void DownProcBox_LostFocus(object sender, RoutedEventArgs e)
+    private void DownProcBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_loading)
+        if (_loading || DownProcBox.SelectedIndex < 0)
             return;
-        AppConfig.Write("down_list", "download_processes", DownProcBox.Text.Trim());
+        AppConfig.Write("down_list", "download_processes", (DownProcBox.SelectedIndex + 1).ToString());
     }
 
     private void MinSpeedBox_LostFocus(object sender, RoutedEventArgs e)

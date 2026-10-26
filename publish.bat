@@ -43,4 +43,3 @@ echo   - A small libvlc\win-x64 folder remains next to the exe (hrtfs spatial-au
 echo     scripts, a few MB total) - LibVLC needs these as real files, keep them alongside R-18MediaLibrary.exe.
 echo   - The .NET runtime itself is NOT bundled. If the target machine lacks the .NET 10 Desktop Runtime,
 echo     running R-18MediaLibrary.exe shows the official Windows/.NET prompt guiding the user to download and install it.
-·

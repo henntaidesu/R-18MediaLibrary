@@ -6,11 +6,17 @@ using System.Text.Json;
 
 namespace R18MediaLibrary.Core;
 
-/// <summary>一个媒体库：名称 + 文件夹列表。</summary>
+/// <summary>一个媒体库：名称 + 文件夹列表 + 进库默认显示的视图。</summary>
 public class MediaLib
 {
+    public const string ViewWorks = "works";
+    public const string ViewMakers = "makers";
+
     public string Name { get; set; } = "";
     public List<string> Folders { get; set; } = [];
+
+    /// <summary>点进这个媒体库时先显示什么：<see cref="ViewWorks"/>（平铺作品，缺省）或 <see cref="ViewMakers"/>（社团卡片）。</summary>
+    public string View { get; set; } = ViewWorks;
 }
 
 /// <summary>
@@ -215,7 +221,7 @@ public static class AppConfig
     public static bool AutoUnzip => Read("down_list", "auto_unzip") == "True";
 
     /// <summary>单文件并发分段数（1 = 不分段，最大 16）。</summary>
-    public static int DownloadProcesses => Math.Clamp(ReadInt("down_list", "download_processes", 1), 1, 16);
+    public static int DownloadProcesses => Math.Clamp(ReadInt("down_list", "download_processes", 1), 1, 6);
 
     /// <summary>下载文件夹命名方式："rj"=按RJ号，"work_name"=按作品名称。</summary>
     public static string FolderNameMode => Read("down_list", "folder_name", "rj") ?? "rj";
@@ -337,6 +343,8 @@ public static class AppConfig
                     f.ValueKind != JsonValueKind.Array)
                     continue;
                 var lib = new MediaLib { Name = name };
+                if (item.TryGetProperty("view", out var v) && v.GetString() == MediaLib.ViewMakers)
+                    lib.View = MediaLib.ViewMakers;
                 foreach (var folder in f.EnumerateArray())
                     if (folder.GetString() is { Length: > 0 } path)
                         lib.Folders.Add(path);
@@ -353,7 +361,7 @@ public static class AppConfig
     public static void WriteMediaLibs(List<MediaLib> libs)
     {
         var json = JsonSerializer.Serialize(
-            libs.ConvertAll(l => new { name = l.Name, folders = l.Folders }),
+            libs.ConvertAll(l => new { name = l.Name, folders = l.Folders, view = l.View }),
             new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         Write("media_lib", "libs", json);
     }

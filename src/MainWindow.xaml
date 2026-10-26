@@ -40,6 +40,14 @@
                         <TextBlock x:Name="NavSearchLabel" Text="作品搜索" VerticalAlignment="Center" />
                     </StackPanel>
                 </RadioButton>
+                <RadioButton x:Name="NavWatch" Style="{StaticResource NavButton}" GroupName="nav"
+                             Checked="Nav_Checked" Tag="watch">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="⏱" FontFamily="Segoe UI Emoji" FontSize="15" Width="26"
+                                   TextAlignment="Center" VerticalAlignment="Center" />
+                        <TextBlock x:Name="NavWatchLabel" Text="作家监控" VerticalAlignment="Center" />
+                    </StackPanel>
+                </RadioButton>
                 <RadioButton x:Name="NavTag" Style="{StaticResource NavButton}" GroupName="nav"
                              Checked="Nav_Checked" Tag="tag">
                     <StackPanel Orientation="Horizontal">

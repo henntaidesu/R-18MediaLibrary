@@ -2,8 +2,8 @@
     --bg: #1b1b1f; --surface: #26262b; --surface2: #2f2f36; --line: #3a3a42;
     --text: #e8e8ea; --muted: #9a9aa3; --accent: #6aa3ff; --accent-dim: #4a78c0;
     --radius: 10px; --nav-w: 210px;
-    /* 页面左右内边距（工具栏卡片封住空隙时要按它外扩），以及卡片与顶栏/内容之间的空隙 */
-    --pad: max(12px, env(safe-area-inset-left)); --bar-gap: 10px;
+    /* 页面左右内边距（页内工具栏铺满整行时要按它外扩） */
+    --pad: max(12px, env(safe-area-inset-left));
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
@@ -74,26 +74,20 @@
   .count { color: var(--muted); font-size: 13px; margin: 4px 2px 12px; }
   /* 没有计数的页（详情/搜索/下载/设置）整行不占位，否则空行的外边距会在页顶多垫出一截空白 */
   .count:empty { display: none; }
-  /* 页内工具栏：一张常驻页顶的悬浮卡片，不随内容滚走。
+  /* 页内工具栏：与媒体库顶栏（header）同一样式——铺满整行、只有下边框、固定在页顶，不随内容滚走。
+     左右各外扩 main 的内边距，贴到内容区两边；与顶栏之间不留缝（留缝滚动时内容会从缝里透出来）。
      top 不能写死：顶栏在窄屏会换行、详情页还会多出一排操作按钮，高度不固定；
-     且一页可能叠两条（搜索栏 + 选择条）——叠起来要拼成同一张卡，中间不留缝也不重复描边。
-     故由 syncStickyBars() 实测后逐条写入 top，并按所处位置标 bar-lead / stack-top|mid|bot。 */
+     且一页可能叠两条（搜索栏 + 选择条），故由 syncStickyBars() 实测后逐条写入 top，
+     并按所处位置标 bar-lead / stack-top|mid|bot。 */
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
              position: sticky; top: var(--topbar-h, 52px); z-index: 20;
-             background: var(--surface); border: 1px solid var(--line);
-             border-radius: var(--radius); box-shadow: 0 6px 16px rgba(0,0,0,.35);
-             margin: 0 0 var(--bar-gap); padding: 8px 10px; }
-  /* 叠起来的那几条：接缝处去掉圆角与上边框（用上一条的下边框当分隔线），首尾各圆一半 */
-  .toolbar.stack-top { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
-  .toolbar.stack-mid { border-radius: 0; border-top: none; margin-bottom: 0; }
-  .toolbar.stack-bot { border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; }
-  /* 投影只由整叠最下面那条投，否则段与段之间会叠出一道暗边 */
-  .toolbar.stack-top, .toolbar.stack-mid { box-shadow: none; }
-  /* 卡片与顶栏之间留一道空隙（悬浮观感）；空隙要用页面底色封住，否则滚动时内容会从缝里透出来。
-     左右各外扩 main 的内边距，把整行封严。 */
-  .toolbar.bar-lead::before { content: ''; position: absolute; bottom: calc(100% + 1px);
-                              left: calc(-1 * var(--pad)); right: calc(-1 * var(--pad));
-                              height: var(--bar-gap); background: var(--bg); }
+             background: rgba(27,27,31,.96); backdrop-filter: blur(8px);
+             border-bottom: 1px solid var(--line);
+             margin: 0 calc(-1 * var(--pad)) 12px; padding: 8px var(--pad); }
+  /* 叠起来的那几条之间不留外边距，上一条的下边框即分隔线 */
+  .toolbar.stack-top, .toolbar.stack-mid { margin-bottom: 0; }
+  /* 页面最上面那条（上方没有顶栏、也没有计数行）吃掉 main 的上内边距，贴住页顶，与媒体库顶栏位置一致 */
+  main:has(> .count:empty) .toolbar.bar-lead { margin-top: -12px; }
   /* 分区内部的行内工具栏（系统设置的「媒体库」分区）不是页面顶栏，不参与顶置 */
   .toolbar.inline { position: static; background: none; border: none; box-shadow: none;
                     border-radius: 0; margin: 0 0 12px; padding: 0; }
@@ -206,6 +200,14 @@
   @media (max-width: 720px) { .dtop { grid-template-columns: minmax(0, 1fr); } }
   .gallery { min-width: 0; }
   .gallery img.main { width: 100%; max-width: 100%; border-radius: 8px; background: #15151a; cursor: zoom-in; display: block; }
+  /* 双列时图片不得高过右侧字段：contain:size 让 .gallery 不参与撑行高，行高只由 .fields 决定，
+     再拉伸到这一行的高度；主图在纵向 flex 里收缩（缩略图条不缩），按比例完整显示、靠左上对齐。
+     收缩后图框两侧会留空，故去掉占位底色。单列（≤720px）时字段在图下方，不受此限 */
+  @media (min-width: 721px) {
+    .dtop > .gallery { contain: size; align-self: stretch; display: flex; flex-direction: column; }
+    .dtop > .gallery img.main { flex: 0 1 auto; min-height: 0; object-fit: contain; object-position: left top; background: none; }
+    .dtop > .gallery .thumbs { flex: none; }
+  }
   /* FANBOX 的封面只是张封面（内容在页尾的图流里），点不开东西，就别给放大镜光标 */
   .gallery img.main.fbcover { cursor: default; }
   .thumbs { display: flex; gap: 6px; overflow-x: auto; margin-top: 8px; }
@@ -349,11 +351,20 @@
      （桌面端那一行是 DockPanel，空间不够时也是压缩这一格） */
   .frow > .grow { flex: 1 1 160px; min-width: 96px; }
   .frow input, .frow select { flex: none; }
-  /* 解压密码库：一个输入框一条密码，末行是「＋」新增（settings.js）。
-     .frow input 的 flex:none 要在这里翻回来，否则输入框会缩成内容宽 */
-  .pwlist { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-  .pwrow { display: flex; align-items: center; gap: 6px; width: 100%; }
-  .frow .pwrow input { flex: 1 1 auto; min-width: 0; }
+  /* 解压密码库：一条密码一张小卡片，宽度正好放下内容，排满换行；末尾圆形「＋」新增（settings.js）。
+     ✕ 悬停卡片才出现、骑在右上角；触屏没有悬停，故 (hover: none) 下常显 */
+  .pwlist { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 4px; }
+  .pwchip { position: relative; background: var(--surface2); border: 1px solid var(--line); border-radius: 8px;
+            padding: 6px 12px; font-size: 14px; line-height: 20px; white-space: nowrap; }
+  .pwchip:hover { border-color: var(--accent); }
+  .pwdel { position: absolute; top: -8px; right: -8px; width: 18px; height: 18px; padding: 0; border-radius: 50%;
+           border: none; background: #e5484d; color: #fff; font-size: 10px; line-height: 18px; text-align: center;
+           cursor: pointer; display: none; }
+  .pwchip:hover .pwdel { display: block; }
+  @media (hover: none) { .pwdel { display: block; } }
+  .pwadd { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 1px dashed var(--line);
+           background: var(--surface2); color: var(--muted); font-size: 16px; line-height: 30px; cursor: pointer; }
+  .pwadd:hover { border-color: var(--accent); color: var(--accent); }
   /* 密码库那一行：标签与控件顶对齐（桌面端 VerticalAlignment=Top） */
   .frow.top { align-items: flex-start; }
   .frow.top > label { padding-top: 9px; }
@@ -376,6 +387,18 @@
   .libcard .lh .ct { color: var(--muted); font-size: 12.5px; margin-right: auto; }
   .librow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .librow .fp { color: var(--muted); font-size: 13px; word-break: break-all; flex: 1; }
+  /* 媒体库设置弹框里的文件夹卡片：一个文件夹一张（编辑 / 移除），末尾同尺寸的虚线「+」卡片 */
+  .foldcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .foldcard { background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+              height: 104px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .foldcard .fc-path { flex: 1; min-height: 0; color: var(--text); font-size: 13px; word-break: break-all; overflow: hidden;
+                       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .foldcard .fc-acts { display: flex; justify-content: flex-end; gap: 6px; }
+  .foldcard.add { border-style: dashed; background: transparent; cursor: pointer; align-items: center; justify-content: center;
+                  color: var(--muted); }
+  .foldcard.add:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .foldcard.add .fc-plus { font-size: 28px; line-height: 1; }
+  .foldcard.add .fc-label { font-size: 12.5px; }
 
   /* 文件树（查看作品） */
   .tree { font-size: 14px; }

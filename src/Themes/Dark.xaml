@@ -372,17 +372,14 @@
         <Setter Property="Padding" Value="14,10" />
     </Style>
 
-    <!-- 页内工具栏卡片（对齐 Web 的 .toolbar）：搜索条 / 选择条 / 详情操作条这类常驻页顶的横条，
-         一律画成一张浮起的卡片——底色比页面亮一档 + 描边 + 圆角，与其下的内容拉开层次。
-         桌面端这些横条本就在滚动区之外（各页把它们放在 Grid 的第 0 行），天然不随内容滚走。
-         Web 那份 box-shadow 这里不照搬：WPF 给容器挂 Effect 会把整棵子树先画进一张位图，
-         ClearType 随之失效、条上的按钮文字会发虚，得不偿失。悬浮感由底色差与描边表达。 -->
+    <!-- 页内工具栏（对齐 Web 的 .toolbar）：搜索条 / 选择条 / 详情操作条这类常驻页顶的横条，
+         与媒体库顶栏同一样式——平铺、不做卡片，只用一道下边框与其下的内容分开。
+         桌面端这些横条本就在滚动区之外（各页把它们放在 Grid 的第 0 行），天然不随内容滚走。 -->
     <Style x:Key="ToolbarCard" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource CardBrush}" />
+        <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="10" />
-        <Setter Property="Padding" Value="10,8" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="Padding" Value="0,0,0,8" />
         <Setter Property="Margin" Value="0,0,0,10" />
     </Style>
 

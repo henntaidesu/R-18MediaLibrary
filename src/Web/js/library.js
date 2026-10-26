@@ -3,8 +3,13 @@ async function renderLibs() {
   $('title').textContent = '媒体库';
   const d = await api('/api/libs');
   curItems = d.libs.map(l => ({ ...l, _key: l.name.toLowerCase() }));
-  // 进入媒体库默认显示作品（libview），而非社团
-  drawGroups(curItems, l => ({ title: l.name, caption: `${l.works} 个作品 · ${l.folders} 个文件夹`, onClick: () => pushView('libview', { lib: l.name, mode: 'works' }) }), '个媒体库');
+  // 进入媒体库先显示什么由该库的「默认显示」决定（缺省作品）；右上角 ⚙ 打开该库的设置
+  drawGroups(curItems, l => ({
+    title: l.name, caption: `${l.works} 个作品 · ${l.folders} 个文件夹`,
+    onEdit: () => openLibSettings(l.name, () => { if (section === 'medialib' && stack.length === 1) render(); }),
+    editIcon: '⚙', editTitle: '媒体库设置',
+    onClick: () => pushView('libview', { lib: l.name, mode: l.view === 'makers' ? 'makers' : 'works' }),
+  }), '个媒体库');
 }
 
 // 媒体库内视图：默认平铺作品，带"显示作品/显示社团"就地切换（不算一级，便于手势返回）

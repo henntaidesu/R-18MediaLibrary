@@ -95,6 +95,7 @@ const SECTIONS = [
   { key: 'medialib', label: '媒体库', root: 'libs',     icon: '📚' },
   { key: 'download', label: '下载管理',                  icon: '⬇' },
   { key: 'search',   label: '作品搜索',                    icon: '🔍' },
+  { key: 'watch',    label: '作家监控',                    icon: '⏱' },
   { key: 'tag',      label: '作品标签', root: 'genres',   icon: '🏷' },
   { key: 'maker',    label: '作品社团', root: 'allmakers', icon: '🏢' },
   { key: 'type',     label: '作品形式', root: 'types',   icon: '🎬' },
@@ -209,14 +210,13 @@ function applyLayout() {
 window.addEventListener('resize', applyLayout);
 
 // ---------- 顶栏 + 页内工具栏常驻页顶 ----------
-// 顶栏高度不固定（窄屏换行、详情页多一排操作按钮），页内工具栏（一张悬浮卡片）又要正好停在它下面，
-// 所以只能实测：按文档顺序取当前可见的工具栏，逐条把 top 设成「顶栏高 + 空隙 + 之前各条高度之和」，
+// 顶栏高度不固定（窄屏换行、详情页多一排操作按钮），页内工具栏（与顶栏同样式的平铺横条）又要正好停在它下面，
+// 所以只能实测：按文档顺序取当前可见的工具栏，逐条把 top 设成「顶栏高 + 之前各条高度之和」，
 // 最后把总高写进 --bars-h 供表头一类的二级吸顶元素使用（已下载表的 .dt th）。
-// 一页可能叠两条（搜索栏 + 选择条），故再按位置打 stack-top/mid/bot，让整叠拼成同一张卡（样式见 app.css）。
+// 一页可能叠两条（搜索栏 + 选择条），故再按位置打 stack-top/mid/bot（样式见 app.css）。
 // 写入前先比对旧值：值没变就不写（class 同理），否则下面的 MutationObserver 会被自己的写入再次唤醒、来回打转。
 function syncStickyBars() {
   const root = document.documentElement, head = document.querySelector('header');
-  const gap = parseFloat(getComputedStyle(root).getPropertyValue('--bar-gap')) || 10;
   // 顶栏里一样东西都不显示时（搜索/下载页：标题为空、按钮全收起）整条藏掉，不留一道空白条。
   // 不能用 offsetParent 判断子元素是否可见：顶栏藏起来后子元素的 offsetParent 全是 null，会永远出不来。
   if (head) {
@@ -234,12 +234,11 @@ function syncStickyBars() {
   all.forEach(b => {
     const i = bars.indexOf(b);
     if (i < 0 && b.style.top) b.style.top = '';
-    setCls(b, 'bar-lead', i === 0);                                  // 只有最上面那条负责封住与顶栏之间的空隙
+    setCls(b, 'bar-lead', i === 0);                                  // 最上面那条贴住页顶（app.css）
     setCls(b, 'stack-top', i === 0 && bars.length > 1);
     setCls(b, 'stack-mid', i > 0 && i < bars.length - 1);
     setCls(b, 'stack-bot', i > 0 && i === bars.length - 1);
   });
-  if (bars.length) top += gap;   // 卡片与顶栏之间的空隙
   bars.forEach(bar => {
     const v = top + 'px';
     if (bar.style.top !== v) bar.style.top = v;
@@ -282,6 +281,7 @@ function selectSection(key, noRender) {
   if (s.root) { if (!noRender) render(); }
   else if (key === 'search') renderSearchArea();
   else if (key === 'download') renderDownloadArea();
+  else if (key === 'watch') renderWatchPage();
   else if (key === 'settings') renderSettings();
 }
 
@@ -292,7 +292,7 @@ function encodeHash() {
   const s = SECTIONS.find(x => x.key === section);
   if (section === 'search') return encodeSearchHash();       // 作品搜索把来源与查询词编进地址栏
   if (section === 'download') return encodeDlHash();         // 下载管理有两视图，走独立编码
-  if (!s || !s.root) return '#/' + section;             // 其它叶子分区（设置）
+  if (!s || !s.root) return '#/' + section;             // 其它叶子分区（作家监控 / 设置）
   const segs = stack.slice(1).map(e => {
     const ctx = { ...e.ctx }; delete ctx.nodes; delete ctx.open;   // nodes 文件树缓存过大、open 详情折叠态是运行时状态，均不入 URL
     const c = Object.keys(ctx).length ? '~' + encodeURIComponent(JSON.stringify(ctx)) : '';
@@ -454,10 +454,10 @@ function drawGroups(items, mapFn, unit) {
     const info = el('div', 'ginfo');
     info.append(el('div', 'gt', m.title), el('div', 'gc', m.caption));
     c.appendChild(info);
-    // 右上角改名按钮（只有社团卡给 onEdit）：别让点击冒泡成"进入该分组"
+    // 右上角按钮（社团卡 🖊 改显示名、媒体库卡 ⚙ 设置）：别让点击冒泡成"进入该分组"
     if (m.onEdit) {
-      const eb = el('button', 'gedit', '🖊');
-      eb.title = '自定义显示名称';
+      const eb = el('button', 'gedit', m.editIcon || '🖊');
+      eb.title = m.editTitle || '自定义显示名称';
       eb.onclick = (ev) => { ev.stopPropagation(); m.onEdit(); };
       c.appendChild(eb);
     }

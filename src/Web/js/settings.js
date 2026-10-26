@@ -1,4 +1,4 @@
-// settings.js —— 系统设置页 + 媒体库管理 + FANBOX 作家监控。
+// settings.js —— 系统设置页 + 媒体库管理。
 // ========== 设置 ==========
 async function renderSettings() {
   $('title').textContent = '系统设置';
@@ -26,35 +26,39 @@ async function renderSettings() {
     '自动下载', w(mkSelect(boolOpts, d.autoDownload ? 'True' : 'False', v => write('down_list', 'auto_download', v)), 120),
     '自动解压', w(mkSelect(boolOpts, d.autoUnzip ? 'True' : 'False', v => write('down_list', 'auto_unzip', v)), 120)));
   s.appendChild(frow(
-    '单文件线程数', w(mkInput(d.downProc, v => write('down_list', 'download_processes', v)), 80),
+    // 1~6 下拉（同桌面端）；库里存着更大的老值时显示 6，与服务端 Math.Clamp 的实际生效值一致
+    '单文件线程数', w(mkSelect([1, 2, 3, 4, 5, 6].map(n => [String(n), String(n)]),
+      String(Math.min(6, Math.max(1, parseInt(d.downProc, 10) || 1))),
+      v => write('down_list', 'download_processes', v)), 80),
     '最低速度 (KB/s)', w(mkInput(d.minSpeed, v => write('down_list', 'min_speed', v)), 80),
     '速度限制 (KB/s)', w(mkInput(d.speedLimit, v => write('down_list', 'speed_limit', v)), 80)));
-  // 解压密码库：一个输入框一个密码，末尾「＋」新增一条（同桌面端 SettingsPage 的密码行）。
-  // 存库仍是老格式（一行一个），故服务端与解压那边都不用动。
+  // 解压密码库：一个密码一张小卡片（宽度随内容），悬停时右上角出 ✕，删除要二次确认；
+  // 末尾圆形「＋」弹框新增一条。存库仍是老格式（一行一个），故服务端与解压那边都不用动。
   const pwList = (d.unzipPasswords || '').split('\n').map(v => v.trim()).filter(Boolean);
   const pwWrap = grow(el('div', 'pwlist'));
-  const savePw = () => write('unzip', 'passwords', pwList.map(v => v.trim()).filter(Boolean).join('\n'));
-  const renderPw = focusLast => {
+  const savePw = () => write('unzip', 'passwords', pwList.join('\n'));
+  const renderPw = () => {
     pwWrap.innerHTML = '';
     pwList.forEach((v, i) => {
-      const row = el('div', 'pwrow');
-      const inp = el('input'); inp.value = v; inp.placeholder = '密码';
-      inp.oninput = () => { pwList[i] = inp.value; };
-      inp.onchange = () => savePw();
-      const del = el('button', 'mini danger', '✕');
+      const chip = el('div', 'pwchip', v);
+      const del = el('button', 'pwdel', '✕');
       del.title = '删除这条密码';
-      del.onclick = () => { pwList.splice(i, 1); savePw(); renderPw(); };
-      row.append(inp, del);
-      pwWrap.appendChild(row);
+      del.onclick = async () => {
+        if (!await uiConfirm(`删除密码「${v}」？`, { okText: '删除', danger: true })) return;
+        pwList.splice(i, 1); savePw(); renderPw();
+      };
+      chip.appendChild(del);
+      pwWrap.appendChild(chip);
     });
-    const add = el('button', 'mini', '＋');
+    const add = el('button', 'pwadd', '＋');
     add.title = '添加一条密码';
-    add.onclick = () => { pwList.push(''); renderPw(true); };
+    add.onclick = async () => {
+      const v = ((await uiPrompt('输入解压密码', '', '添加密码')) || '').trim();
+      if (!v) return;
+      if (pwList.includes(v)) { uiAlert('这个密码已经在密码库里了'); return; }
+      pwList.push(v); savePw(); renderPw();
+    };
     pwWrap.appendChild(add);
-    if (focusLast) {
-      const boxes = pwWrap.querySelectorAll('.pwrow input');
-      if (boxes.length) boxes[boxes.length - 1].focus();
-    }
   };
   renderPw();
   s.appendChild(frowTop('解压密码库', pwWrap));
@@ -75,17 +79,39 @@ async function renderSettings() {
   // Debrid-Link（桌面端：API Key 与「测试」同一行）
   s = el('div', 'sec'); s.appendChild(el('h3', null, 'Debrid-Link 下载中转站'));
   // API Key 不回传明文：留空表示不修改；仅在填入新值时写入
-  const keyInput = grow(mkInput('', v => { if (v) write('debrid', 'api_key', v); }));
+  // 明文仍不随设置一起回传：已设置时框里先放一串占位圆点；点 👁 输入访问密码后才向服务端取明文显示。
+  // 占位值原样失焦不算修改，清空也不写库（留空 = 不修改）
+  const KEY_MASK = '••••••••••••';
+  const keyInput = grow(mkInput(d.debridKeySet ? KEY_MASK : '', v => { if (v && v !== KEY_MASK) write('debrid', 'api_key', v); }));
   keyInput.type = 'password';
-  keyInput.placeholder = d.debridKeySet ? '已设置（留空则不修改）' : '未设置';
+  keyInput.placeholder = '未设置';
+  keyInput.onfocus = () => { if (keyInput.value === KEY_MASK) keyInput.select(); };   // 直接输入即覆盖占位
+  const eyeBtn = el('button', 'icon-btn', '👁');
+  eyeBtn.title = '查看 API Key（需要访问密码）';
+  eyeBtn.hidden = !d.debridKeySet;
+  eyeBtn.onclick = async () => {
+    if (keyInput.type === 'text') { keyInput.type = 'password'; eyeBtn.textContent = '👁'; return; }   // 再点一次收起
+    if (keyInput.value === KEY_MASK) {
+      const ask = uiModal({ title: '查看 API Key', message: '请输入访问密码', input: true, cancelText: '取消' });
+      const f = document.querySelector('#modalBox .modal-input'); if (f) f.type = 'password';   // 弹框已同步建好，输入时不显示明文
+      const pw = await ask;
+      if (pw == null) return;
+      let r; try { r = await apiPost('/api/debridkey', { password: pw }); } catch (e) { return; }
+      if (!r.ok) { uiAlert(r.error || '密码错误'); return; }
+      keyInput.value = r.key;
+    }
+    keyInput.type = 'text'; eyeBtn.textContent = '🙈';
+  };
   const testBtn = el('button', 'icon-btn', '测试');
   const testRes = el('span', 'tres');
-  testBtn.onclick = async () => { testRes.textContent = '测试中…'; const r = await apiPost('/api/debridtest', { key: keyInput.value.trim() }); testRes.textContent = r.ok ? '✓ 有效' : '✗ 无效'; testRes.style.color = r.ok ? '#4ade80' : '#f87171'; };
-  s.appendChild(frow('API Key', keyInput, testBtn, testRes));
+  testBtn.onclick = async () => {
+    testRes.textContent = '测试中…';
+    const key = keyInput.value.trim();
+    const r = await apiPost('/api/debridtest', { key: key === KEY_MASK ? '' : key });   // 占位值 → 服务端用已存的 key 测
+    testRes.textContent = r.ok ? '✓ 有效' : '✗ 无效'; testRes.style.color = r.ok ? '#4ade80' : '#f87171';
+  };
+  s.appendChild(frow('API Key', keyInput, eyeBtn, testBtn, testRes));
   host.appendChild(s);
-
-  // FANBOX 作家监控（原先在 作品搜索 → FANBOX 的工具栏「⏱ 监控」里，现统一在设置页管）
-  await renderFanboxWatchSection(host);
 
   // 系统（桌面端：语言 + 日志级别 + 解压编码 同一行；「关闭按钮」为桌面独有项）
   s = el('div', 'sec'); s.appendChild(el('h3', null, '系统'));
@@ -157,127 +183,6 @@ function pollImageHost() {
   _imgHostPoll = setInterval(tick, 1500);
 }
 
-// ---------- FANBOX 作家监控（设置页内）----------
-// 数据在服务端的 fanbox_watch 表里，后台按各作家自己的间隔轮询 pawchive：
-// 发现比"添加监控那一刻"更新的投稿，就按该作家设定的媒体库自动入队下载。
-// 判"新"看的是投稿的发布时间而不是"本地有没有这篇"，所以手动删掉的作品不会被一次次下回来。
-// 添加监控的入口仍在 作品搜索 → FANBOX 的作家主页（「+ 监控作家」）——加监控本就要先选到作家。
-
-// 轮询间隔档位（分钟 → 文案）；服务端 FanboxWatchService.IntervalChoices 是同一组
-const FB_WATCH_INTERVALS = [
-  [30, '30 分钟'], [60, '1 小时'], [120, '2 小时'], [360, '6 小时'],
-  [720, '12 小时'], [1440, '24 小时'], [4320, '3 天'],
-];
-let _fbWatchPoll = null;
-
-async function renderFanboxWatchSection(host) {
-  const sec = el('div', 'sec'); sec.appendChild(el('h3', null, 'FANBOX 作家监控'));
-  const body = el('div'); sec.appendChild(body);
-  host.appendChild(sec);
-  await fbWatchRefresh(body);
-}
-
-async function fbWatchRefresh(body) {
-  let d;
-  try { d = await api('/api/fanbox/watches'); } catch (e) { return; }
-  if (!document.body.contains(body)) return;
-  body.innerHTML = '';
-
-  // 操作条：总开关 / 立即检查全部 / 新建监控时的默认间隔（版式同本页的媒体库分区）
-  const bar = el('div', 'toolbar inline');
-  const sw = el('button', 'icon-btn' + (d.enabled ? ' on' : ''), '自动监控：' + (d.enabled ? '开' : '关'));
-  sw.title = '关闭后仅停止后台自动轮询，「立即检查」仍可用';
-  sw.onclick = async () => { await apiPost('/api/fanbox/watch/config', { enabled: !d.enabled }); fbWatchRefresh(body); };
-  const checkAll = el('button', 'icon-btn', '立即检查全部');
-  checkAll.disabled = !d.watches.length;
-  checkAll.onclick = async () => { await apiPost('/api/fanbox/watch/check', {}); pollFbWatch(body); };
-  bar.append(sw, checkAll, el('span', 'ro', '默认间隔'),
-    fbIntervalSelect(d.interval, v => apiPost('/api/fanbox/watch/config', { interval: v })));
-  body.appendChild(bar);
-
-  const status = el('div', 'note'); status.id = 'fbWatchStatus';
-  status.textContent = d.busy ? '⏳ ' + (d.status || '正在检查…') : (d.summary || '');
-  body.appendChild(status);
-
-  if (!d.watches.length) {
-    body.appendChild(el('div', 'ro', '还没有监控任何作家。到「作品搜索 → FANBOX」搜到作家后进入作家主页，点「+ 监控作家」即可添加。'));
-    return;
-  }
-  d.watches.forEach(w => body.appendChild(fbWatchCard(w, body)));
-  if (d.busy) pollFbWatch(body);
-}
-
-// 一位作家一张卡（版式同媒体库管理的 .libcard）
-function fbWatchCard(w, body) {
-  const card = el('div', 'libcard');
-  const head = el('div', 'lh');
-  head.appendChild(el('span', 'nm', w.name));
-  const sub = [];
-  if (!w.enabled) sub.push('已暂停');
-  sub.push(w.lastCheck ? '上次检查 ' + w.lastCheck : '尚未检查过');
-  if (w.next) sub.push('下次 ' + w.next);
-  if (w.downloaded) sub.push(`累计自动下载 ${w.downloaded} 篇`);
-  head.appendChild(el('span', 'ct', sub.join(' · ')));
-
-  const now = el('button', 'mini', '立即检查');
-  now.onclick = async () => { await apiPost('/api/fanbox/watch/check', { id: w.id }); pollFbWatch(body); };
-  const toggle = el('button', 'mini', w.enabled ? '暂停' : '启用');
-  toggle.onclick = async () => { await apiPost('/api/fanbox/watch/update', { id: w.id, enabled: !w.enabled }); fbWatchRefresh(body); };
-  const open = el('button', 'mini', '打开主页');
-  open.onclick = () => fbGotoArtist(w.id, w.name);   // 跨分区跳到 作品搜索 → FANBOX 的作家主页
-  const del = el('button', 'mini danger', '删除');
-  del.onclick = async () => {
-    if (!await uiConfirm(`不再监控「${w.name}」？
-已经下载的作品不受影响。`, { danger: true })) return;
-    await apiPost('/api/fanbox/watch/update', { id: w.id, remove: true });
-    if (typeof fbArtist !== 'undefined' && fbArtist && fbArtist.id === w.id) { fbWatched = false; fbUpdateWatchBtn(); }
-    fbWatchRefresh(body);
-  };
-  head.append(now, toggle, open, del);
-  card.appendChild(head);
-
-  const row = el('div', 'librow');
-  row.appendChild(el('span', null, '轮询间隔'));
-  row.appendChild(fbIntervalSelect(w.interval, async v => {
-    await apiPost('/api/fanbox/watch/update', { id: w.id, interval: v });
-    fbWatchRefresh(body);
-  }));
-  row.appendChild(el('span', 'fp', w.lib ? `自动下载到媒体库「${w.lib}」` : '自动下载到缓存目录'));
-  card.appendChild(row);
-
-  if (w.lastResult) {
-    const res = el('div', 'librow');
-    res.appendChild(el('span', 'fp', '上次结果：' + w.lastResult));
-    card.appendChild(res);
-  }
-  return card;
-}
-
-function fbIntervalSelect(val, on) {
-  const s = el('select');
-  s.style.width = '110px';
-  const opts = FB_WATCH_INTERVALS.slice();
-  // 服务端存的值不在档位里（例如手工改过库）时补一档，免得下拉把它悄悄改掉
-  if (!opts.some(o => o[0] === val)) opts.unshift([val, val + ' 分钟']);
-  opts.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; s.appendChild(o); });
-  s.value = String(val);
-  s.onchange = () => on(parseInt(s.value, 10));
-  return s;
-}
-
-// 检查进行中时每 1.5s 刷新一次状态，检查结束即停并重绘（同扫描/图床迁移的做法）
-function pollFbWatch(body) {
-  if (_fbWatchPoll) { clearInterval(_fbWatchPoll); _fbWatchPoll = null; }
-  _fbWatchPoll = setInterval(async () => {
-    const box = $('fbWatchStatus');
-    if (!box || !document.body.contains(box)) { clearInterval(_fbWatchPoll); _fbWatchPoll = null; return; }
-    let s;
-    try { s = await api('/api/fanbox/watches'); } catch (e) { return; }
-    box.textContent = s.busy ? '⏳ ' + (s.status || '正在检查…') : (s.summary || '');
-    if (!s.busy) { clearInterval(_fbWatchPoll); _fbWatchPoll = null; fbWatchRefresh(body); }
-  }, 1500);
-}
-
 // ---------- 媒体库管理（设置页内）----------
 let _libScanPoll = null;
 async function renderMediaLibSection(host) {
@@ -307,6 +212,106 @@ async function renderMediaLibSection(host) {
   await refresh();
   pollScan();   // 进入设置页即拉一次扫描状态（可能有后台扫描在进行）
 }
+// 媒体库卡片右上角 ⚙：该库的全部设置（名称 / 默认显示 / 文件夹 / 扫描元数据 / 删除）集中在一个弹框里。
+// 二次确认与输入框借用同一个 #modal，所以每问一次都整框重画（reopen）；关掉后回调 onClose 刷新媒体库卡片。
+async function openLibSettings(name, onClose) {
+  let d; try { d = await api('/api/medialibs'); } catch (e) { return; }
+  const l = d.libs.find(x => x.name === name);
+  if (!l) { if (onClose) onClose(); return; }
+  const ov = $('modal'), box = $('modalBox');
+  box.innerHTML = ''; box.classList.add('pk-wide');
+  function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); close(); } }
+  const detach = () => { _modalCancel = null; box.classList.remove('pk-wide'); document.removeEventListener('keydown', onKey); };
+  const close = () => { detach(); ov.classList.remove('show'); if (onClose) onClose(); };
+  const reopen = n => openLibSettings(n, onClose);
+  // 弹二次确认/输入框前先让出 #modal，问完再回到本框
+  const sub = fn => { detach(); return fn(); };
+  const row = (label, ...kids) => { const r = el('div', 'frow'); r.appendChild(el('label', null, label)); kids.forEach(k => r.appendChild(k)); return r; };
+
+  box.appendChild(el('h3', null, '媒体库设置'));
+
+  const nameIn = el('input'); nameIn.value = l.name; nameIn.classList.add('grow');
+  nameIn.onchange = async () => {
+    const v = nameIn.value.trim();
+    if (!v || v === l.name) { nameIn.value = l.name; return; }
+    const r = await apiPost('/api/lib/update', { name: l.name, rename: v });
+    if (r.error) { await sub(() => uiAlert(r.error)); reopen(l.name); return; }
+    reopen(r.name);
+  };
+  box.appendChild(row('名称', nameIn));
+
+  const viewSel = el('select'); viewSel.style.width = '120px';
+  [['works', '作品'], ['makers', '社团']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; viewSel.appendChild(o); });
+  viewSel.value = l.view === 'makers' ? 'makers' : 'works';
+  viewSel.onchange = () => apiPost('/api/lib/update', { name: l.name, view: viewSel.value });
+  box.appendChild(row('默认显示', viewSel));
+
+  // 文件夹：一张卡片一个（编辑 / 移除），末尾同尺寸的「+」卡片添加（Web 只能手填本机路径，桌面端走系统选择框）
+  const folders = el('div', 'grow foldcards');
+  (l.folders || []).forEach(f => {
+    const fc = el('div', 'foldcard');
+    const ed = el('button', 'mini', '编辑');
+    const rm = el('button', 'mini danger', '移除');
+    ed.onclick = async () => {
+      const to = ((await sub(() => uiPrompt('', f, '编辑文件夹'))) || '').trim();
+      if (to && to !== f) {
+        const r = await apiPost('/api/lib/editfolder', { name: l.name, folder: f, to });
+        if (r.error) await uiAlert(r.error);
+      }
+      reopen(l.name);
+    };
+    rm.onclick = async () => { await apiPost('/api/lib/removefolder', { name: l.name, folder: f }); reopen(l.name); };
+    const acts = el('div', 'fc-acts'); acts.append(ed, rm);
+    const fp = el('div', 'fc-path', f); fp.title = f;
+    fc.append(fp, acts); folders.appendChild(fc);
+  });
+  const addF = el('div', 'foldcard add');
+  addF.append(el('div', 'fc-plus', '+'), el('div', 'fc-label', '添加文件夹'));
+  addF.onclick = async () => {
+    const folder = ((await sub(() => uiPrompt('文件夹路径（本机绝对路径，如 D:\\ASMR）：', '', '添加文件夹')))|| '').trim();
+    if (folder) {
+      const r = await apiPost('/api/lib/addfolder', { name: l.name, folder });
+      if (r.error) await uiAlert(r.error);
+    }
+    reopen(l.name);
+  };
+  folders.appendChild(addF);
+  const fRow = row('文件夹', folders); fRow.classList.add('top');
+  box.appendChild(fRow);
+
+  const scan = el('button', 'icon-btn', '扫描元数据');
+  const rescan = el('button', 'icon-btn', '重新扫描元数据');
+  scan.onclick = async () => { await apiPost('/api/lib/scan', { name: l.name, force: false }); pollScan(); };
+  rescan.onclick = async () => {
+    const ok = await sub(() => uiConfirm(`重新扫描"${l.name}"会强制重新抓取全部元数据，较慢。继续？`));
+    if (ok) await apiPost('/api/lib/scan', { name: l.name, force: true });
+    await reopen(l.name);
+    if (ok) pollScan();
+  };
+  box.appendChild(row('元数据', scan, rescan));
+  const status = el('div', 'note'); status.id = 'libScanStatus'; status.style.display = 'none';
+  box.appendChild(status);
+
+  const btns = el('div', 'modal-btns');
+  const del = el('button', 'icon-btn danger', '删除媒体库');
+  del.style.marginRight = 'auto';
+  del.onclick = async () => {
+    const ok = await sub(() => uiConfirm(`确定删除媒体库"${l.name}"吗？
+不会删除本地文件，已导入的作品记录保留。`, { danger: true }));
+    if (!ok) { reopen(l.name); return; }
+    await apiPost('/api/lib/delete', { name: l.name });
+    if (onClose) onClose();
+  };
+  const done = el('button', 'icon-btn primary', '关闭');
+  done.onclick = close;
+  btns.append(del, done); box.appendChild(btns);
+
+  _modalCancel = close;
+  document.addEventListener('keydown', onKey);
+  ov.classList.add('show');
+  pollScan();   // 可能有扫描正在进行
+}
+
 function libCard(l, refresh) {
   const card = el('div', 'libcard');
   const head = el('div', 'lh');

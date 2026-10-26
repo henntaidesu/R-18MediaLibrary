@@ -34,7 +34,14 @@
                     <!-- 线程 / 速度：Web 端 下载 分区内含此三项（settings.js），故并入「下载」而非独立分区 -->
                     <StackPanel Orientation="Horizontal" Margin="0,4">
                         <TextBlock x:Name="DownProcLabel" Text="单文件线程数" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="DownProcBox" Width="80" LostFocus="DownProcBox_LostFocus" />
+                        <ComboBox x:Name="DownProcBox" Width="80" SelectionChanged="DownProcBox_SelectionChanged">
+                            <ComboBoxItem Content="1" />
+                            <ComboBoxItem Content="2" />
+                            <ComboBoxItem Content="3" />
+                            <ComboBoxItem Content="4" />
+                            <ComboBoxItem Content="5" />
+                            <ComboBoxItem Content="6" />
+                        </ComboBox>
                         <TextBlock x:Name="MinSpeedLabel" Text="最低速度 (KB/s)" Style="{StaticResource FieldLabel}"
                                    MinWidth="0" Margin="24,0,12,0" />
                         <TextBox x:Name="MinSpeedBox" Width="80" LostFocus="MinSpeedBox_LostFocus" />
@@ -189,13 +196,6 @@
                                Style="{StaticResource CaptionText}"
                                Text="留空即匿名浏览：仍能搜索，但站点会把 R-18 作品从结果里滤掉。要看 R-18，请在浏览器登录 pixiv 后从 Cookie 里复制 PHPSESSID 填在这里。" />
                 </StackPanel>
-            </GroupBox>
-
-            <!-- FANBOX 作家监控（对齐 Web 设置页 renderFanboxWatchSection）：原先的入口是
-                 作品搜索工具栏的「⏱ 监控」，2026-09-22 起移到设置页；区块由 FanboxWatchSettings 在代码后台注入。
-                 添加监控仍在 作品搜索 → FANBOX 的作家主页（「+ 监控作家」） -->
-            <GroupBox x:Name="FanboxWatchGroup" Header="FANBOX 作家监控">
-                <ContentControl x:Name="FanboxWatchHost" />
             </GroupBox>
 
             <!-- 系统（顺序对齐 Web：系统在外部访问之前，settings.js）。关闭按钮为桌面独有项 -->
