@@ -99,19 +99,19 @@ public static class MediaLibraryService
         return null;
     }
 
-    // 作品文件夹名：DLsite 的 RJ 号，或 fanbox 的 FB+作品号、E-Hentai 的 EH+画廊号、
+    // 作品文件夹名：DLsite 的 RJ 号，或 fanbox 的 FB+作品号、Fantia 的 FT+投稿号、E-Hentai 的 EH+画廊号、
     // pixiv 的 PX+作品号（都以作品号命名，扫描才能认出来）
     private static readonly Regex RjPattern =
-        new(@"(?:RJ\d{6,}|FB\d+|EH\d+|PX\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        new(@"(?:RJ\d{6,}|FB\d+|FT\d+|EH\d+|PX\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
     /// 该作品的图片是否直接摊在作品目录里——没有 DLsite 那套 DataSource 子目录，也没有
-    /// description.txt 里的 [img:] 正文占位图。fanbox 投稿、E-Hentai 画廊与 pixiv 作品都是这样
+    /// description.txt 里的 [img:] 正文占位图。fanbox / Fantia 投稿、E-Hentai 画廊与 pixiv 作品都是这样
     /// （一篇/一本动辄上百张），详情页据此只挂封面一张、不翻目录，要看图走「查看作品」。
     /// </summary>
     public static bool IsFlatImageWork(string workId) =>
-        FanboxService.IsFanboxWorkId(workId) || EhentaiService.IsEhentaiWorkId(workId) ||
-        PixivService.IsPixivWorkId(workId);
+        FanboxService.IsFanboxWorkId(workId) || FanboxService.IsFantiaWorkId(workId) ||
+        EhentaiService.IsEhentaiWorkId(workId) || PixivService.IsPixivWorkId(workId);
 
     /// <summary>只读取目录下的全部一级文件夹，返回 {RJ号: 文件夹绝对路径}。</summary>
     public static Dictionary<string, string> ScanTopRjFolders(string root)
@@ -461,6 +461,14 @@ public static class MediaLibraryService
                 var fbOk = await FanboxService.BackfillFromPawchiveAsync(rj);
                 if (fbOk) filled++; else missed++;
                 progress?.Invoke(i + 1, rjList.Count, rj, fbOk);
+                continue;
+            }
+            // FT 作品同理，回 fantia.jp 取
+            if (FanboxService.IsFantiaWorkId(rj))
+            {
+                var ftOk = await FanboxService.BackfillFromFantiaAsync(rj);
+                if (ftOk) filled++; else missed++;
+                progress?.Invoke(i + 1, rjList.Count, rj, ftOk);
                 continue;
             }
             // E-Hentai / pixiv 同理不是 DLsite 作品，拿作品号去查 DL API 只会白发请求

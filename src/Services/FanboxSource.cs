@@ -15,7 +15,11 @@ namespace R18MediaLibrary.Services;
 /// 按 <c>account</c> 分流：null = pawchive，否则 = 官方站上用该账号（pixiv 用户号）访问，不各自写两套。
 /// 每个方法开头把账号设进 <see cref="SiteAccounts"/> 的上下文，往下的 FanboxOfficialApi 取 cookie 都认它。
 ///
-/// 两边寻址作家的键不同：pawchive 是 pixiv 用户号（纯数字），官方站是 creatorId（字符串）。
+/// Fantia（fantia.jp）也走这里：面板、卡片、详情、下载流程与 FANBOX 完全相同，只是数据取自 <see cref="FantiaApi"/>，
+/// 入库为 FT + 投稿号、works.source='fantia'（见 <see cref="FanboxService"/>）。account 写成 <c>ft:</c>（匿名）
+/// 或 <c>ft:&lt;Fantia 用户号&gt;</c>，即 <see cref="FantiaKey"/> 的返回值；其余（null / 纯用户号）仍是 FANBOX。
+///
+/// 两边寻址作家的键不同：pawchive 是 pixiv 用户号（纯数字），官方站是 creatorId（字符串），Fantia 是粉丝团号（纯数字）。
 /// 界面上一律把「当前来源下的作家键」当不透明字符串传来传去；入库时落 works.maker_id 的统一是
 /// <see cref="PawchiveArtist.MakerId"/>（pixiv 用户号），两边下到的同一位作家才归得到一起。
 /// </summary>
@@ -27,22 +31,56 @@ public static class FanboxSource
     /// <summary>官方站来源在下拉里的名字：「FANBOX（账号名）」。</summary>
     public static string OfficialLabel(SiteAccount a) => $"FANBOX（{a.DisplayName}）";
 
-    /// <summary>把这次调用的账号设进上下文（只在调用方的 async 方法里生效）。</summary>
-    private static void Use(string? account)
+    /// <summary>已登录的 Fantia 账号（每个在来源下拉里各占一项，另有一项匿名的「Fantia」）。</summary>
+    public static List<SiteAccount> FantiaAccounts => SiteAccounts.List(AccountService.Fantia);
+
+    public static string FantiaLabel(SiteAccount a) => $"Fantia（{a.DisplayName}）";
+
+    /// <summary>Fantia 来源的 account 键前缀。</summary>
+    public const string FantiaPrefix = "ft:";
+
+    /// <summary>Fantia 来源的 account 键：uid 为空 = 匿名。</summary>
+    public static string FantiaKey(string? uid) => FantiaPrefix + (uid ?? "");
+
+    public static bool IsFantia(string? account) => account?.StartsWith(FantiaPrefix, StringComparison.Ordinal) == true;
+
+    /// <summary>该来源留空查询能不能列出「我的」作家：FANBOX 官方站与登录了的 Fantia 可以，pawchive 与匿名 Fantia 不行。</summary>
+    public static bool ListsMine(string? account) => account != null && account != FantiaPrefix;
+
+    /// <summary>作家监控只走 pawchive。</summary>
+    public static bool CanWatch(string? account) => account == null;
+
+    /// <summary>作品的站点名（PawchivePost.Service / works.source）。</summary>
+    public static string ServiceOf(string? account) =>
+        IsFantia(account) ? FantiaApi.SourceName : PawchiveApi.FanboxService;
+
+    /// <summary>
+    /// 把这次调用的账号设进上下文（只在调用方的 async 方法里生效；同步调用方——如 Web 路由——在自己的作用域里生效）。
+    /// Fantia 的匿名键（<c>ft:</c>）明确设成匿名，免得落到第一个账号上。
+    /// </summary>
+    public static void Use(string? account)
     {
-        if (account != null)
+        if (IsFantia(account))
+            SiteAccounts.Use(AccountService.Fantia, account![FantiaPrefix.Length..]);
+        else if (account != null)
             SiteAccounts.Use(AccountService.Fanbox, account);
+        else
+            SiteAccounts.Use(AccountService.Fanbox, "");
     }
 
     /// <summary>作家键在当前来源下是否合法（用作 URL / SQL 参数前先校验）。</summary>
-    public static bool IsArtistKey(bool official, string id) =>
-        official ? FanboxOfficialApi.IsCreatorId(id) : id.Length is > 0 and <= 32 && id.All(char.IsAsciiDigit);
+    public static bool IsArtistKey(string? account, string id) =>
+        IsFantia(account) ? FantiaApi.IsId(id)
+        : account != null ? FanboxOfficialApi.IsCreatorId(id)
+        : id.Length is > 0 and <= 32 && id.All(char.IsAsciiDigit);
 
     /// <summary>搜作家。官方站关键字为空时列出「我赞助的 + 我关注的」作家。</summary>
     public static async Task<(List<PawchiveArtist> Artists, string? Error)> SearchArtistsAsync(
         string? account, string keyword)
     {
         Use(account);
+        if (IsFantia(account))
+            return await FantiaApi.SearchFanclubsAsync(keyword);
         if (account != null)
             return await FanboxOfficialApi.SearchCreatorsAsync(keyword);
         return (await PawchiveApi.SearchArtistsAsync(keyword), null);
@@ -51,6 +89,8 @@ public static class FanboxSource
     public static async Task<PawchiveArtist?> GetArtistAsync(string? account, string artistKey)
     {
         Use(account);
+        if (IsFantia(account))
+            return await FantiaApi.GetFanclubAsync(artistKey);
         return account != null
             ? await FanboxOfficialApi.GetCreatorAsync(artistKey)
             : await PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistKey);
@@ -61,6 +101,8 @@ public static class FanboxSource
         string? account, string artistKey, int offset)
     {
         Use(account);
+        if (IsFantia(account))
+            return await FantiaApi.GetPostsAsync(artistKey, offset);
         if (account != null)
             return await FanboxOfficialApi.GetPostsAsync(artistKey, offset);
         var posts = await PawchiveApi.GetPostsAsync(PawchiveApi.FanboxService, artistKey, offset);
@@ -73,6 +115,8 @@ public static class FanboxSource
         string? account, string artistKey, string postId)
     {
         Use(account);
+        if (IsFantia(account))
+            return await FantiaApi.GetPostAsync(postId);
         if (account != null)
             return await FanboxOfficialApi.GetPostAsync(postId);
         var post = await PawchiveApi.GetPostAsync(PawchiveApi.FanboxService, artistKey, postId);
@@ -91,6 +135,14 @@ public static class FanboxSource
         Use(account);
         var wanted = new HashSet<string>(ids);
         var picked = new List<PawchivePost>();
+        if (IsFantia(account))
+        {
+            // 列表里拿到的本就是完整详情，但入队要以服务端现取的为准（详情十分钟内有缓存，不会重复请求）
+            foreach (var id in ids)
+                if ((await FantiaApi.GetPostAsync(id)).Post is { } post)
+                    picked.Add(post);
+            return picked;
+        }
         if (account != null)
         {
             foreach (var id in ids)
@@ -125,9 +177,10 @@ public static class FanboxSource
     {
         Use(account);
         var makerId = artistKey;
-        if (account != null)
+        if (account != null && !IsFantia(account))
             makerId = (await FanboxOfficialApi.GetCreatorAsync(artistKey))?.MakerId ?? "";
-        return makerId.Length == 0 ? [] : await Task.Run(() => FanboxService.PostStates(makerId));
+        var service = ServiceOf(account);
+        return makerId.Length == 0 ? [] : await Task.Run(() => FanboxService.PostStates(service, makerId));
     }
 
     /// <summary>作品卡能不能选来下载：没入库、没在队列里，且确实有东西可下。</summary>
@@ -139,7 +192,8 @@ public static class FanboxSource
 
     /// <summary>站上图片代理（Web 端 /api/fanbox/image）只放行这几类地址。</summary>
     public static bool IsImageUrl(string url) =>
-        FanboxOfficialApi.IsOfficialUrl(url) || FanboxOfficialApi.IsPximgUrl(url) || IsPawchiveUrl(url);
+        FanboxOfficialApi.IsOfficialUrl(url) || FanboxOfficialApi.IsPximgUrl(url) || IsPawchiveUrl(url) ||
+        FantiaApi.IsFantiaUrl(url);
 
     private static bool IsPawchiveUrl(string url)
     {
@@ -157,6 +211,8 @@ public static class FanboxSource
     public static async Task<(byte[] Bytes, string ContentType)> GetImageAsync(string url, string? account = null)
     {
         Use(account);
+        if (FantiaApi.IsFantiaUrl(url))
+            return await FantiaApi.GetImageAsync(url);
         if (FanboxOfficialApi.IsOfficialUrl(url) || FanboxOfficialApi.IsPximgUrl(url))
             return await FanboxOfficialApi.GetImageAsync(url);
         using var client = Http.CreateClient(TimeSpan.FromSeconds(20), PawchiveApi.UserAgent);

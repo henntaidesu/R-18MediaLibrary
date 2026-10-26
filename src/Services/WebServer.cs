@@ -2376,6 +2376,9 @@ public static class WebServer
             GoogleDriveClient.QuotaError => "该文件的谷歌网盘下载配额已用尽，通常 24 小时后恢复",
             GoogleDriveClient.GoneError => "谷歌网盘文件已失效、被删除或未公开分享",
             GoogleDriveClient.FetchError => "连不上谷歌网盘（检查代理设置）",
+            FantiaApi.LoginError => "Fantia 未登录或登录已失效（请到「账号访问」登录后点「全部重新解析」）",
+            FantiaApi.LockedError => "当前 Fantia 账号看不到这个文件（未加入对应的支援档位）",
+            FantiaApi.FetchError => "连不上 fantia.jp（检查网络与代理设置）",
             DownloadEngine.RetryFailedError => "下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）",
             "floodDetected" => "请求过于频繁，请稍后再试",
             "badFileType" => "不支持的文件类型",
@@ -2395,6 +2398,9 @@ public static class WebServer
         GoogleDriveClient.QuotaError => "云盘限额",
         GoogleDriveClient.GoneError => "云盘文件失效",
         GoogleDriveClient.FetchError => "云盘连不上",
+        FantiaApi.LoginError => "需登录",
+        FantiaApi.LockedError => "档位不足",
+        FantiaApi.FetchError => "站点连不上",
         "hostUnsupported" or "notDebrid" or "hostNotValid" or "noServer" => "网盘不支持",
         "notFreeHost" or "hostNotFree" or "disabledHost" or "disabledServerHost" => "需会员",
         "badToken" => "Key 无效",
@@ -2879,15 +2885,22 @@ public static class WebServer
     // ---------- API：FANBOX（pawchive）----------
 
     /// <summary>
-    /// 请求针对 fanbox.cc 官方站的哪个账号（作品搜索里的「FANBOX（账号名）」来源）：查询串或请求体里
-    /// site=cc:&lt;pixiv 用户号&gt;（只写 cc 即第一个账号）。返回该账号的用户号；null = pawchive。
-    /// 账号不存在（已退出登录）时一律当 pawchive 处理——来源下拉里本来也不会再有这一项。
+    /// 请求针对哪个来源 / 账号（作品搜索里 FANBOX 面板的几个来源），查询串或请求体里的 site：
+    ///   空 → pawchive，返回 null；
+    ///   cc:&lt;pixiv 用户号&gt;（只写 cc 即第一个账号）→ fanbox.cc 官方站，返回该用户号；
+    ///   ft → Fantia 匿名，ft:&lt;Fantia 用户号&gt; → 用该账号访问 Fantia，返回 <see cref="FanboxSource.FantiaKey"/>。
+    /// 账号不存在（已退出登录）时 FANBOX 当 pawchive、Fantia 当匿名处理——来源下拉里本来也不会再有这一项。
     /// </summary>
     private static string? FanboxAccount(Request req)
     {
         var site = req.Query.GetValueOrDefault("site") ?? "";
         if (site.Length == 0 && req.Body.Length > 0)
             site = ReadStringField(req.Body, "site");
+        if (site == "ft" || site.StartsWith("ft:", StringComparison.Ordinal))
+        {
+            var ftUid = site.Length > 3 ? site[3..] : "";
+            return FanboxSource.FantiaKey(FanboxSource.FantiaAccounts.Any(a => a.UserId == ftUid) ? ftUid : "");
+        }
         if (site != "cc" && !site.StartsWith("cc:", StringComparison.Ordinal))
             return null;
         var accounts = FanboxSource.OfficialAccounts;
@@ -2904,7 +2917,7 @@ public static class WebServer
         var account = FanboxAccount(req);
         var official = account != null;
         var keyword = (req.Query.GetValueOrDefault("q") ?? "").Trim();
-        if (keyword.Length == 0 && !official)
+        if (keyword.Length == 0 && account == null)
         {
             WriteJson(stream, 200, new { artists = Array.Empty<object>() });
             return;
@@ -2919,7 +2932,7 @@ public static class WebServer
                 icon = a.IconUrl,
             }),
             error,
-            mine = official && keyword.Length == 0,
+            mine = FanboxSource.ListsMine(account) && keyword.Length == 0,
             cachedAt = official ? "" : PawchiveApi.CreatorsCachedAt?.ToString("yyyy-MM-dd HH:mm") ?? "",
         });
     }
@@ -2928,9 +2941,8 @@ public static class WebServer
     private static async Task ApiFanboxPostsAsync(NetworkStream stream, Request req)
     {
         var account = FanboxAccount(req);
-        var official = account != null;
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
-        if (!FanboxSource.IsArtistKey(official, artistId))
+        if (!FanboxSource.IsArtistKey(account, artistId))
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
@@ -2945,14 +2957,14 @@ public static class WebServer
         // 首页顺带带上作家信息，供标题与入队时落库使用
         object? artist = null;
         if (offset == 0 && await FanboxSource.GetArtistAsync(account, artistId) is { } a)
-            artist = new { id = a.Id, service = a.Service, name = a.Name, publicId = a.PublicId };
+            artist = new { id = a.Id, service = a.Service, name = a.Name, publicId = a.PublicId, icon = a.IconUrl };
 
         var states = await FanboxSource.PostStatesAsync(account, artistId);
         WriteJson(stream, 200, new
         {
             artist,
             // 作家主页的「+ 监控作家 / ✓ 已监控」按钮据此定文案（监控只走 pawchive，官方站来源不显示该按钮）
-            watched = !official && FanboxWatchService.IsWatched(artistId),
+            watched = FanboxSource.CanWatch(account) && FanboxWatchService.IsWatched(artistId),
             posts = posts.Select(p => new
             {
                 id = p.Id, title = p.Title, published = p.Published, tags = p.Tags,
@@ -2977,10 +2989,9 @@ public static class WebServer
     private static async Task ApiFanboxPostAsync(NetworkStream stream, Request req)
     {
         var account = FanboxAccount(req);
-        var official = account != null;
         var artistId = (req.Query.GetValueOrDefault("id") ?? "").Trim();
         var postId = (req.Query.GetValueOrDefault("post") ?? "").Trim();
-        if (!FanboxSource.IsArtistKey(official, artistId) || !IsPlainId(postId))
+        if (!FanboxSource.IsArtistKey(account, artistId) || !IsPlainId(postId))
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
@@ -3017,19 +3028,18 @@ public static class WebServer
     private static async Task ApiFanboxEnqueueAsync(NetworkStream stream, Request req)
     {
         var account = FanboxAccount(req);
-        var official = account != null;
         var artistId = ReadStringField(req.Body, "id").Trim();
         var wanted = ReadStringArray(req.Body, "posts").Where(IsPlainId).Distinct().ToList();
         var lib = ReadStringField(req.Body, "lib");
         var folder = ReadStringField(req.Body, "folder");
-        if (!FanboxSource.IsArtistKey(official, artistId) || wanted.Count == 0)
+        if (!FanboxSource.IsArtistKey(account, artistId) || wanted.Count == 0)
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
 
         var artist = await FanboxSource.GetArtistAsync(account, artistId)
-                     ?? new PawchiveArtist { Id = artistId, Service = PawchiveApi.FanboxService };
+                     ?? new PawchiveArtist { Id = artistId, Service = FanboxSource.ServiceOf(account) };
         var picked = await FanboxSource.ResolveForEnqueueAsync(account, artistId, wanted);
         if (picked.Count == 0)
         {
@@ -3037,8 +3047,8 @@ public static class WebServer
             return;
         }
 
-        // 记下是哪个账号入的队：下载官方站附件时用它的 cookie（pawchive 为匿名）
-        SiteAccounts.Use(AccountService.Fanbox, account ?? "");
+        // 记下是哪个账号入的队：下载官方站 / Fantia 附件时用它的 cookie（pawchive 与匿名 Fantia 为匿名）
+        FanboxSource.Use(account);
         var result = await FanboxService.EnqueuePostsAsync(
             artist, picked, folder.Length > 0 ? folder : null, lib.Length > 0 ? lib : null);
         if (!result.Ok)
@@ -3054,7 +3064,7 @@ public static class WebServer
 
     /// <summary>
     /// 站上图片（作家头像/未下载作品的缩略图）代理：浏览器直连站点会受跨域、防盗链与代理设置影响，
-    /// 统一由本服务按配置的代理取回。只放行 pawchive 域名及其子域、fanbox.cc 与 pximg.net。
+    /// 统一由本服务按配置的代理取回。只放行 pawchive 域名及其子域、fanbox.cc、pximg.net 与 fantia.jp。
     /// </summary>
     private static async Task ApiFanboxImageAsync(NetworkStream stream, Request req)
     {

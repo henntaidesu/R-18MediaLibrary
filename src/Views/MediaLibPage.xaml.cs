@@ -1513,8 +1513,9 @@ public partial class MediaLibPage : UserControl
         var isFanbox = FanboxService.IsFanboxWorkId(workId);
         var isEhentai = EhentaiService.IsEhentaiWorkId(workId);
         var isPixiv = PixivService.IsPixivWorkId(workId);
-        // fanbox / E-Hentai / pixiv 的 work_id 是内部键（FB/EH/PX + 站上的号），展示与跳转都用站上的号
-        var linkText = isFanbox ? FanboxService.PostIdOf(workId)
+        var isFantia = FanboxService.IsFantiaWorkId(workId);
+        // fanbox / Fantia / E-Hentai / pixiv 的 work_id 是内部键（FB/FT/EH/PX + 站上的号），展示与跳转都用站上的号
+        var linkText = isFanbox || isFantia ? FanboxService.PostIdOf(workId)
             : isEhentai ? EhentaiService.GidOf(workId)
             : isPixiv ? PixivService.IllustIdOf(workId)
             : workId;
@@ -1527,6 +1528,8 @@ public partial class MediaLibPage : UserControl
                 r[18] as string ?? "")
             : isPixiv
             ? PixivApi.ArtworkUrl(PixivService.IllustIdOf(workId))
+            : isFantia
+            ? FantiaApi.PostPageUrl(FanboxService.PostIdOf(workId))
             : $"https://www.dlsite.com/maniax/work/=/product_id/{workId}.html";
         var rjLink = new Hyperlink(new Run(linkText))
         {

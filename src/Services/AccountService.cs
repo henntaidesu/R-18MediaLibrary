@@ -10,7 +10,7 @@ namespace R18MediaLibrary.Services;
 public sealed record AccountInfo(string Site, string UserId, string Name, AccountKeeper.KeepStatus? Keep, bool CanKeep);
 
 /// <summary>
-/// 各站点的登录账号（一级导航「🔑 账号访问」，Web 与桌面共用）：FANBOX / pixiv / E-Hentai。
+/// 各站点的登录账号（一级导航「🔑 账号访问」，Web 与桌面共用）：FANBOX / Fantia / pixiv / E-Hentai。
 ///
 /// 账号只能经「在服务器上登录」（<see cref="LoginBrowser"/>）加进来：人在本机的内嵌浏览器里登录，程序取 cookie。
 /// 不提供手填 cookie，也不再有 E-Hentai 的账号密码代登（用户指定）。
@@ -22,11 +22,12 @@ public sealed record AccountInfo(string Site, string UserId, string Name, Accoun
 public static class AccountService
 {
     public const string Fanbox = "fanbox";
+    public const string Fantia = FantiaApi.SourceName;
     public const string Pixiv = "pixiv";
     public const string Ehentai = "ehentai";
 
     /// <summary>页面上的顺序。</summary>
-    public static readonly string[] Sites = [Fanbox, Pixiv, Ehentai];
+    public static readonly string[] Sites = [Fanbox, Fantia, Pixiv, Ehentai];
 
     /// <summary>账号增删、改名后触发（任意线程；界面要自行切回 UI 线程）。作品搜索的来源下拉据此重建。</summary>
     public static event Action? Changed;
@@ -34,6 +35,7 @@ public static class AccountService
     public static string Title(string site) => site switch
     {
         Fanbox => "FANBOX",
+        Fantia => "Fantia",
         Pixiv => "Pixiv",
         Ehentai => "E-Hentai",
         _ => site,
@@ -84,6 +86,13 @@ public static class AccountService
             case Fanbox:
             {
                 var (ok, n, message) = await FanboxOfficialApi.CheckLoginAsync();
+                name = n;
+                result = (ok, message);
+                break;
+            }
+            case Fantia:
+            {
+                var (ok, _, n, message) = await FantiaApi.CheckLoginAsync();
                 name = n;
                 result = (ok, message);
                 break;
@@ -144,6 +153,7 @@ public static class AccountService
         switch (site)
         {
             case Fanbox: FanboxOfficialApi.Invalidate(); break;
+            case Fantia: FantiaApi.Invalidate(); break;
             case Pixiv: PixivApi.Invalidate(); break;
             case Ehentai: EhentaiApi.Invalidate(); break;
         }

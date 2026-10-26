@@ -1,7 +1,8 @@
 // fanbox.js ——「作品搜索」分区里的 FANBOX 数据源：搜作家 → 作家主页选作品 → 批量/单篇下载。
-// 两个来源共用本模块：「FANBOX」走 pawchive 归档（匿名），「FANBOX（账号名）」直连 fanbox.cc 官方站
-// （「账号访问」里登录的每个账号一项）。两者面板、卡片、详情、下载完全相同，只是请求带不带 site=cc:<用户号>（fbSite）；
-// 官方站的作家键是 creatorId（字符串），pawchive 是纯数字作家号，前端一律当不透明字符串传。
+// 几个来源共用本模块：「FANBOX」走 pawchive 归档（匿名），「FANBOX（账号名）」直连 fanbox.cc 官方站
+// （「账号访问」里登录的每个账号一项），「Fantia」/「Fantia（账号名）」直连 fantia.jp（匿名 / 用该账号）。
+// 几者面板、卡片、详情、下载完全相同，只是请求带的 site 不同（fbSite：'' / 'cc:<用户号>' / 'ft' / 'ft:<用户号>'）；
+// 官方站的作家键是 creatorId（字符串），pawchive 是纯数字作家号，Fantia 是粉丝团号，前端一律当不透明字符串传。
 // 只做搜索与下载，不含媒体库浏览：已下载的 fanbox 作品落在磁盘的媒体库目录里，程序内不再单独建卡片视图。
 // 工具栏（来源下拉 + 输入框 + 查询）由 search.js 统一提供，本模块只负责两个结果面板：
 //   fbArtistPane 作家搜索结果（只有一个结果时直接进主页）
@@ -22,13 +23,14 @@ let fbDetailGen = 0;
 let fbGridScroll = 0;       // 进详情前作品网格的滚动位置，返回时恢复
 let fbPageIo = null;        // 详情页图流的懒加载观察器（滚到跟前才给图贴 src）
 let fbDetail = null;        // 当前详情页的作品 { id, state, locked }，工具栏「下载」据此定文案
-let fbSite = '';            // '' = pawchive，'cc:<用户号>' = 用该账号访问 fanbox.cc 官方站（由 search.js 切来源时经 fbSetSite 设定）
+let fbSite = '';            // '' = pawchive，'cc:<用户号>' = fanbox.cc 官方站，'ft' / 'ft:<用户号>' = Fantia（由 search.js 切来源时经 fbSetSite 设定）
 
 // 官方站的预览图只对有权限的账号开放：带上来源账号
-const fbImg = (url) => '/api/fanbox/image?url=' + enc(url) + (fbCc() ? '&site=' + enc(fbSite) : '');
+const fbImg = (url) => '/api/fanbox/image?url=' + enc(url) + (fbSite ? '&site=' + enc(fbSite) : '');
 const fbCc = () => fbSite.startsWith('cc');
+const fbFt = () => fbSite.startsWith('ft');
 
-// 切换 pawchive / 官方站：两边的作家键与结果互不通用，换站即清空面板与状态
+// 切换 pawchive / 官方站 / Fantia：几边的作家键与结果互不通用，换站即清空面板与状态
 function fbSetSite(site) {
   if (site === fbSite) return;
   fbSite = site;
@@ -136,8 +138,8 @@ function fbParseInput(raw) {
 // 由 search.js 的「查询」按钮 / 回车触发
 async function fbRunSearch() {
   const raw = ($('sId') && $('sId').value.trim()) || '';
-  // 官方站：留空查询 = 列出我赞助 / 关注的作家；作家链接与 creatorId 由服务端认，这里不拆
-  if (fbCc()) { await fbSearchArtists(raw); return; }
+  // 官方站 / Fantia：留空查询 = 列出我赞助 / 关注的作家；作家链接与作家号由服务端认，这里不拆
+  if (fbCc() || fbFt()) { await fbSearchArtists(raw); return; }
   if (!raw) return;
   const p = fbParseInput(raw);
   // 直接给出作家号（或粘链接）时跳过搜索，径直进主页
@@ -149,12 +151,12 @@ async function fbSearchArtists(kw) {
   const gen = ++fbGen;
   fbShowArtistPane();
   const box = $('fbArtistPane');
-  box.innerHTML = fbCc()
-    ? '<div class="empty"><span class="spin"></span> 正在查询 fanbox.cc…</div>'
+  box.innerHTML = fbCc() ? '<div class="empty"><span class="spin"></span> 正在查询 fanbox.cc…</div>'
+    : fbFt() ? '<div class="empty"><span class="spin"></span> 正在查询 fantia.jp…</div>'
     : '<div class="empty"><span class="spin"></span> 正在搜索作家…（首次搜索需下载站点作家索引，约 15MB）</div>';
   $('count').textContent = '';
   let d;
-  try { d = await api('/api/fanbox/artists?q=' + enc(kw) + (fbCc() ? '&site=' + enc(fbSite) : '')); } catch (e) { return; }
+  try { d = await api('/api/fanbox/artists?q=' + enc(kw) + (fbSite ? '&site=' + enc(fbSite) : '')); } catch (e) { return; }
   if (gen !== fbGen) return;
   const artists = d.artists || [];
   // 只有一个结果 → 直接进入该作家主页（免去多余一次点击）；「我赞助/关注的」列表例外，那是要挑的
@@ -165,7 +167,7 @@ async function fbSearchArtists(kw) {
     return;
   }
   $('count').textContent = d.mine
-    ? `我赞助 / 关注的作家 ${artists.length} 位`
+    ? (fbFt() ? `我关注的作者 ${artists.length} 位` : `我赞助 / 关注的作家 ${artists.length} 位`)
     : `搜索到 ${artists.length} 位作家` + (d.cachedAt ? `　索引更新于 ${d.cachedAt}` : '');
   const grid = el('div', 'grid cards');
   artists.forEach(a => grid.appendChild(fbMakeArtistCard(a)));
@@ -208,9 +210,9 @@ async function fbOpenArtist(artist, fromArtists) {
   const none = el('button', 'icon-btn', '清空'); none.onclick = () => fbSelectAll(false);
   const dl = el('button', 'icon-btn primary', '下载选中'); dl.id = 'fbDlBtn'; dl.onclick = fbDownloadSelected;
   // 监控这位作家：加进监控后按设定的间隔轮询，有新作品就自动下载
-  // 监控只走 pawchive（后台轮询不该拿着登录 cookie 反复敲官方站），官方站来源不给这颗按钮
+  // 监控只走 pawchive（后台轮询不该拿着登录 cookie 反复敲官方站），官方站与 Fantia 来源不给这颗按钮
   const watch = el('button', 'icon-btn'); watch.id = 'fbWatchToggle'; watch.onclick = fbToggleWatch;
-  if (fbCc()) watch.style.display = 'none';
+  if (fbSite) watch.style.display = 'none';
   selbar.append(info, watch, all, none, dl);
   box.appendChild(selbar);
   fbUpdateWatchBtn();
@@ -224,7 +226,7 @@ async function fbOpenArtist(artist, fromArtists) {
 async function fbFetchPosts(gen, offset) {
   const q = new URLSearchParams();
   q.set('id', fbArtist ? fbArtist.id : ''); q.set('service', 'fanbox'); q.set('o', offset);
-  if (fbCc()) q.set('site', fbSite);
+  if (fbSite) q.set('site', fbSite);
   let d;
   try { d = await api('/api/fanbox/posts?' + q); } catch (e) { return null; }
   if (gen !== fbGen) return null;
@@ -279,7 +281,7 @@ function fbMakePostCard(p) {
   // 作品本体在网盘上（站上只归档了一张封面图）：入队时会连网盘文件一起下
   if (p.drive) cov.appendChild(el('div', 'badge rj', '☁ 网盘'));
   if (done || busy) cov.appendChild(el('div', 'badge lib', done ? '已下载' : p.state));
-  // 官方站：当前账号的赞助档位看不到这篇
+  // 官方站 / Fantia：当前账号的赞助档位看不到这篇
   else if (p.locked) cov.appendChild(el('div', 'badge lib', '🔒 ' + (p.fee ? `¥${p.fee}` : '需赞助')));
   c.appendChild(cov);
 
@@ -392,7 +394,7 @@ async function fbOpenPost(post) {
 
   const q = new URLSearchParams();
   q.set('id', fbArtist ? fbArtist.id : ''); q.set('post', post.id); q.set('service', 'fanbox');
-  if (fbCc()) q.set('site', fbSite);
+  if (fbSite) q.set('site', fbSite);
   let d;
   try { d = await api('/api/fanbox/post?' + q); } catch (e) { return; }
   // 期间已返回列表或换了作家就丢弃本次结果

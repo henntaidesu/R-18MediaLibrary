@@ -30,6 +30,10 @@ public class FanboxEnqueueResult
 /// 作品号用 <see cref="WorkIdPrefix"/> + 站上的作品号（如 FB12506673），作品文件夹即以此命名——
 /// 不用标题命名，避免改标题/重名导致目录对不上，也让顶层扫描能认出它们。
 /// 下载队列复用 download_list（source='fanbox'，url 即直链），沿用同一套断点续传/限速/暂停设施。
+///
+/// Fantia（fantia.jp）的投稿也由这里入队与收尾：形态与 fanbox 投稿完全相同（作家 + 投稿 + 图片/附件），
+/// 只是作品号前缀为 <see cref="FantiaWorkIdPrefix"/>、works.source 为 'fantia'、形式为 FANTIA，
+/// 按 <see cref="PawchivePost.Service"/> 区分。
 /// </summary>
 public static class FanboxService
 {
@@ -45,16 +49,34 @@ public static class FanboxService
     /// <summary>作品目录内保存正文的文本文件名。</summary>
     public const string PostTextFile = "post.txt";
 
+    /// <summary>Fantia 投稿的作品号前缀：FT + 站上投稿号。</summary>
+    public const string FantiaWorkIdPrefix = "FT";
+
+    public const string FantiaWorkTypeName = "FANTIA";
+
     public static string WorkIdOf(string postId) => WorkIdPrefix + postId;
 
-    public static string PostIdOf(string workId) =>
-        workId.StartsWith(WorkIdPrefix, StringComparison.OrdinalIgnoreCase)
-            ? workId[WorkIdPrefix.Length..] : workId;
+    /// <summary>按站点取作品号（fanbox → FB + 投稿号，fantia → FT + 投稿号）。</summary>
+    public static string WorkIdOf(string service, string postId) =>
+        (service == FantiaApi.SourceName ? FantiaWorkIdPrefix : WorkIdPrefix) + postId;
 
-    public static bool IsFanboxWorkId(string workId) =>
-        workId.StartsWith(WorkIdPrefix, StringComparison.OrdinalIgnoreCase) &&
-        workId.Length > WorkIdPrefix.Length &&
-        workId[WorkIdPrefix.Length..].All(char.IsAsciiDigit);
+    public static string PostIdOf(string workId) =>
+        IsFanboxWorkId(workId) || IsFantiaWorkId(workId) ? workId[2..] : workId;
+
+    public static bool IsFanboxWorkId(string workId) => HasPrefixId(workId, WorkIdPrefix);
+
+    public static bool IsFantiaWorkId(string workId) => HasPrefixId(workId, FantiaWorkIdPrefix);
+
+    private static bool HasPrefixId(string workId, string prefix) =>
+        workId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+        workId.Length > prefix.Length &&
+        workId[prefix.Length..].All(char.IsAsciiDigit);
+
+    /// <summary>站点 → (works.source, works.work_type, 日志里的站名)。</summary>
+    private static (string Source, string WorkType, string Label) KindOf(string service) =>
+        service == FantiaApi.SourceName
+            ? (FantiaApi.SourceName, FantiaWorkTypeName, "Fantia")
+            : (SourceName, WorkTypeName, "fanbox");
 
     // ---------- 入队 ----------
 
@@ -78,12 +100,16 @@ public static class FanboxService
 
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.ffffff");
         int postCount = 0, fileCount = 0, skipped = 0;
-        // 调用方经 FanboxSource 设好的账号上下文（Task.Run 会带过来）
-        var account = SiteAccounts.ActiveUserId(AccountService.Fanbox);
+        // 一次入队只来自一个来源（一位作家），按投稿的站点定作品号前缀、来源与账号
+        var service = posts[0].Service;
+        var (source, workType, label) = KindOf(service);
+        // 调用方经 FanboxSource 设好的账号上下文（Task.Run 会带过来）；fanbox 与 Fantia 的账号各在各的站点名下
+        var account = SiteAccounts.ActiveUserId(
+            service == FantiaApi.SourceName ? AccountService.Fantia : AccountService.Fanbox);
 
         foreach (var post in posts)
         {
-            var workId = WorkIdOf(post.Id);
+            var workId = WorkIdOf(service, post.Id);
             if (IsBusy(workId))
             {
                 skipped++;
@@ -91,7 +117,7 @@ public static class FanboxService
             }
             // 正文里的谷歌网盘链接也算作品文件：作者常把本体（压缩包）放网盘、站上只归档一张封面图。
             // 共享文件夹要现拉一次目录展开成逐个文件，故放在 IsBusy 之后，免得为已入队的作品白跑一趟。
-            var driveFiles = ResolveDriveFiles(post);
+            var driveFiles = ResolveDriveFiles(post, workId);
             if (post.Files.Count == 0 && driveFiles.Count == 0)
             {
                 skipped++;
@@ -113,8 +139,8 @@ public static class FanboxService
                 "\"down_time\" = excluded.\"down_time\", " +
                 "\"folder\" = NULL, \"target\" = NULL, \"target_lib\" = NULL, \"cover\" = NULL",
                 ("@w", workId), ("@n", post.Title), ("@mi", artist.MakerId), ("@mn", artist.Name),
-                ("@t", WorkTypeName), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
-                ("@d", FormatPublished(post.Published)), ("@src", SourceName), ("@time", now));
+                ("@t", workType), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
+                ("@d", FormatPublished(post.Published)), ("@src", source), ("@time", now));
 
             SyncGenres(workId, post.Tags);
 
@@ -136,7 +162,7 @@ public static class FanboxService
                     "(\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\", \"source\", \"sub_path\", \"account\") " +
                     "VALUES (@uuid, @w, @url, '0', '0', '1', @src, @sub, @acct)",
                     ("@uuid", Guid.NewGuid().ToString()), ("@w", workId),
-                    ("@url", url), ("@src", SourceName), ("@sub", subPath), ("@acct", account));
+                    ("@url", url), ("@src", source), ("@sub", subPath), ("@acct", account));
                 fileCount++;
             }
 
@@ -165,10 +191,11 @@ public static class FanboxService
                 Error = skipped > 0 ? "选中的作品都已在库或已在下载队列中" : "选中的作品没有可下载的文件",
             };
 
-        Logger.Info($"fanbox {artist.Name} 已加入下载队列：{postCount} 篇作品 / {fileCount} 个文件");
+        Logger.Info($"{label} {artist.Name} 已加入下载队列：{postCount} 篇作品 / {fileCount} 个文件");
         DownloadEngine.Start();
         // 新作家：记下它的 FANBOX / pawchive 主页与 FANBOX 上的显示名（已有记录的作家不动）
-        MakerHomeService.Remember(artist);
+        if (service != FantiaApi.SourceName)
+            MakerHomeService.Remember(artist);
         return new FanboxEnqueueResult { PostCount = postCount, FileCount = fileCount, Skipped = skipped };
     }
 
@@ -192,14 +219,38 @@ public static class FanboxService
         if (post is null)
             return false;
         var artist = await PawchiveApi.GetArtistAsync(PawchiveApi.FanboxService, artistId);
+        ApplyBackfill(workId, post, artistId, artist?.Name ?? artistId);
+        Logger.Info($"{workId} 已从 pawchive 补全元数据：{post.Title}");
+        return true;
+    }
+
+    /// <summary>
+    /// 从 fantia.jp 补全一篇 Fantia 作品的元数据（扫描媒体库导回来的 FT 作品），返回是否成功。
+    /// 投稿详情里就带着粉丝团，不必像 pawchive 那样先反查作家。用默认（第一个）Fantia 账号访问。
+    /// </summary>
+    public static async Task<bool> BackfillFromFantiaAsync(string workId)
+    {
+        var (post, _) = await FantiaApi.GetPostAsync(PostIdOf(workId));
+        if (post is null || post.ArtistId.Length == 0)
+            return false;
+        var artist = await FantiaApi.GetFanclubAsync(post.ArtistId);
+        ApplyBackfill(workId, post, post.ArtistId, artist?.Name ?? post.ArtistId);
+        Logger.Info($"{workId} 已从 Fantia 补全元数据：{post.Title}");
+        return true;
+    }
+
+    /// <summary>补全元数据的落库部分（字段映射与入队时一致），并补写正文文件与封面。</summary>
+    private static void ApplyBackfill(string workId, PawchivePost post, string makerId, string makerName)
+    {
+        var (source, workType, _) = KindOf(post.Service);
 
         Db.Execute(
             "UPDATE \"works\" SET \"work_name\" = @n, \"maker_id\" = @mi, \"maker_name\" = @mn, " +
             "\"work_type\" = @t, \"intro_s\" = @s, \"genre\" = @g, \"sell_date\" = @d, " +
             "\"source\" = @src, \"meta_scanned\" = '1' WHERE \"work_id\" = @w",
-            ("@n", post.Title), ("@mi", artistId), ("@mn", artist?.Name ?? artistId),
-            ("@t", WorkTypeName), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
-            ("@d", FormatPublished(post.Published)), ("@src", SourceName), ("@w", workId));
+            ("@n", post.Title), ("@mi", makerId), ("@mn", makerName),
+            ("@t", workType), ("@s", post.Content), ("@g", string.Join(", ", post.Tags)),
+            ("@d", FormatPublished(post.Published)), ("@src", source), ("@w", workId));
         SyncGenres(workId, post.Tags);
 
         var rows = Db.Select(
@@ -213,8 +264,6 @@ public static class FanboxService
                 Db.Execute("UPDATE \"works\" SET \"cover\" = @c WHERE \"work_id\" = @w",
                     ("@c", found), ("@w", workId));
         }
-        Logger.Info($"{workId} 已从 pawchive 补全元数据：{post.Title}");
-        return true;
     }
 
     /// <summary>发布时间 ISO（2026-08-29T23:53:10）转成 DLsite 的「年月日」写法，两种来源才能混排。</summary>
@@ -256,7 +305,7 @@ public static class FanboxService
     /// 把投稿正文里的谷歌网盘链接摊成待下载文件表（网盘文件号 + 已知文件名，文件名未知时为空）。
     /// 共享文件夹会现拉一次目录展开成逐个文件；拉不到（未公开分享/已删除）就记一笔日志跳过。
     /// </summary>
-    private static List<(string FileId, string Name)> ResolveDriveFiles(PawchivePost post)
+    private static List<(string FileId, string Name)> ResolveDriveFiles(PawchivePost post, string workId)
     {
         var files = new List<(string, string)>();
         foreach (var link in GoogleDriveClient.LinksIn(post.Links))
@@ -269,10 +318,10 @@ public static class FanboxService
             var entries = GoogleDriveClient.ListFolderFilesAsync(link.Id).GetAwaiter().GetResult();
             if (entries.Count == 0)
             {
-                Logger.Warning($"fanbox {WorkIdOf(post.Id)} 的谷歌网盘文件夹取不到内容: {link.Url}");
+                Logger.Warning($"{workId} 的谷歌网盘文件夹取不到内容: {link.Url}");
                 continue;
             }
-            Logger.Info($"fanbox {WorkIdOf(post.Id)} 的谷歌网盘文件夹展开出 {entries.Count} 个文件");
+            Logger.Info($"{workId} 的谷歌网盘文件夹展开出 {entries.Count} 个文件");
             files.AddRange(entries.Select(e => (e.Id, e.Name)));
         }
         return files;
@@ -512,13 +561,13 @@ public static class FanboxService
 
     // ---------- 供搜索页用的查询 ----------
 
-    /// <summary>该作家下已入库或已在队列中的作品号集合（作家主页据此标记"已下载/下载中"）。</summary>
-    public static Dictionary<string, string> PostStates(string artistId)
+    /// <summary>该作家下已入库或已在队列中的作品号集合（作家主页据此标记"已下载/下载中"）；service 为 fanbox / fantia。</summary>
+    public static Dictionary<string, string> PostStates(string service, string artistId)
     {
         var map = new Dictionary<string, string>();
         var rows = Db.Select(
             "SELECT \"work_id\", \"state\" FROM \"works\" WHERE \"source\" = @src AND \"maker_id\" = @a",
-            ("@src", SourceName), ("@a", artistId));
+            ("@src", KindOf(service).Source), ("@a", artistId));
         foreach (var r in rows ?? [])
             map[PostIdOf(r[0] as string ?? "")] = r[1] as string ?? "";
         return map;
