@@ -253,6 +253,35 @@ public static class Db
                         PRIMARY KEY ("user_id")
                     );
 
+                    -- DLsite 社团监控：一个社团（RG 号）一行，按间隔重抓社团作品列表，
+                    -- 列表里出现了没见过的作品号就记进 dlsite_watch_works，再找下载源（asmr.one / AS 论坛）自动入队。
+                    CREATE TABLE IF NOT EXISTS "dlsite_watch" (
+                        "maker_id" text NOT NULL,
+                        "maker_name" text,
+                        "interval_min" integer,
+                        "enabled" text,
+                        "last_check" text,
+                        "target_lib" text,
+                        "target_folder" text,
+                        "last_result" text,
+                        "downloaded" integer,
+                        "add_time" text,
+                        PRIMARY KEY ("maker_id")
+                    );
+
+                    -- 社团监控见过的作品（判"新"用的是"这个作品号见没见过"，DLsite 社团页没有可比的水位线）。
+                    -- state：base = 添加监控时已有、不下；pending = 新作品，还在等论坛出资源（每轮重找，过期作废）；
+                    -- backfill = 添加时选了「全部下载」的已有作品（只找一次源）；queued = 已入队；
+                    -- done = 已在库 / 队列或被标不喜欢，无需处理；nosource = 一次没找到源的已有作品；expired = 等太久放弃。
+                    CREATE TABLE IF NOT EXISTS "dlsite_watch_works" (
+                        "maker_id" text NOT NULL,
+                        "work_id" text NOT NULL,
+                        "state" text,
+                        "first_seen" text,
+                        "last_try" text,
+                        PRIMARY KEY ("maker_id", "work_id")
+                    );
+
                     -- 外部访问（Web 端）的登录用户，由门户单点登录首次登录时建出来（Services/PortalSso）。
                     -- 认人只认 portal_sub（门户的用户 id）：用户名在门户里能改，跟着它走会把改过名的人
                     -- 认成另一个人。用户名只在首次绑定时用来匹配同名的已有用户。

@@ -34,8 +34,13 @@
                         Style="{StaticResource AccentButton}" Click="SearchButton_Click" Content="查询" />
                 <Button x:Name="BackButton" Grid.Column="3" Margin="8,0,0,0" Visibility="Collapsed"
                         Click="BackButton_Click" Content="← 返回结果" />
-                <Button x:Name="AutoDownloadButton" Grid.Column="4" Margin="8,0,0,0"
-                        Visibility="Collapsed" Click="AutoDownloadToggle_Click" Content="自动下载：关" />
+                <!-- 社团作品网格专属：自动下载开关 + 社团监控（目录列表不是社团，只显示前者） -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal">
+                    <Button x:Name="AutoDownloadButton" Margin="8,0,0,0"
+                            Visibility="Collapsed" Click="AutoDownloadToggle_Click" Content="自动下载：关" />
+                    <Button x:Name="DlsiteWatchButton" Margin="8,0,0,0"
+                            Visibility="Collapsed" Click="DlsiteWatch_Click" Content="+ 监控社团" />
+                </StackPanel>
                 <!-- FANBOX 详情页的「下载」：排在 查询 与 返回 之间（详情页自己不再另起一条操作条） -->
                 <Button x:Name="FanboxDownloadButton" Grid.Column="5" Margin="8,0,0,0"
                         Visibility="Collapsed" Style="{StaticResource AccentButton}"

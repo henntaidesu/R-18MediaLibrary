@@ -56,6 +56,12 @@ public partial class MainWindow : Window
                 NavSearch.IsChecked = true;
                 SearchPage.OpenPixivFavorites(uid);
             };
+            // DLsite 社团监控卡的「打开社团」：跨分区切到"作品搜索 → DLsite"并查这个社团的作品网格
+            page.OpenDlsiteMakerRequested += makerId =>
+            {
+                NavSearch.IsChecked = true;
+                SearchPage.OpenDlsiteMaker(makerId);
+            };
             return page;
         }
     }

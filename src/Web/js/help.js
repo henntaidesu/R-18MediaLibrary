@@ -6,7 +6,7 @@
 function helpTopic() {
   if (section === 'search') return { dlsite: '7', fanbox: '9', fanboxcc: '9', fantia: '9', ehentai: '10.1', pixiv: '10.2' }[srcKind(searchSrc)] || '7';
   if (section === 'download') return dlView === 'downloaded' ? '11.5' : '11';
-  if (section === 'watch') return watchTab === 'pixiv' ? '12.2' : '12';
+  if (section === 'watch') return { pixiv: '12.2', dlsite: '12.3' }[watchTab] || '12';
   if (section === 'accounts') return '13';
   if (section === 'settings') return '14';
   const st = stack.length ? stack[stack.length - 1] : null;

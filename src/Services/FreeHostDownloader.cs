@@ -292,6 +292,15 @@ public static class FreeHostDownloader
     /// <summary>页面说「到限额了」却没说还要等多久时，隔多久再看一次。</summary>
     private static readonly TimeSpan UnknownLimitDelay = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// 「每日下载上限」（rapidgator 连撞几次每小时限额后会升级成 daily downloads limit，同样不给剩余时间）
+    /// 要等的远不止半小时，隔 3 小时再看，免得每半小时开一次浏览器白撞。
+    /// </summary>
+    private static readonly TimeSpan DailyLimitDelay = TimeSpan.FromHours(3);
+
+    private static TimeSpan LimitDelay(string message) =>
+        message.Contains("daily", StringComparison.OrdinalIgnoreCase) ? DailyLimitDelay : UnknownLimitDelay;
+
     /// <summary>在不显示的浏览器里走一遍该链接的免费下载流程，换出直链（下载线程上同步调用，会阻塞到流程结束）。</summary>
     public static FreeResult Resolve(string url)
     {
@@ -371,7 +380,7 @@ public static class FreeHostDownloader
                     if (WaitFromText(message) is { } wait)
                         return new(null, DateTime.UtcNow + wait, null, message);
                     if (LimitText.IsMatch(message))
-                        return new(null, DateTime.UtcNow + UnknownLimitDelay, null, message);
+                        return new(null, DateTime.UtcNow + LimitDelay(message), null, message);
                 }
 
                 JsonElement state;
@@ -409,7 +418,8 @@ public static class FreeHostDownloader
                         var waitFor = seconds > 0 ? TimeSpan.FromSeconds(seconds + 60) : UnknownLimitDelay;
                         return new(null, DateTime.UtcNow + waitFor, null, Str(state, "msg"));
                     case "limit":
-                        return new(null, DateTime.UtcNow + UnknownLimitDelay, null, Str(state, "msg"));
+                        var limitMsg = Str(state, "msg");
+                        return new(null, DateTime.UtcNow + LimitDelay(limitMsg), null, limitMsg);
                     case "retry":
                         // XFS 的「Skipped countdown / Wrong captcha」：从文件页重新来一遍
                         if (++restarts > 3)

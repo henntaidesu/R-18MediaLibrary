@@ -62,6 +62,7 @@ public static class WebServer
     private static readonly SemaphoreSlim ResolveGate = new(1, 1);
 
     private static readonly Regex WorkIdRe = new(@"^(?:RJ|BJ|VJ)\d+$", RegexOptions.Compiled);
+    private static readonly Regex MakerIdRe = new(@"^RG\d+$", RegexOptions.Compiled);
 
     // download_list.status → (显示文本, 颜色)
     private static readonly Dictionary<string, (string Text, string Color)> StatusMap = new()
@@ -423,6 +424,11 @@ public static class WebServer
                 case "/api/pixiv/watch/update": ApiPixivWatchUpdate(stream, req); break;
                 case "/api/pixiv/watch/check": ApiPixivWatchCheck(stream, req); break;
                 case "/api/pixiv/watch/config": ApiPixivWatchConfig(stream, req); break;
+                case "/api/dlsite/watches": ApiDlsiteWatches(stream); break;
+                case "/api/dlsite/watch/add": await ApiDlsiteWatchAddAsync(stream, req); break;
+                case "/api/dlsite/watch/update": ApiDlsiteWatchUpdate(stream, req); break;
+                case "/api/dlsite/watch/check": ApiDlsiteWatchCheck(stream, req); break;
+                case "/api/dlsite/watch/config": ApiDlsiteWatchConfig(stream, req); break;
 
                 case "/api/eh/search": await ApiEhSearchAsync(stream, req); break;
                 case "/api/eh/gallery": await ApiEhGalleryAsync(stream, req); break;
@@ -1554,6 +1560,7 @@ public static class WebServer
                 disliked = disliked.Contains(w.WorkId),
             }),
             hasMore,
+            watched = DlsiteWatchService.IsWatched(id),   // 社团网格工具栏「+ 监控社团 / ✓ 已监控」据此定文案
         });
     }
 
@@ -1793,6 +1800,16 @@ public static class WebServer
             WriteJson(stream, 400, new { error = "番号格式错误（RJ/BJ/VJ + 数字）" });
             return;
         }
+        StartAutoDownload(id, lib, folder);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>
+    /// 自动下载的入队本体（Web「自动下载」与 <see cref="DlsiteWatchService"/> 共用）：
+    /// 立即以「搜索可用下载连接」占位入队，后台串行挑选 AS 论坛的最优源。
+    /// </summary>
+    internal static void StartAutoDownload(string id, string lib, string folder)
+    {
         // 占位分卷：状态 '5'，url 用每行唯一的占位哨兵（download_list 以 url 为主键，若留空则同时
         // 只能存在一条占位行——用户在某作品仍在搜索连接时再加别的作品会因主键冲突而被静默丢弃）。
         // DownloadEngine 只领取 '0' 行，故占位哨兵不会被误当作直链下载；FileNameOf 会把哨兵显示为空名。
@@ -1820,7 +1837,6 @@ public static class WebServer
                 ResolveGate.Release();
             }
         });
-        WriteJson(stream, 200, new { ok = true });
     }
 
     // 自动下载优先在前 5 个帖子里深挖 rapidgator；超过仍无 rapidgator 有效源才退用 katfile 等其它网盘
@@ -3362,6 +3378,95 @@ public static class WebServer
             AppConfig.PixivWatchPace = pace;
         if (AppConfig.PixivWatchEnabled)
             PixivWatchService.Kick();
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    // ---------- API：DLsite 社团监控 ----------
+
+    /// <summary>监控列表 + 全局开关/默认间隔 + 当前检查状态。</summary>
+    private static void ApiDlsiteWatches(NetworkStream stream)
+    {
+        var (busy, status) = DlsiteWatchService.State();
+        WriteJson(stream, 200, new
+        {
+            enabled = AppConfig.DlsiteWatchEnabled,
+            interval = AppConfig.DlsiteWatchInterval,
+            busy,
+            status,
+            summary = DlsiteWatchService.IdleSummary(),
+            watches = DlsiteWatchService.All().Select(w => new
+            {
+                id = w.MakerId, name = w.Display,
+                interval = w.IntervalMin, enabled = w.Enabled,
+                lastCheck = w.LastCheck, lastResult = w.LastResult,
+                downloaded = w.Downloaded, lib = w.TargetLib,
+                pending = DlsiteWatchService.PendingCount(w.MakerId),
+                next = DlsiteWatchService.NextCheckText(w),
+                icon = DlsiteMakerIcon.IconUrl(w.MakerId),   // ci-en 公开 CDN，浏览器直接取
+            }),
+        });
+    }
+
+    /// <summary>添加社团监控；backfill=true 时连该社团现有的作品一起（各找一次源）下。</summary>
+    private static async Task ApiDlsiteWatchAddAsync(NetworkStream stream, Request req)
+    {
+        var makerId = ReadStringField(req.Body, "id").Trim().ToUpperInvariant();
+        if (!MakerIdRe.IsMatch(makerId))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        var (ok, message) = await DlsiteWatchService.AddAsync(
+            makerId,
+            ReadIntField(req.Body, "interval"),
+            ReadBoolField(req.Body, "backfill"),
+            ReadStringField(req.Body, "lib"),
+            ReadStringField(req.Body, "folder"));
+        WriteJson(stream, 200, new { ok, message });
+    }
+
+    /// <summary>改间隔 / 暂停恢复 / 移除（remove=true 时其余字段忽略）。</summary>
+    private static void ApiDlsiteWatchUpdate(NetworkStream stream, Request req)
+    {
+        var makerId = ReadStringField(req.Body, "id").Trim().ToUpperInvariant();
+        if (!MakerIdRe.IsMatch(makerId))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        if (ReadBoolField(req.Body, "remove"))
+        {
+            DlsiteWatchService.Remove(makerId);
+            WriteJson(stream, 200, new { ok = true });
+            return;
+        }
+        if (ReadIntField(req.Body, "interval") is var interval and > 0)
+            DlsiteWatchService.SetInterval(makerId, interval);
+        if (ReadOptionalBoolField(req.Body, "enabled") is { } on)
+            DlsiteWatchService.SetEnabled(makerId, on);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>立即检查（id 为空 = 全部）；检查在后台跑，前端轮询 /api/dlsite/watches 看进度。</summary>
+    private static void ApiDlsiteWatchCheck(NetworkStream stream, Request req)
+    {
+        var makerId = ReadStringField(req.Body, "id").Trim().ToUpperInvariant();
+        if (makerId.Length == 0)
+            _ = DlsiteWatchService.CheckAllAsync();
+        else if (MakerIdRe.IsMatch(makerId))
+            _ = DlsiteWatchService.CheckNowAsync(makerId);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>全局开关 / 默认轮询间隔。</summary>
+    private static void ApiDlsiteWatchConfig(NetworkStream stream, Request req)
+    {
+        if (ReadOptionalBoolField(req.Body, "enabled") is { } on)
+            AppConfig.DlsiteWatchEnabled = on;
+        if (ReadIntField(req.Body, "interval") is var interval and > 0)
+            AppConfig.DlsiteWatchInterval = interval;
+        if (AppConfig.DlsiteWatchEnabled)
+            DlsiteWatchService.Kick();
         WriteJson(stream, 200, new { ok = true });
     }
 

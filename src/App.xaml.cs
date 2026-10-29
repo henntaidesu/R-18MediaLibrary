@@ -28,6 +28,8 @@ public partial class App : Application
         FanboxWatchService.Start();
         // Pixiv 收藏监控的轮询线程：到点就去看各账号有没有新收藏，有就慢速入队下载
         PixivWatchService.Start();
+        // DLsite 社团监控的轮询线程：到点就重抓社团作品列表，有新作品就找下载源自动入队
+        DlsiteWatchService.Start();
         // 账号 cookie 自动维护：定时检测已登录的站点，失效就从登录浏览器续上 / 用存着的账号密码重登
         AccountKeeper.Start();
     }
@@ -36,6 +38,7 @@ public partial class App : Application
     {
         FanboxWatchService.Stop();
         PixivWatchService.Stop();
+        DlsiteWatchService.Stop();
         AccountKeeper.Stop();
         ImageHostService.Stop();
         WebServer.Stop();

@@ -74,6 +74,9 @@ function renderSearchArea() {
   const autoAll = el('button', 'icon-btn', '自动下载：关'); autoAll.id = 'autoAllBtn'; autoAll.style.display = 'none';
   autoAll.title = '开启后自动检测网盘并加入下载，无需逐个点击';
   autoAll.onclick = () => toggleAutoAll(autoAll);
+  // 社团监控：仅社团（RG）网格显示（目录列表不是社团，无从监控）；列表与间隔在「作品监控 → DLsite」里管
+  const dlWatch = el('button', 'icon-btn'); dlWatch.id = 'dlWatchBtn'; dlWatch.style.display = 'none';
+  dlWatch.onclick = dlToggleWatch;
   const backList = el('button', 'icon-btn', '返回作品列表'); backList.id = 'backListBtn'; backList.style.display = 'none'; backList.onclick = goBackToMaker;
   // FANBOX 详情页的「下载」：常驻工具栏，排在 查询 与 返回 之间（详情页自己不再另起一条操作条）
   const fbDl = el('button', 'icon-btn primary', '下载'); fbDl.id = 'fbDlPostBtn'; fbDl.style.display = 'none';
@@ -87,7 +90,7 @@ function renderSearchArea() {
   pxDl.onclick = pxDownloadDetail;
   const pxBack = el('button', 'icon-btn', '返回'); pxBack.id = 'pxBackBtn'; pxBack.style.display = 'none'; pxBack.onclick = pxGoBackToList;
 
-  bar.append(src, inp, btn, autoAll, backList, fbDl, fbBack, ehBack, pxDl, pxBack, helpButton());   // ? 按当前来源打开对应章节
+  bar.append(src, inp, btn, autoAll, dlWatch, backList, fbDl, fbBack, ehBack, pxDl, pxBack, helpButton());   // ? 按当前来源打开对应章节
   host.appendChild(bar);
 
   // DLsite：社团网格与帖子列表分两个 pane（进帖子列表时只隐藏社团 pane，保留 DOM 与后台扫描，返回即缓存恢复）
@@ -134,6 +137,7 @@ function applySearchSource() {
   $('count').textContent = '';
   // 工具栏按钮按来源归位：先全部收起，再只恢复当前来源该有的
   const autoAll = $('autoAllBtn'); if (autoAll) autoAll.style.display = (dl && makerState) ? '' : 'none';
+  syncDlWatchBtn(dl && makerState && $('makerPane') && $('makerPane').style.display !== 'none');
   const backList = $('backListBtn'); if (backList) backList.style.display = 'none';
   const fbBack = $('fbBackBtn'); if (fbBack) fbBack.style.display = 'none';
   const fbDl = $('fbDlPostBtn'); if (fbDl) fbDl.style.display = 'none';
@@ -154,8 +158,8 @@ function runSearchAny() {
   if (srcKind(searchSrc) === 'pixiv') return pxRunSearch();
   return runSearch();
 }
-function showMakerPane() { $('makerPane').style.display = ''; $('workPane').style.display = 'none'; const b = $('backListBtn'); if (b) b.style.display = 'none'; const a = $('autoAllBtn'); if (a) a.style.display = makerState ? '' : 'none'; }
-function showWorkPane() { $('makerPane').style.display = 'none'; $('workPane').style.display = ''; const a = $('autoAllBtn'); if (a) a.style.display = 'none'; }
+function showMakerPane() { $('makerPane').style.display = ''; $('workPane').style.display = 'none'; const b = $('backListBtn'); if (b) b.style.display = 'none'; const a = $('autoAllBtn'); if (a) a.style.display = makerState ? '' : 'none'; syncDlWatchBtn(!!makerState); }
+function showWorkPane() { $('makerPane').style.display = 'none'; $('workPane').style.display = ''; const a = $('autoAllBtn'); if (a) a.style.display = 'none'; syncDlWatchBtn(false); }
 // 工具栏"返回作品列表/社团作品"按钮：仅从社团/目录列表点进作品时显示（无箭头）
 function updateBackListBtn() {
   const b = $('backListBtn'); if (!b) return;
@@ -331,7 +335,8 @@ async function runGridSearch(src) {
   const box = $('makerPane');
   box.innerHTML = '<div class="empty"><span class="spin"></span> 正在获取作品…</div>';
   if (makerState && makerState.io) makerState.io.disconnect();
-  makerState = { id: src.id || src.catalogUrl, catalogUrl: src.catalogUrl || null, page: 0, hasMore: true, loading: false, scanQueue: [], scanning: false, cards: {}, countText: '', autoAll: false, autoLib: '', autoFolder: '' };
+  makerState = { id: src.id || src.catalogUrl, catalogUrl: src.catalogUrl || null, page: 0, hasMore: true, loading: false, scanQueue: [], scanning: false, cards: {}, countText: '', autoAll: false, autoLib: '', autoFolder: '', watched: false };
+  syncDlWatchBtn(false);   // 先收起，等首页返回 watched 再按新社团的状态显示
   box.innerHTML = '';
   // 复位并显示工具栏内的"自动下载"总开关（本次网格默认关；开关本体在 renderSearch 的工具栏里）
   const autoAllBtn = $('autoAllBtn');
@@ -352,9 +357,10 @@ async function loadMakerPage() {
       : await api(`/api/maker?id=${enc(s.id)}&page=${s.page + 1}`);
   } catch (e) { s.loading = false; return; }
   if (d.error || !d.works || !d.works.length) {
-    if (s.page === 0) { const mp = $('makerPane'); mp.innerHTML = ''; mp.appendChild(el('div', 'empty', d.error || (s.catalogUrl ? '未找到作品' : '未找到该社团的作品'))); const a = $('autoAllBtn'); if (a) a.style.display = 'none'; }
+    if (s.page === 0) { const mp = $('makerPane'); mp.innerHTML = ''; mp.appendChild(el('div', 'empty', d.error || (s.catalogUrl ? '未找到作品' : '未找到该社团的作品'))); const a = $('autoAllBtn'); if (a) a.style.display = 'none'; syncDlWatchBtn(false); }
     s.hasMore = false; s.loading = false; if (s.io) s.io.disconnect(); return;
   }
+  if (s.page === 0) { s.watched = !!d.watched; syncDlWatchBtn(true); }
   s.page++; s.hasMore = d.hasMore;
   let hasDownloading = false;
   d.works.forEach(w => {
@@ -450,6 +456,67 @@ async function startMakerDownPoll() {
   }
   s.dlPolling = false;
 }
+// ---------- 社团监控（有新作品自动下载） ----------
+// 监控列表、轮询间隔与总开关都在一级导航「作品监控 → DLsite」（watch.js），这里只留社团网格工具栏上的
+// 「+ 监控社团 / ✓ 已监控」。数据在服务端的 dlsite_watch 表里：后台按间隔重抓社团作品列表，
+// 出现没见过的作品号就找下载源（asmr.one / AS 论坛）自动入队；论坛还没资源的新作品之后每轮再找。
+
+// show=false 一律收起；true 时只在当前网格是社团（不是目录列表）时显示
+function syncDlWatchBtn(show) {
+  const b = $('dlWatchBtn'); if (!b) return;
+  const s = makerState;
+  if (!show || !s || s.catalogUrl) { b.style.display = 'none'; return; }
+  b.style.display = '';
+  b.textContent = s.watched ? '✓ 已监控' : '+ 监控社团';
+  b.classList.toggle('on', !!s.watched);
+  b.title = s.watched ? '点击取消监控这个社团' : '添加后按设定的间隔轮询，这个社团发新作品时自动下载';
+}
+
+async function dlToggleWatch() {
+  const s = makerState; if (!s || s.catalogUrl) return;
+  const btn = $('dlWatchBtn');
+  if (s.watched) {
+    if (!await uiConfirm(`不再监控社团「${s.id}」？
+已经下载的作品不受影响。`, { danger: true })) return;
+    await apiPost('/api/dlsite/watch/update', { id: s.id, remove: true });
+    s.watched = false; syncDlWatchBtn(true);
+    return;
+  }
+  // 自动下载要有个落点：和手动下载一样先选媒体库，之后每次自动入队都往这里放
+  let lib = '', folder = '';
+  const t = await api('/api/downtargets');
+  if (t.libs && t.libs.length) {
+    const target = await pickTarget(t.libs, s.id);
+    if (!target) return;
+    lib = target.lib; folder = target.folder;
+  }
+  const how = await uiChoice({
+    title: '监控社团',
+    message: `监控社团「${s.id}」，发布新作品时自动查找下载源并下载。社团现有的作品要一并下载吗？`,
+    choices: [
+      { key: 'new', icon: '🆕', name: '只要新作品', sub: '从现在起，只下载今后新发布的作品；论坛暂时没有资源的会在之后每轮再找' },
+      { key: 'all', icon: '🗂', name: '全部下载', sub: '现有作品也逐个查找下载源并加入下载队列（已在库的跳过，数量多时要跑很久）' },
+    ],
+  });
+  if (!how) return;
+  if (btn) { btn.disabled = true; btn.textContent = '添加中…'; }
+  let r;
+  try { r = await apiPost('/api/dlsite/watch/add', { id: s.id, backfill: how === 'all', lib, folder }); }
+  finally { if (btn) btn.disabled = false; }
+  if (makerState !== s) return;
+  if (!r || !r.ok) { syncDlWatchBtn(true); await uiAlert((r && r.message) || '添加监控失败'); return; }
+  s.watched = true; syncDlWatchBtn(true);
+  await uiAlert(r.message);
+}
+
+// 作品监控页 DLsite 卡片的「打开社团」：跨分区切到 作品搜索 → DLsite，查这个社团的作品网格
+function dlGotoMaker(id) {
+  selectSection('search');
+  setSearchSource('dlsite');
+  const inp = $('sId'); if (inp) inp.value = id;
+  runSearchAny();
+}
+
 // AS·无 倒计时：命中 7 天缓存的作品在到期（可再扫）前显示剩余时间，卡片保持灰色
 let asCd = [];   // { badge, until }（until 为本地 epoch ms）
 let asCdTimer = null;

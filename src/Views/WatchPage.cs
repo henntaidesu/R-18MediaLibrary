@@ -19,6 +19,8 @@ namespace R18MediaLibrary.Views;
 ///   数据与轮询在 <see cref="FanboxWatchService"/>；添加监控的入口仍在 作品搜索 → Pawchive 的作家主页（「+ 监控作家」）。
 /// - Pixiv（收藏监控）：总开关 / 立即检查全部 / 默认间隔 / 入队间隔，其下每个已登录的 pixiv 账号一张卡，
 ///   未监控的卡上直接「开启监控」（可选获取历史收藏）。数据与轮询在 <see cref="PixivWatchService"/>。
+/// - DLsite（社团监控）：总开关 / 立即检查全部 / 默认间隔，其下一个社团一张小卡（立即检查 / 暂停 / 打开社团 / 删除）。
+///   数据与轮询在 <see cref="DlsiteWatchService"/>；添加监控的入口在 作品搜索 → DLsite 的社团作品网格（「+ 监控社团」）。
 /// 卡片是自适应网格里的小卡（对齐 Web 的 .wgrid / .wcard）。
 /// 纯代码构建、不带 XAML：见 CLAUDE.md「XAML 里不要引用本程序集的类型」。
 /// </summary>
@@ -26,6 +28,7 @@ public class WatchPage : UserControl
 {
     private const string TabFanbox = "fanbox";
     private const string TabPixiv = "pixiv";
+    private const string TabDlsite = "dlsite";
 
     /// <summary>Pixiv 批量入队间隔档位（秒），同 Web 的 PX_WATCH_PACES。</summary>
     private static readonly int[] PaceChoices = [1, 2, 3, 5, 10, 20, 30];
@@ -35,6 +38,9 @@ public class WatchPage : UserControl
 
     /// <summary>Pixiv 监控卡的「查看收藏」：请求宿主跨分区切到 作品搜索 → Pixiv（该账号）并列出收藏。</summary>
     public event Action<string>? OpenPixivFavoritesRequested;
+
+    /// <summary>DLsite 监控卡的「打开社团」：请求宿主跨分区切到 作品搜索 → DLsite 并查这个社团的作品。</summary>
+    public event Action<string>? OpenDlsiteMakerRequested;
 
     private string _tab = TabFanbox;
     private readonly Border _barCard;
@@ -102,17 +108,30 @@ public class WatchPage : UserControl
 
     private bool IsPixiv => _tab == TabPixiv;
 
-    private (bool Busy, string Status) CurrentState() =>
-        IsPixiv ? PixivWatchService.State() : FanboxWatchService.State();
+    private (bool Busy, string Status) CurrentState() => _tab switch
+    {
+        TabPixiv => PixivWatchService.State(),
+        TabDlsite => DlsiteWatchService.State(),
+        _ => FanboxWatchService.State(),
+    };
 
-    private string CurrentSummary() =>
-        IsPixiv ? PixivWatchService.IdleSummary() : FanboxWatchService.IdleSummary();
+    private string CurrentSummary() => _tab switch
+    {
+        TabPixiv => PixivWatchService.IdleSummary(),
+        TabDlsite => DlsiteWatchService.IdleSummary(),
+        _ => FanboxWatchService.IdleSummary(),
+    };
 
     /// <summary>重建工具栏与卡片（每次进页、切二级页、以及检查结束时调一次）。</summary>
     public void Refresh()
     {
         _filling = true;
-        _barCard.Child = IsPixiv ? BuildPixivBar() : BuildFanboxBar();
+        _barCard.Child = _tab switch
+        {
+            TabPixiv => BuildPixivBar(),
+            TabDlsite => BuildDlsiteBar(),
+            _ => BuildFanboxBar(),
+        };
         _filling = false;
 
         var (busy, status) = CurrentState();
@@ -124,6 +143,8 @@ public class WatchPage : UserControl
         _grid = null;
         if (IsPixiv)
             FillPixivCards();
+        else if (_tab == TabDlsite)
+            FillDlsiteCards();
         else
             FillFanboxCards();
 
@@ -139,7 +160,7 @@ public class WatchPage : UserControl
     private DockPanel WrapBar(StackPanel controls, string helpTopic)
     {
         var tabs = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 8, 0) };
-        foreach (var (key, label) in new[] { (TabFanbox, "Pawchive"), (TabPixiv, "Pixiv") })
+        foreach (var (key, label) in new[] { (TabFanbox, "Pawchive"), (TabPixiv, "Pixiv"), (TabDlsite, "DLsite") })
         {
             var b = new Button { Content = label, Margin = new Thickness(0, 0, 2, 0) };
             ApplyToggleState(b, _tab == key);
@@ -214,6 +235,21 @@ public class WatchPage : UserControl
         };
         bar.Children.Add(pace);
         return WrapBar(bar, "12.2");
+    }
+
+    private DockPanel BuildDlsiteBar()
+    {
+        var bar = new StackPanel { Orientation = Orientation.Horizontal };
+        bar.Children.Add(SwitchButton(AppConfig.DlsiteWatchEnabled, () =>
+        {
+            AppConfig.DlsiteWatchEnabled = !AppConfig.DlsiteWatchEnabled;
+            if (AppConfig.DlsiteWatchEnabled)
+                DlsiteWatchService.Kick();
+        }));
+        bar.Children.Add(CheckAllButton(DlsiteWatchService.All().Count > 0, () => DlsiteWatchService.CheckAllAsync()));
+        bar.Children.Add(Caption(I18n.Tr("默认间隔")));
+        bar.Children.Add(IntervalBox(AppConfig.DlsiteWatchInterval, m => AppConfig.DlsiteWatchInterval = m));
+        return WrapBar(bar, "12.3");
     }
 
     private Button SwitchButton(bool on, Action toggle)
@@ -300,6 +336,61 @@ public class WatchPage : UserControl
                 Refresh();
             }, true),
         ]);
+
+    // ---------- DLsite：社团监控 ----------
+
+    private void FillDlsiteCards()
+    {
+        var watches = DlsiteWatchService.All();
+        if (watches.Count == 0)
+        {
+            _cardsPanel.Children.Add(EmptyText(
+                I18n.Tr("还没有监控任何社团。到「作品搜索 → DLsite」输入社团号（RG）或社团链接，在社团作品网格上点「+ 监控社团」即可添加。")));
+            return;
+        }
+        foreach (var w in watches)
+            AddCard(BuildDlsiteCard(w));
+    }
+
+    /// <summary>一个社团一张小卡（对齐 Web dlWatchCard）；还在等论坛资源的新作品数接在上次结果后面。</summary>
+    private Border BuildDlsiteCard(DlsiteWatch w)
+    {
+        var pending = DlsiteWatchService.PendingCount(w.MakerId);
+        var result = (w.LastResult.Length > 0 ? w.LastResult : "—") +
+                     (pending > 0 ? I18n.Format(I18n.Tr("（待资源 {n} 件）"), ("n", pending)) : "");
+        return WatchCard(
+            DlsiteMakerIcon.IconUrl(w.MakerId), w.Display,
+            on: w.Enabled, state: w.Enabled ? I18n.Tr("监控中") : I18n.Tr("已暂停"),
+            new WatchInfo(w.LastCheck, DlsiteWatchService.NextCheckText(w), w.Downloaded, I18n.Tr("件"),
+                w.IntervalMin, w.TargetLib, result, minutes =>
+                {
+                    DlsiteWatchService.SetInterval(w.MakerId, minutes);
+                    Refresh();
+                }),
+            null,
+            [
+                (I18n.Tr("立即检查"), () =>
+                {
+                    _ = DlsiteWatchService.CheckNowAsync(w.MakerId);
+                    StartTimer();
+                }, false),
+                (w.Enabled ? I18n.Tr("暂停") : I18n.Tr("启用"), () =>
+                {
+                    DlsiteWatchService.SetEnabled(w.MakerId, !w.Enabled);
+                    Refresh();
+                }, false),
+                (I18n.Tr("打开社团"), () => OpenDlsiteMakerRequested?.Invoke(w.MakerId), false),
+                (I18n.Tr("删除"), () =>
+                {
+                    if (!InAppDialog.Confirm(this,
+                            I18n.Format(I18n.Tr("不再监控「{name}」？已经下载的作品不受影响。"), ("name", w.Display)),
+                            I18n.Tr("确认")))
+                        return;
+                    DlsiteWatchService.Remove(w.MakerId);
+                    Refresh();
+                }, true),
+            ]);
+    }
 
     // ---------- Pixiv：收藏监控 ----------
 
@@ -441,7 +532,8 @@ public class WatchPage : UserControl
             };
             DockPanel.SetDock(frame, Dock.Left);
             head.Children.Add(frame);
-            _ = LoadIconAsync(image, iconUrl);
+            if (iconUrl.Length > 0)
+                _ = LoadIconAsync(image, iconUrl);
         }
         var pill = new Border
         {
@@ -577,10 +669,14 @@ public class WatchPage : UserControl
         return m.Success ? m.Groups[1].Value + " " + m.Groups[2].Value : t;
     }
 
-    /// <summary>作家头像：pawchive 站上的图，必须带 <see cref="PawchiveApi.UserAgent"/>；解不出（如 WebP）就留空底。</summary>
+    /// <summary>
+    /// 头像：pawchive 站上的图必须带 <see cref="PawchiveApi.UserAgent"/>，ci-en（DLsite 社团）是公开 CDN、用默认 UA；
+    /// 解不出（如 WebP）就留空底。
+    /// </summary>
     private static async Task LoadIconAsync(Image target, string url)
     {
-        var bmp = await ThumbnailCache.LoadUrlAsync(url, 80, PawchiveApi.UserAgent);
+        var ua = url.Contains("ci-en", StringComparison.OrdinalIgnoreCase) ? null : PawchiveApi.UserAgent;
+        var bmp = await ThumbnailCache.LoadUrlAsync(url, 80, ua);
         if (bmp != null)
             target.Source = bmp;
     }

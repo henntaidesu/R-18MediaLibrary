@@ -1,5 +1,6 @@
 // watch.js —— 作品监控（一级导航「作品监控」，分区 key watch；2026-10-29 由「作家监控」改名）。
-// 页内二级导航按来源分开：Pawchive（作家监控）/ Pixiv（收藏监控），地址栏 #/watch、#/watch/pixiv。
+// 页内二级导航按来源分开：Pawchive（作家监控）/ Pixiv（收藏监控）/ DLsite（社团监控），
+// 地址栏 #/watch、#/watch/pixiv、#/watch/dlsite。
 // 原先是「系统设置 → FANBOX 作家监控」分区，2026-10-26 起独立成页。
 //
 // Pawchive：数据在服务端的 fanbox_watch 表里，后台按各作家自己的间隔轮询 pawchive：
@@ -10,6 +11,10 @@
 // Pixiv：数据在 pixiv_watch 表里，一个已登录的 pixiv 账号一张卡，在本页直接「开启监控」。
 // 判"新"看收藏号（随收藏先后递增），旧作新收藏也算新；开启时可选「获取历史收藏」，
 // 服务端按从旧到新分批慢速入队（两件之间歇「入队间隔」秒，429 时冷却 60 秒），中途停下下一轮接着来。
+//
+// DLsite：数据在 dlsite_watch 表里，后台按间隔重抓社团作品列表，出现没见过的作品号就找下载源
+// （asmr.one / AS 论坛）自动入队；论坛还没资源的新作品之后每轮再找，30 天仍无资源才放弃。
+// 添加监控的入口在 作品搜索 → DLsite 的社团作品网格（「+ 监控社团」）。
 
 // 轮询间隔档位（分钟 → 文案）；服务端 FanboxWatchService.IntervalChoices 是同一组
 const FB_WATCH_INTERVALS = [
@@ -18,10 +23,11 @@ const FB_WATCH_INTERVALS = [
 ];
 // Pixiv 批量入队时两件作品之间的间隔（秒）
 const PX_WATCH_PACES = [1, 2, 3, 5, 10, 20, 30];
-const WATCH_TABS = [['fanbox', 'Pawchive'], ['pixiv', 'Pixiv']];
-let watchTab = 'fanbox';   // fanbox | pixiv：二级导航当前页（切分区不重置，回来仍停在上次那页）
+const WATCH_TABS = [['fanbox', 'Pawchive'], ['pixiv', 'Pixiv'], ['dlsite', 'DLsite']];
+let watchTab = 'fanbox';   // fanbox | pixiv | dlsite：二级导航当前页（切分区不重置，回来仍停在上次那页）
 let _fbWatchPoll = null;
 let _pxWatchPoll = null;
+let _dlWatchPoll = null;
 
 async function renderWatchPage() {
   $('title').textContent = '';   // 同下载管理：页顶只留工具栏卡片，顶栏无内容时自动收起
@@ -33,7 +39,7 @@ async function renderWatchPage() {
 }
 
 function watchRefresh(body) {
-  return watchTab === 'pixiv' ? pxWatchRefresh(body) : fbWatchRefresh(body);
+  return watchTab === 'pixiv' ? pxWatchRefresh(body) : watchTab === 'dlsite' ? dlWatchRefresh(body) : fbWatchRefresh(body);
 }
 
 // 二级导航：放在工具栏最前（同作品搜索把来源下拉放在最前），切换只 replace 地址栏、不压历史层级
@@ -310,5 +316,75 @@ function pollPxWatch(body) {
     try { s = await api('/api/pixiv/watches'); } catch (e) { return; }
     box.textContent = s.busy ? '⏳ ' + (s.status || '正在检查…') : (s.summary || '');
     if (!s.busy) { clearInterval(_pxWatchPoll); _pxWatchPoll = null; pxWatchRefresh(body); }
+  }, 1500);
+}
+
+// ========== DLsite：社团监控 ==========
+
+async function dlWatchRefresh(body) {
+  let d;
+  try { d = await api('/api/dlsite/watches'); } catch (e) { return; }
+  if (body.isConnected === false && body.childNodes.length) return;
+  if (watchTab !== 'dlsite') return;
+  body.innerHTML = '';
+
+  const bar = el('div', 'toolbar');
+  const sw = el('button', 'icon-btn' + (d.enabled ? ' on' : ''), '自动监控：' + (d.enabled ? '开' : '关'));
+  sw.title = '关闭后仅停止后台自动轮询，「立即检查」仍可用';
+  sw.onclick = async () => { await apiPost('/api/dlsite/watch/config', { enabled: !d.enabled }); dlWatchRefresh(body); };
+  const checkAll = el('button', 'icon-btn', '立即检查全部');
+  checkAll.disabled = !d.watches.length;
+  checkAll.onclick = async () => { await apiPost('/api/dlsite/watch/check', {}); pollDlWatch(body); };
+  bar.append(watchTabs(body), sw, checkAll, el('span', 'ro', '默认间隔'),
+    fbIntervalSelect(d.interval, v => apiPost('/api/dlsite/watch/config', { interval: v })), helpButton('12.3'));
+  body.appendChild(bar);
+
+  const status = el('div', 'note'); status.id = 'dlWatchStatus';
+  status.textContent = d.busy ? '⏳ ' + (d.status || '正在检查…') : (d.summary || '');
+  body.appendChild(status);
+
+  if (!d.watches.length) {
+    body.appendChild(el('div', 'empty', '还没有监控任何社团。到「作品搜索 → DLsite」输入社团号（RG）或社团链接，在社团作品网格上点「+ 监控社团」即可添加。'));
+    return;
+  }
+  const grid = el('div', 'wgrid');
+  d.watches.forEach(w => grid.appendChild(dlWatchCard(w, body)));
+  body.appendChild(grid);
+  if (d.busy) pollDlWatch(body);
+}
+
+function dlWatchCard(w, body) {
+  const now = el('button', 'mini', '立即检查');
+  now.onclick = async () => { await apiPost('/api/dlsite/watch/check', { id: w.id }); pollDlWatch(body); };
+  const toggle = el('button', 'mini', w.enabled ? '暂停' : '启用');
+  toggle.onclick = async () => { await apiPost('/api/dlsite/watch/update', { id: w.id, enabled: !w.enabled }); dlWatchRefresh(body); };
+  const open = el('button', 'mini', '打开社团');
+  open.onclick = () => dlGotoMaker(w.id);   // 跨分区跳到 作品搜索 → DLsite 的社团作品网格
+  const del = el('button', 'mini danger', '删除');
+  del.onclick = async () => {
+    if (!await uiConfirm(`不再监控「${w.name}」？
+已经下载的作品不受影响。`, { danger: true })) return;
+    await apiPost('/api/dlsite/watch/update', { id: w.id, remove: true });
+    dlWatchRefresh(body);
+  };
+  // 还在等论坛出资源的新作品数接在结果后面（卡片只有这一行放得下）
+  const ww = { ...w, lastResult: (w.lastResult || '—') + (w.pending ? `（待资源 ${w.pending} 件）` : '') };
+  return watchCard({
+    icon: w.icon || '', avatar: true,
+    name: w.name, on: w.enabled, state: w.enabled ? '监控中' : '已暂停',
+    w: ww, unit: '件', actions: [now, toggle, open, del],
+    onInterval: async v => { await apiPost('/api/dlsite/watch/update', { id: w.id, interval: v }); dlWatchRefresh(body); },
+  });
+}
+
+function pollDlWatch(body) {
+  if (_dlWatchPoll) { clearInterval(_dlWatchPoll); _dlWatchPoll = null; }
+  _dlWatchPoll = setInterval(async () => {
+    const box = $('dlWatchStatus');
+    if (!box || !document.body.contains(box)) { clearInterval(_dlWatchPoll); _dlWatchPoll = null; return; }
+    let s;
+    try { s = await api('/api/dlsite/watches'); } catch (e) { return; }
+    box.textContent = s.busy ? '⏳ ' + (s.status || '正在检查…') : (s.summary || '');
+    if (!s.busy) { clearInterval(_dlWatchPoll); _dlWatchPoll = null; dlWatchRefresh(body); }
   }, 1500);
 }

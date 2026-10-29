@@ -432,6 +432,21 @@ public static class AppConfig
             Math.Clamp(value, 10, 7 * 24 * 60).ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    /// <summary>DLsite 社团监控的后台轮询总开关（关掉只停自动轮询，手动「立即检查」照常可用）。</summary>
+    public static bool DlsiteWatchEnabled
+    {
+        get => Read("dlsite_watch", "enabled", "True") != "False";
+        set => Write("dlsite_watch", "enabled", value ? "True" : "False");
+    }
+
+    /// <summary>新建社团监控时的默认轮询间隔（分钟）；已有监控各自存自己的间隔。</summary>
+    public static int DlsiteWatchInterval
+    {
+        get => Math.Clamp(ReadInt("dlsite_watch", "interval", 360), 10, 7 * 24 * 60);
+        set => Write("dlsite_watch", "interval",
+            Math.Clamp(value, 10, 7 * 24 * 60).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     /// <summary>Pixiv 收藏监控的后台轮询总开关（关掉只停自动轮询，手动「立即检查」照常可用）。</summary>
     public static bool PixivWatchEnabled
     {

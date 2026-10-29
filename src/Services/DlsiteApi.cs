@@ -144,7 +144,14 @@ public static class DlsiteApi
     /// 说明：DLsite 无公开的"社团作品"JSON 接口，这里抓取社团页 HTML 解析。
     /// 页面结构若改版需调整下面的 URL / 解析；逻辑集中在本方法便于维护。
     /// </summary>
-    public static async Task<(List<DlMakerWork> Works, bool HasMore)> GetMakerWorksAsync(string makerId, int page)
+    public static async Task<(List<DlMakerWork> Works, bool HasMore)> GetMakerWorksAsync(string makerId, int page) =>
+        await TryGetMakerWorksAsync(makerId, page) ?? ([], false);
+
+    /// <summary>
+    /// 同 <see cref="GetMakerWorksAsync"/>，但请求失败返回 null 而不是空列表——
+    /// 社团监控要分清「这页没作品」与「这页没取到」，后者若当成前者，没取到的作品下一轮会被误认成新作品。
+    /// </summary>
+    public static async Task<(List<DlMakerWork> Works, bool HasMore)?> TryGetMakerWorksAsync(string makerId, int page)
     {
         try
         {
@@ -159,7 +166,7 @@ public static class DlsiteApi
         catch (Exception e)
         {
             Logger.Error(e, "DLsite maker works");
-            return ([], false);
+            return null;
         }
     }
 

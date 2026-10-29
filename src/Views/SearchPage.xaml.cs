@@ -316,6 +316,7 @@ public partial class SearchPage : UserControl
     // 自动下载（社团/目录作品网格）：开启后 AS 扫描命中即自动检测网盘链接并加入下载，
     // 无需逐个点开。开启时弹窗选定一次媒体库，本次开启期间所有自动下载都进该库。
     private bool _autoDownload;
+    private bool _makerWatched;      // 当前社团是否已在 DLsite 社团监控里（工具栏「✓ 已监控」）
     private string? _autoDownFolder;
     private string? _autoDownLib;
     // 自动下载自主翻页单实例守卫：逐页推进（等当前页 AS 扫完再翻页），避免并发翻页循环
@@ -522,6 +523,7 @@ public partial class SearchPage : UserControl
         PixivHost.Visibility = Visibility.Collapsed;
         AsmrBanner.Visibility = Visibility.Collapsed;
         AutoDownloadButton.Visibility = Visibility.Collapsed;
+        DlsiteWatchButton.Visibility = Visibility.Collapsed;
         BackButton.Visibility = Visibility.Collapsed;
         FanboxBackButton.Visibility = Visibility.Collapsed;
         FanboxDownloadButton.Visibility = Visibility.Collapsed;
@@ -612,6 +614,7 @@ public partial class SearchPage : UserControl
         BackButton.Content = _catalogUrl != null ? I18n.Tr("返回作品列表") : I18n.Tr("返回社团作品");
         LoadingText.Text = I18n.Tr("正在查询…");
         AutoDownloadButton.Content = _autoDownload ? I18n.Tr("自动下载：开") : I18n.Tr("自动下载：关");
+        SyncDlsiteWatchButton(DlsiteWatchButton.Visibility == Visibility.Visible);
         InputBox.ToolTip = SourceHint(_source);
     }
 
@@ -703,6 +706,7 @@ public partial class SearchPage : UserControl
         AsmrBanner.Visibility = _asmrForCurrent ? Visibility.Visible : Visibility.Collapsed;
         // 自动下载按钮仅在社团/目录作品网格上有意义
         AutoDownloadButton.Visibility = Visibility.Collapsed;
+        DlsiteWatchButton.Visibility = Visibility.Collapsed;
     }
 
     private void ShowMakerPage()
@@ -713,6 +717,90 @@ public partial class SearchPage : UserControl
         BackButton.Visibility = Visibility.Collapsed;
         AsmrBanner.Visibility = Visibility.Collapsed;
         AutoDownloadButton.Visibility = Visibility.Visible;
+        SyncDlsiteWatchButton(true);
+    }
+
+    // ---------- 社团监控（有新作品自动下载）----------
+    // 监控列表、轮询间隔与总开关都在一级导航「作品监控 → DLsite」（WatchPage），这里只留社团网格工具栏上的
+    // 「+ 监控社团 / ✓ 已监控」（对齐 Web search.js 的 dlToggleWatch）。数据与轮询在 DlsiteWatchService。
+
+    /// <summary>show=false 一律收起；true 时只在当前网格是社团（不是目录列表）时显示。</summary>
+    private void SyncDlsiteWatchButton(bool show)
+    {
+        if (!show || _makerId == null)
+        {
+            DlsiteWatchButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        DlsiteWatchButton.Visibility = Visibility.Visible;
+        DlsiteWatchButton.Content = _makerWatched ? I18n.Tr("✓ 已监控") : I18n.Tr("+ 监控社团");
+        DlsiteWatchButton.ToolTip = _makerWatched
+            ? I18n.Tr("点击取消监控这个社团")
+            : I18n.Tr("添加后按设定的间隔轮询，这个社团发新作品时自动下载");
+        if (_makerWatched)
+            DlsiteWatchButton.Foreground = (Brush)FindResource("AccentLightBrush");
+        else
+            DlsiteWatchButton.ClearValue(Control.ForegroundProperty);
+    }
+
+    private async void DlsiteWatch_Click(object sender, RoutedEventArgs e)
+    {
+        if (_makerId is not { } makerId)
+            return;
+        if (_makerWatched)
+        {
+            if (!InAppDialog.Confirm(this,
+                    I18n.Format(I18n.Tr("不再监控社团「{name}」？已经下载的作品不受影响。"), ("name", makerId)),
+                    I18n.Tr("确认")))
+                return;
+            DlsiteWatchService.Remove(makerId);
+            _makerWatched = false;
+            SyncDlsiteWatchButton(true);
+            return;
+        }
+
+        // 自动下载要有个落点：和手动下载一样先选媒体库，之后每次自动入队都往这里放
+        string? folder = null, lib = null;
+        if (AppConfig.ReadMediaLibs().Count > 0)
+        {
+            var dialog = new DownTargetDialog();
+            if (!dialog.Show(this))
+                return;
+            folder = dialog.SelectedFolder;
+            lib = dialog.SelectedLib;
+        }
+        var choice = InAppDialog.Choose(this,
+            I18n.Format(I18n.Tr("监控社团「{name}」，发布新作品时自动查找下载源并下载。社团现有的作品要一并下载吗？"), ("name", makerId)) + "\n\n" +
+            I18n.Tr("「只要新作品」＝从现在起，只下载今后新发布的作品；论坛暂时没有资源的会在之后每轮再找") + "\n" +
+            I18n.Tr("「全部下载」＝现有作品也逐个查找下载源并加入下载队列（已在库的跳过，数量多时要跑很久）"),
+            I18n.Tr("监控社团"),
+            [I18n.Tr("只要新作品"), I18n.Tr("全部下载")], out _);
+        if (choice < 0)
+            return;
+
+        DlsiteWatchButton.IsEnabled = false;
+        DlsiteWatchButton.Content = I18n.Tr("添加中…");
+        var (ok, message) = await DlsiteWatchService.AddAsync(makerId, 0, choice == 1, lib, folder);
+        DlsiteWatchButton.IsEnabled = true;
+        if (_makerId != makerId)
+            return;   // 等待期间换了社团
+        _makerWatched = ok;
+        SyncDlsiteWatchButton(DlsiteWatchButton.Visibility == Visibility.Visible);
+        if (ok)
+            InAppDialog.Info(this, message, I18n.Tr("提示"));
+        else
+            InAppDialog.Warn(this, message, I18n.Tr("提示"));
+    }
+
+    /// <summary>
+    /// 作品监控 → DLsite 的「打开社团」：切到 DLsite 来源并查这个社团的作品网格（对齐 Web dlGotoMaker）。
+    /// </summary>
+    public async void OpenDlsiteMaker(string makerId)
+    {
+        if (_source != SourceDlsite)
+            SelectSource(SourceDlsite);
+        InputBox.Text = makerId;
+        await RunSearchAsync();
     }
 
     /// <summary>搜索入口：识别输入是作品号还是社团号，分流到对应流程。</summary>
@@ -969,6 +1057,7 @@ public partial class SearchPage : UserControl
         _makerWorks.Clear();
         _scanQueue.Clear();
         _makerId = makerId;
+        _makerWatched = DlsiteWatchService.IsWatched(makerId);
         _catalogUrl = null;
         _makerPage = 0;
         _makerHasMore = true;

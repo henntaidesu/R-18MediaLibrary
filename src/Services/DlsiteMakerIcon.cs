@@ -141,6 +141,22 @@ public static class DlsiteMakerIcon
         }
     }
 
+    /// <summary>
+    /// 单查一个社团（社团监控添加时用：被监控的社团未必已有作品入库，<see cref="Kick"/> 不会去查它）。
+    /// 查过的不再请求；查到与否都记一行，规则同 <see cref="Kick"/>。
+    /// </summary>
+    public static async Task EnsureAsync(string makerId)
+    {
+        if (makerId.Length == 0 || Map().ContainsKey(makerId))
+            return;
+        using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
+        var icon = await FetchAsync(client, makerId);
+        Db.Execute(
+            "INSERT OR REPLACE INTO \"maker_icon\" (\"maker_id\", \"icon_url\", \"up_time\") VALUES (@m, @u, @t)",
+            ("@m", makerId), ("@u", icon), ("@t", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
+        Invalidate();
+    }
+
     /// <summary>查一个社团的头像地址；没有 ci-en 账号（404）或解析不出来都返回空串。</summary>
     private static async Task<string> FetchAsync(HttpClient client, string makerId)
     {

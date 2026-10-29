@@ -329,7 +329,7 @@ function encodeHash() {
   const s = SECTIONS.find(x => x.key === section);
   if (section === 'search') return encodeSearchHash();       // 作品搜索把来源与查询词编进地址栏
   if (section === 'download') return encodeDlHash();         // 下载管理有两视图，走独立编码
-  if (section === 'watch') return watchTab === 'pixiv' ? '#/watch/pixiv' : '#/watch';   // 作品监控的二级导航
+  if (section === 'watch') return watchTab === 'fanbox' ? '#/watch' : '#/watch/' + watchTab;   // 作品监控的二级导航
   if (!s || !s.root) return '#/' + section;             // 其它叶子分区（账号访问 / 设置）
   const segs = stack.slice(1).map(e => {
     const ctx = { ...e.ctx }; delete ctx.nodes; delete ctx.open;   // nodes 文件树缓存过大、open 详情折叠态是运行时状态，均不入 URL
@@ -389,8 +389,8 @@ function parseHash() {
     return { key: s.key, root: false, dl };
   }
   if (s.key === 'watch') {
-    // parts[1]：pixiv（缺省 fanbox）
-    return { key: s.key, root: false, tab: parts[1] === 'pixiv' ? 'pixiv' : 'fanbox' };
+    // parts[1]：pixiv / dlsite（缺省 fanbox）
+    return { key: s.key, root: false, tab: ['pixiv', 'dlsite'].includes(parts[1]) ? parts[1] : 'fanbox' };
   }
   const stk = s.root ? [{ view: s.root, ctx: {} }] : [];
   for (let i = 1; i < parts.length; i++) {
