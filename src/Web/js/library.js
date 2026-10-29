@@ -9,7 +9,17 @@ async function renderLibs() {
     onEdit: () => openLibSettings(l.name, () => { if (section === 'medialib' && stack.length === 1) render(); }),
     editIcon: '⚙', editTitle: '媒体库设置',
     onClick: () => pushView('libview', { lib: l.name, mode: l.view === 'makers' ? 'makers' : 'works' }),
-  }), '个媒体库');
+  }), '个媒体库', { label: '新建媒体库', onClick: createLibFromHome });
+}
+// 网格末尾的虚线卡：建好后直接打开该库的设置弹框，好接着添加文件夹（新库还没有文件夹，进去也是空的）
+async function createLibFromHome() {
+  const name = ((await uiPrompt('媒体库名称：', '', '新建媒体库')) || '').trim();
+  if (!name) return;
+  const r = await apiPost('/api/lib/create', { name });
+  if (r.error) { await uiAlert(r.error); return; }
+  const back = () => { if (section === 'medialib' && stack.length === 1) render(); };
+  back();
+  openLibSettings(name, back);
 }
 
 // 媒体库内视图：默认平铺作品，带"显示作品/显示社团"就地切换（不算一级，便于手势返回）

@@ -77,9 +77,8 @@
             </Grid>
         </Border>
 
-        <!-- 计数行（Web .count：muted 13px，margin 4 2 12） -->
-        <TextBlock x:Name="CountLabel" Grid.Row="1" Margin="2,4,2,12" FontSize="13"
-                   Foreground="{StaticResource CaptionBrush}" />
+        <!-- 下载管理不显示计数行（对齐 Web）；Row 1 只留一点与表头的间距 -->
+        <Border Grid.Row="1" Height="8" />
 
         <!-- 表头：点击切换排序（列宽与行一致；左右各留单元格内距 10，右侧再让出滚动条宽） -->
         <Border Grid.Row="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
@@ -169,7 +168,7 @@
             </ListBox.ItemTemplate>
             <ListBox.ContextMenu>
                 <ContextMenu>
-                    <MenuItem x:Name="MarkMenuItem" Header="标记为已品悦" Click="MarkEnjoyed_Click" />
+                    <MenuItem x:Name="MarkMenuItem" Header="标记为下载完成" Click="MarkEnjoyed_Click" />
                 </ContextMenu>
             </ListBox.ContextMenu>
         </ListBox>

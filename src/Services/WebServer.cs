@@ -393,7 +393,6 @@ public static class WebServer
                 case "/api/resumework": ApiResumeWork(stream, req); break;
                 case "/api/deletework": ApiDeleteWork(stream, req); break;
                 case "/api/research": ApiResearch(stream, req); break;
-                case "/api/cleardone": ApiClearDone(stream); break;
                 case "/api/clearall": ApiClearAll(stream); break;
                 case "/api/clearnolink": ApiClearNoLink(stream); break;
                 case "/api/downloaded": ApiDownloaded(stream); break;
@@ -1974,6 +1973,7 @@ public static class WebServer
 
     private static void ApiDownloads(NetworkStream stream)
     {
+        DownloadListActions.ClearFinished();   // 已入库的作品自动移出下载列表（取代「清除已完成」）
         var rows = Db.Select(
             "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid");
         var order = new List<string>();
@@ -2092,7 +2092,6 @@ public static class WebServer
             engine = new { running = DownloadEngine.IsRunning, stopRequested = DownloadEngine.StopRequested },
             actions = new
             {
-                canClearDone = flags.HasDone,
                 canClearNoLink = flags.HasNoLink,
                 canClearAll = flags.HasRows,
                 canReparseAll = flags.CanReparse,
@@ -2541,13 +2540,7 @@ public static class WebServer
         WriteJson(stream, 200, new { ok = true });
     }
 
-    // 三个清理动作与桌面端下载页共用 DownloadListActions 的同一实现
-    private static void ApiClearDone(NetworkStream stream)
-    {
-        DownloadListActions.ClearDone();
-        WriteJson(stream, 200, new { ok = true });
-    }
-
+    // 清理动作与桌面端下载页共用 DownloadListActions 的同一实现
     private static void ApiClearAll(NetworkStream stream)
     {
         DownloadListActions.ClearAll();

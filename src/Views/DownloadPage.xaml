@@ -232,7 +232,9 @@
         </Grid.RowDefinitions>
 
         <!-- 顶栏：按钮集合与顺序对齐 Web 下载管理（js/download.js renderDownloadSection）：
-             已下载 · 清除已完成 · 清除无可用连接 · 清空列表 · 开始下载 · 全部重新解析 · 用量。
+             已下载 · 开始下载 · 全部重新解析 · 清除无可用连接 · 清空列表 · 用量
+             （视图切换 → 引擎控制 → 修复 → 清理由轻到重，破坏性最强的清空列表压在最后、红色 + 二次确认）。
+             没有「清除已完成」：已入库的作品由 DownloadListActions.ClearFinished 自动移出，到「已下载」里看。
              没有「刷新」：列表本就每秒自动刷新（_refreshTimer），同 Web 的每秒轮询。
              整条包进 ToolbarCard：与 Web 的 .toolbar 一样是一张常驻页顶的悬浮卡片 -->
         <Border Grid.Row="0" Style="{StaticResource ToolbarCard}">
@@ -251,18 +253,17 @@
                 <!-- "已下载"为本分区第二视图入口（对齐 Web 下载管理工具栏首位）；搜索已移到独立的"DLsite 搜索"导航 -->
                 <Button x:Name="ShowDownloadedButton"
                         Click="ShowDownloadedButton_Click" Content="已下载" />
-                <Button x:Name="ClearDoneButton" Grid.Column="1" Margin="8,0,0,0"
-                        Click="ClearDoneButton_Click" Content="清除已完成" />
-                <Button x:Name="ClearNoLinkButton" Grid.Column="2" Margin="8,0,0,0"
-                        Click="ClearNoLinkButton_Click" Content="清除无可用连接" />
-                <Button x:Name="ClearAllButton" Grid.Column="3" Margin="8,0,0,0"
-                        Click="ClearAllButton_Click" Content="清空列表" />
                 <!-- 开始/暂停：始终为蓝色主按钮，只切文案（对齐 Web 的 .icon-btn.primary） -->
-                <Button x:Name="StartButton" Grid.Column="4" Margin="8,0,0,0" MinWidth="100"
+                <Button x:Name="StartButton" Grid.Column="1" Margin="8,0,0,0" MinWidth="100"
                         Style="{StaticResource AccentButton}"
                         Click="StartButton_Click" Content="开始下载" />
-                <Button x:Name="ReparseAllButton" Grid.Column="5" Margin="8,0,0,0"
+                <Button x:Name="ReparseAllButton" Grid.Column="2" Margin="8,0,0,0"
                         Click="ReparseAllButton_Click" Content="全部重新解析" />
+                <Button x:Name="ClearNoLinkButton" Grid.Column="3" Margin="8,0,0,0"
+                        Click="ClearNoLinkButton_Click" Content="清除无可用连接" />
+                <Button x:Name="ClearAllButton" Grid.Column="4" Margin="8,0,0,0"
+                        Style="{StaticResource DangerButton}"
+                        Click="ClearAllButton_Click" Content="清空列表" />
                 <!-- debrid-link 使用量卡片（Web .usage-card）：靠右，surface2 底 + 描边 + 圆角 10，
                      上一行灰字说明、下一条 6px 紫色细条（.bar > i 的 #a78bfa）；点击看各网盘详情 -->
                 <Border Grid.Column="7" MinWidth="220" Background="{StaticResource ButtonBrush}"

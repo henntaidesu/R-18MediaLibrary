@@ -15,7 +15,7 @@ $('search').addEventListener('input', () => {
       return;
     }
     if (['works', 'favorites', 'filter', 'genreworks'].includes(v)) drawWorks(curItems);
-    else if (lastMap) drawGroups(curItems, lastMap, lastUnit);
+    else if (lastMap) drawGroups(curItems, lastMap, lastUnit, lastAdd);
   }, 200);
 });
 

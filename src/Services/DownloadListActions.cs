@@ -6,72 +6,63 @@ using R18MediaLibrary.Core;
 namespace R18MediaLibrary.Services;
 
 /// <summary>
-/// 下载列表工具栏的批量动作（清除已完成 / 清除无可用连接 / 清空列表 / 全部重新解析）与按钮可用性判定。
-/// 桌面端 <see cref="Views.DownloadPage"/> 与 Web 的 /api/cleardone|clearnolink|clearall|reparseall 共用这一份，
+/// 下载列表工具栏的批量动作（清除无可用连接 / 清空列表 / 全部重新解析）、已完成作品的自动移出与按钮可用性判定。
+/// 桌面端 <see cref="Views.DownloadPage"/> 与 Web 的 /api/clearnolink|clearall|reparseall 共用这一份，
 /// 两端按钮按同一规则灰显、点下去做同一件事（UI 以 Web 为基准，见 CLAUDE.md「UI 对齐基准」）。
 /// </summary>
 public static class DownloadListActions
 {
     /// <summary>工具栏按钮的可用性：由整张下载表的 (status, error) 算出。</summary>
     /// <param name="HasRows">列表非空 → 可「清空列表」。</param>
-    /// <param name="HasDone">有已终结分卷（已完成，或源站无此文件而跳过）→ 可「清除已完成」。</param>
     /// <param name="HasNoLink">有「无可用下载连接」占位 → 可「清除无可用连接」。</param>
     /// <param name="CanReparse">有解析失败或无可用连接的行 → 可「全部重新解析」。</param>
-    public readonly record struct Flags(bool HasRows, bool HasDone, bool HasNoLink, bool CanReparse);
+    public readonly record struct Flags(bool HasRows, bool HasNoLink, bool CanReparse);
 
     /// <summary>按下载表里出现过的 (status, error) 算按钮可用性（调用方已读出整表时直接复用，不再查库）。</summary>
     public static Flags FlagsOf(IEnumerable<(string Status, string? Error)> items)
     {
-        bool any = false, done = false, noLink = false, failed = false;
-        foreach (var (status, error) in items)
+        bool any = false, noLink = false, failed = false;
+        foreach (var (status, _) in items)
         {
             any = true;
-            if (status == "1") done = true;
-            else if (status == "6") noLink = true;
-            else if (status == "2")
-            {
-                failed = true;
-                // 「源站无此文件」('2' + skipped) 是已终结的跳过项，和已完成分卷一样归「清除已完成」管；
-                // 仍算可重新解析，源站日后补档时用户还能手动重试
-                if (DownloadEngine.IsSkipped(error)) done = true;
-            }
+            if (status == "6") noLink = true;
+            // 「源站无此文件」('2' + skipped) 也算可重新解析，源站日后补档时用户还能手动重试
+            else if (status == "2") failed = true;
         }
-        return new Flags(any, done, noLink, failed || noLink);
+        return new Flags(any, noLink, failed || noLink);
     }
 
+    private static long _lastSweep;
+
     /// <summary>
-    /// 清除已完成：按"已终结"清——下载完成（'1'）与源站根本没有该文件而被跳过（'2' + skipped）
-    /// 都不会再有任何变化。整篇都被跳过的作品（列表里显示「源站无文件」）因此同样被清掉，
-    /// 否则它既不是 '1' 也不是 '6'，两个清除按钮都够不着，只能一条条手动删。
-    /// 正在解压（待解压/解压中）的作品尚未真正结束，其分卷虽已终结也保留。
+    /// 已完成的作品自动移出下载列表（取代原「清除已完成」按钮）：作品已入媒体库（works.state = 已品悦），
+    /// 且它的每条下载行都已终结（完成 '1'，或源站无此文件被跳过）、也不在解压/入库收尾中，就删掉这些下载行——
+    /// 作品记录本身不动，之后在「已下载」里显示为「下载完成」。
+    /// 只认已品悦：入库失败（移动媒体库出错，停在已下载）的作品要靠下载行在下次启动时重试，不能清。
+    /// 两端的下载列表每秒刷新时调用；内部限流 3 秒一次，免得每次轮询都扫表。
     /// </summary>
-    public static void ClearDone()
+    public static void ClearFinished()
     {
-        var args = new List<(string, object?)> { ("@sk", DownloadEngine.SkippedError) };
-        var where = "(\"status\" = '1' OR (\"status\" = '2' AND IFNULL(\"error\", '') = @sk))";
-        var unzipping = DownloadEngine.UnzipProgress.Keys.ToList();
-        if (unzipping.Count > 0)
-        {
-            var names = new List<string>();
-            for (var i = 0; i < unzipping.Count; i++)
-            {
-                names.Add($"@u{i}");
-                args.Add(($"@u{i}", unzipping[i]));
-            }
-            where += $" AND \"work_id\" NOT IN ({string.Join(",", names)})";
-        }
-        // 先记下受影响的番号：全部被跳过的作品清完会一行不剩，要连带清掉只为排队而建的「下载中」记录
-        var affected = Db.Select(
-            $"SELECT DISTINCT \"work_id\" FROM \"download_list\" WHERE {where}", args.ToArray());
-        Db.Execute($"DELETE FROM \"download_list\" WHERE {where}", args.ToArray());
-        foreach (var row in affected ?? [])
+        var now = Environment.TickCount64;
+        if (now - System.Threading.Interlocked.Read(ref _lastSweep) < 3000)
+            return;
+        System.Threading.Interlocked.Exchange(ref _lastSweep, now);
+        var rows = Db.Select(
+            "SELECT d.\"work_id\" FROM \"download_list\" d JOIN \"works\" w ON w.\"work_id\" = d.\"work_id\" " +
+            "WHERE w.\"state\" = '已品悦' GROUP BY d.\"work_id\" " +
+            "HAVING SUM(CASE WHEN d.\"status\" = '1' OR (d.\"status\" = '2' AND IFNULL(d.\"error\", '') = @sk) " +
+            "THEN 0 ELSE 1 END) = 0",
+            ("@sk", DownloadEngine.SkippedError));
+        foreach (var row in rows ?? [])
         {
             var wid = row[0] as string ?? "";
-            if (wid.Length == 0)
-                continue;
-            var remain = Db.Select("SELECT 1 FROM \"download_list\" WHERE \"work_id\" = @w", ("@w", wid));
-            if (remain is not { Count: > 0 })
-                ClearPlaceholderWork(wid);
+            if (wid.Length == 0 || DownloadEngine.UnzipProgress.ContainsKey(wid))
+                continue;   // 收尾线程还在跑（写正文/补元数据/回标），等它结束
+            // 只删已终结的行：查询与删除之间若刚好又入队了新文件，新行留着
+            Db.Execute(
+                "DELETE FROM \"download_list\" WHERE \"work_id\" = @w AND " +
+                "(\"status\" = '1' OR (\"status\" = '2' AND IFNULL(\"error\", '') = @sk))",
+                ("@w", wid), ("@sk", DownloadEngine.SkippedError));
         }
     }
 

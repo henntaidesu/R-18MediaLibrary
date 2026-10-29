@@ -499,6 +499,10 @@ public static class I18n
         ["类型"] = new() { ["zh_TW"] = "類型", ["ja"] = "ジャンル", ["en"] = "Genre" },
         ["下载时间"] = new() { ["zh_TW"] = "下載時間", ["ja"] = "ダウンロード日時", ["en"] = "Download time" },
         ["标记为已品悦"] = new() { ["zh_TW"] = "標記為已品悦", ["ja"] = "鑑賞済みにする", ["en"] = "Mark as enjoyed" },
+        ["下载ID"] = new() { ["zh_TW"] = "下載ID", ["ja"] = "ダウンロードID", ["en"] = "Download ID" },
+        ["下载完成"] = new() { ["zh_TW"] = "下載完成", ["ja"] = "ダウンロード完了", ["en"] = "Completed" },
+        ["待入库"] = new() { ["zh_TW"] = "待入庫", ["ja"] = "ライブラリ未登録", ["en"] = "Not in library" },
+        ["标记为下载完成"] = new() { ["zh_TW"] = "標記為下載完成", ["ja"] = "完了にする", ["en"] = "Mark as completed" },
         ["全部"] = new() { ["zh_TW"] = "全部", ["ja"] = "すべて", ["en"] = "All" },
         ["已品悦"] = new() { ["zh_TW"] = "已品悦", ["ja"] = "鑑賞済み", ["en"] = "Enjoyed" },
         ["共 {n} 个作品"] = new() { ["zh_TW"] = "共 {n} 個作品", ["ja"] = "作品 {n} 件", ["en"] = "{n} works total" },
@@ -531,6 +535,12 @@ public static class I18n
             ["zh_TW"] = "搜尋 RJ號 / 作品名 / 社團",
             ["ja"] = "RJ番号 / 作品名 / サークルで検索",
             ["en"] = "Search RJ / title / maker"
+        },
+        ["搜索 下载ID / 作品名 / 社团"] = new()
+        {
+            ["zh_TW"] = "搜尋 下載ID / 作品名 / 社團",
+            ["ja"] = "ダウンロードID / 作品名 / サークルで検索",
+            ["en"] = "Search download ID / title / maker"
         },
         ["作品标签"] = new() { ["zh_TW"] = "作品標籤", ["ja"] = "作品タグ", ["en"] = "Tags" },
         ["媒体库设置"] = new() { ["zh_TW"] = "媒體庫設定", ["ja"] = "ライブラリ設定", ["en"] = "Library settings" },

@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using R18MediaLibrary.Controls;
 using R18MediaLibrary.Core;
 using R18MediaLibrary.Services;
 
@@ -14,10 +15,11 @@ namespace R18MediaLibrary.Views;
 /// <summary>
 /// 作品监控（一级导航「⏱ 作品监控」，对齐 Web watch.js 的 renderWatchPage；2026-10-29 由「作家监控」改名）。
 /// 页顶工具栏最前是二级导航，按来源分成两页：
-/// - FANBOX（作家监控）：总开关 / 立即检查全部 / 默认间隔，其下一位作家一张卡（轮询间隔 / 立即检查 / 暂停 / 打开主页 / 删除）。
-///   数据与轮询在 <see cref="FanboxWatchService"/>；添加监控的入口仍在 作品搜索 → FANBOX 的作家主页（「+ 监控作家」）。
+/// - Pawchive（作家监控）：总开关 / 立即检查全部 / 默认间隔，其下一位作家一张小卡（轮询间隔 / 立即检查 / 暂停 / 打开主页 / 删除）。
+///   数据与轮询在 <see cref="FanboxWatchService"/>；添加监控的入口仍在 作品搜索 → Pawchive 的作家主页（「+ 监控作家」）。
 /// - Pixiv（收藏监控）：总开关 / 立即检查全部 / 默认间隔 / 入队间隔，其下每个已登录的 pixiv 账号一张卡，
 ///   未监控的卡上直接「开启监控」（可选获取历史收藏）。数据与轮询在 <see cref="PixivWatchService"/>。
+/// 卡片是自适应网格里的小卡（对齐 Web 的 .wgrid / .wcard）。
 /// 纯代码构建、不带 XAML：见 CLAUDE.md「XAML 里不要引用本程序集的类型」。
 /// </summary>
 public class WatchPage : UserControl
@@ -40,6 +42,10 @@ public class WatchPage : UserControl
     private readonly StackPanel _cardsPanel;
     private bool _filling;      // 正在填充控件（抑制 SelectionChanged 回写）
     private DispatcherTimer? _timer;
+    private ResponsiveWrapPanel? _grid;
+
+    /// <summary>小卡网格（Web .wgrid）：列宽下限 280、间距 10；卡高固定，同一行的卡片对齐。</summary>
+    private const double CardHeight = 168;
 
     public WatchPage()
     {
@@ -79,6 +85,21 @@ public class WatchPage : UserControl
         Refresh();
     }
 
+    /// <summary>往当前页的卡片网格里加一张卡（首张卡时才建网格，空态不建）。</summary>
+    private void AddCard(UIElement card)
+    {
+        if (_grid == null)
+        {
+            _grid = new ResponsiveWrapPanel
+            {
+                MinItemWidth = 280, ItemGap = 10, ItemAspect = 0, ExtraHeight = CardHeight,
+                Margin = new Thickness(0, 8, 0, 0),
+            };
+            _cardsPanel.Children.Add(_grid);
+        }
+        _grid.Children.Add(card);
+    }
+
     private bool IsPixiv => _tab == TabPixiv;
 
     private (bool Busy, string Status) CurrentState() =>
@@ -100,6 +121,7 @@ public class WatchPage : UserControl
             : CurrentSummary();
 
         _cardsPanel.Children.Clear();
+        _grid = null;
         if (IsPixiv)
             FillPixivCards();
         else
@@ -117,7 +139,7 @@ public class WatchPage : UserControl
     private DockPanel WrapBar(StackPanel controls, string helpTopic)
     {
         var tabs = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 8, 0) };
-        foreach (var (key, label) in new[] { (TabFanbox, "FANBOX"), (TabPixiv, "Pixiv") })
+        foreach (var (key, label) in new[] { (TabFanbox, "Pawchive"), (TabPixiv, "Pixiv") })
         {
             var b = new Button { Content = label, Margin = new Thickness(0, 0, 2, 0) };
             ApplyToggleState(b, _tab == key);
@@ -238,28 +260,24 @@ public class WatchPage : UserControl
         if (watches.Count == 0)
         {
             _cardsPanel.Children.Add(EmptyText(
-                I18n.Tr("还没有监控任何作家。到「作品搜索 → FANBOX」搜到作家后进入作家主页，点「+ 监控作家」即可添加。")));
+                I18n.Tr("还没有监控任何作家。到「作品搜索 → Pawchive」搜到作家后进入作家主页，点「+ 监控作家」即可添加。")));
             return;
         }
         foreach (var w in watches)
-            _cardsPanel.Children.Add(BuildFanboxCard(w));
+            AddCard(BuildFanboxCard(w));
     }
 
-    /// <summary>一位作家一张卡（版式对齐 Web 的 .libcard：标题行 + 间隔行 + 上次结果）。</summary>
-    private Border BuildFanboxCard(FanboxWatch w)
-    {
-        var sub = new List<string>();
-        if (!w.Enabled)
-            sub.Add(I18n.Tr("已暂停"));
-        sub.Add(w.LastCheck.Length > 0
-            ? I18n.Format(I18n.Tr("上次检查 {time}"), ("time", w.LastCheck))
-            : I18n.Tr("尚未检查过"));
-        if (FanboxWatchService.NextCheckText(w) is { Length: > 0 } next)
-            sub.Add(I18n.Format(I18n.Tr("下次 {time}"), ("time", next)));
-        if (w.Downloaded > 0)
-            sub.Add(I18n.Format(I18n.Tr("累计自动下载 {n} 篇"), ("n", w.Downloaded)));
-
-        var head = CardHead(w.Display, string.Join(" · ", sub),
+    /// <summary>一位作家一张小卡（对齐 Web fbWatchCard）。</summary>
+    private Border BuildFanboxCard(FanboxWatch w) => WatchCard(
+        PawchiveApi.IconUrl(w.Service, w.ArtistId), w.Display,
+        on: w.Enabled, state: w.Enabled ? I18n.Tr("监控中") : I18n.Tr("已暂停"),
+        new WatchInfo(w.LastCheck, FanboxWatchService.NextCheckText(w), w.Downloaded, I18n.Tr("篇"),
+            w.IntervalMin, w.TargetLib, w.LastResult, minutes =>
+            {
+                FanboxWatchService.SetInterval(w.ArtistId, minutes);
+                Refresh();
+            }),
+        null,
         [
             (I18n.Tr("立即检查"), () =>
             {
@@ -283,13 +301,6 @@ public class WatchPage : UserControl
             }, true),
         ]);
 
-        return CardShell(head, IntervalRow(w.IntervalMin, w.TargetLib, minutes =>
-        {
-            FanboxWatchService.SetInterval(w.ArtistId, minutes);
-            Refresh();
-        }), w.LastResult);
-    }
-
     // ---------- Pixiv：收藏监控 ----------
 
     private void FillPixivCards()
@@ -305,39 +316,27 @@ public class WatchPage : UserControl
         // 每个已登录账号一张卡（已监控 / 未监控），再接上账号已退出登录、但监控还留着的
         var byUid = watches.ToDictionary(w => w.UserId);
         foreach (var a in accounts)
-            _cardsPanel.Children.Add(byUid.TryGetValue(a.UserId, out var w) ? BuildPixivCard(w) : BuildPixivIdleCard(a));
+            AddCard(byUid.TryGetValue(a.UserId, out var w) ? BuildPixivCard(w) : BuildPixivIdleCard(a));
         foreach (var w in watches.Where(w => !w.HasAccount))
-            _cardsPanel.Children.Add(BuildPixivCard(w));
+            AddCard(BuildPixivCard(w));
     }
 
     /// <summary>未监控的账号：只有名字、「查看收藏」与「开启监控」。</summary>
     private Border BuildPixivIdleCard(SiteAccount a)
     {
         Button? enable = null;
-        var head = CardHead(a.DisplayName, I18n.Tr("未监控收藏"),
-        [
-            (I18n.Tr("查看收藏"), () => OpenPixivFavoritesRequested?.Invoke(a.UserId), false),
-            (I18n.Tr("开启监控"), () => _ = EnablePixivAsync(a, enable!), false),
-        ]);
-        enable = head.Children.OfType<Button>().Last();
-        return CardShell(head, null, "");
+        var card = WatchCard(null, a.DisplayName, on: false, state: I18n.Tr("未监控"), null,
+            I18n.Tr("有新收藏时自动下载，点「开启监控」开始"),
+            [
+                (I18n.Tr("查看收藏"), () => OpenPixivFavoritesRequested?.Invoke(a.UserId), false),
+                (I18n.Tr("开启监控"), () => _ = EnablePixivAsync(a, enable!), false),
+            ]);
+        enable = _lastButtons.Last();
+        return card;
     }
 
     private Border BuildPixivCard(PixivWatch w)
     {
-        var sub = new List<string>();
-        if (!w.HasAccount)
-            sub.Add(I18n.Tr("账号已退出登录"));
-        if (!w.Enabled)
-            sub.Add(I18n.Tr("已暂停"));
-        sub.Add(w.LastCheck.Length > 0
-            ? I18n.Format(I18n.Tr("上次检查 {time}"), ("time", w.LastCheck))
-            : I18n.Tr("尚未检查过"));
-        if (PixivWatchService.NextCheckText(w) is { Length: > 0 } next)
-            sub.Add(I18n.Format(I18n.Tr("下次 {time}"), ("time", next)));
-        if (w.Downloaded > 0)
-            sub.Add(I18n.Format(I18n.Tr("累计自动下载 {n} 件"), ("n", w.Downloaded)));
-
         var actions = new List<(string, Action, bool)>
         {
             (I18n.Tr("立即检查"), () =>
@@ -363,12 +362,15 @@ public class WatchPage : UserControl
             Refresh();
         }, true));
 
-        var head = CardHead(w.Display, string.Join(" · ", sub), actions);
-        return CardShell(head, IntervalRow(w.IntervalMin, w.TargetLib, minutes =>
-        {
-            PixivWatchService.SetInterval(w.UserId, minutes);
-            Refresh();
-        }), w.LastResult);
+        return WatchCard(null, w.Display, on: w.Enabled && w.HasAccount,
+            state: !w.HasAccount ? I18n.Tr("账号已退出") : w.Enabled ? I18n.Tr("监控中") : I18n.Tr("已暂停"),
+            new WatchInfo(w.LastCheck, PixivWatchService.NextCheckText(w), w.Downloaded, I18n.Tr("件"),
+                w.IntervalMin, w.TargetLib, w.LastResult, minutes =>
+                {
+                    PixivWatchService.SetInterval(w.UserId, minutes);
+                    Refresh();
+                }),
+            null, actions);
     }
 
     /// <summary>开启监控：先选媒体库（同手动下载），再选要不要连历史收藏一起下（对齐 Web pxWatchEnable）。</summary>
@@ -412,88 +414,133 @@ public class WatchPage : UserControl
 
     // ---------- 卡片部件（两页共用） ----------
 
-    /// <summary>标题行：名称 + 灰字概况 + 右侧一排小按钮。</summary>
-    private Grid CardHead(string title, string meta, IReadOnlyList<(string Text, Action OnClick, bool Danger)> actions)
-    {
-        var head = new Grid();
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        foreach (var _ in actions)
-            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+    /// <summary>监控记录里小卡要画的部分（未监控的 Pixiv 账号没有）。</summary>
+    private sealed record WatchInfo(string LastCheck, string Next, int Downloaded, string Unit,
+        int IntervalMin, string TargetLib, string LastResult, Action<int> OnInterval);
 
+    /// <summary>刚建好的那张卡的按钮（未监控卡要拿到「开启监控」按钮改文案）。</summary>
+    private List<Button> _lastButtons = [];
+
+    /// <summary>
+    /// 两页共用的小卡（对齐 Web watchCard）：头像 + 名称 + 状态胶囊 / 检查时间 / 间隔下拉与去向 / 上次结果 / 按钮行。
+    /// iconUrl 为 null 表示这类卡没有头像格（Pixiv）；已暂停的卡整体压暗（Web .wcard.off）。
+    /// </summary>
+    private Border WatchCard(string? iconUrl, string name, bool on, string state,
+        WatchInfo? info, string? meta, IReadOnlyList<(string Text, Action OnClick, bool Danger)> actions)
+    {
+        var body = new DockPanel { LastChildFill = false };
+
+        var head = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        if (iconUrl != null)
+        {
+            var image = new Image { Stretch = Stretch.Uniform };
+            var frame = new Border
+            {
+                Width = 40, Height = 40, CornerRadius = new CornerRadius(6), ClipToBounds = true,
+                Background = Res<Brush>("CardBrush"), Margin = new Thickness(0, 0, 10, 0), Child = image,
+            };
+            DockPanel.SetDock(frame, Dock.Left);
+            head.Children.Add(frame);
+            _ = LoadIconAsync(image, iconUrl);
+        }
+        var pill = new Border
+        {
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(8, 0, 8, 1), Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            BorderBrush = on ? new SolidColorBrush(Color.FromRgb(0x2f, 0x6b, 0x45)) : Res<Brush>("BorderBrush"),
+            Child = new TextBlock
+            {
+                Text = state, FontSize = 12,
+                Foreground = on ? new SolidColorBrush(Color.FromRgb(0x4a, 0xde, 0x80)) : MutedBrush(),
+            },
+        };
+        DockPanel.SetDock(pill, Dock.Right);
+        head.Children.Add(pill);
         head.Children.Add(new TextBlock
         {
-            Text = title, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center,
+            Text = name, ToolTip = name, FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,
         });
-        var metaBlock = new TextBlock
-        {
-            Text = meta,
-            Margin = new Thickness(8, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            FontSize = 12.5,
-            Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
-        };
-        Grid.SetColumn(metaBlock, 1);
-        head.Children.Add(metaBlock);
-
-        for (var i = 0; i < actions.Count; i++)
-        {
-            var (text, onClick, danger) = actions[i];
-            var button = new Button
-            {
-                Content = text,
-                Margin = new Thickness(8, 0, 0, 0),
-                Style = Res<Style>(danger ? "MiniDangerButton" : "MiniButton"),
-            };
-            button.Click += (_, _) => onClick();
-            Grid.SetColumn(button, i + 2);
-            head.Children.Add(button);
-        }
-        return head;
-    }
-
-    /// <summary>间隔行：轮询间隔下拉 + 自动下载去向。</summary>
-    private StackPanel IntervalRow(int intervalMin, string targetLib, Action<int> onChange)
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        row.Children.Add(new TextBlock
-        {
-            Text = I18n.Tr("轮询间隔"), VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
-        });
-        row.Children.Add(IntervalBox(intervalMin, minutes =>
-        {
-            if (minutes != intervalMin)
-                onChange(minutes);
-        }));
-        row.Children.Add(new TextBlock
-        {
-            Text = targetLib.Length > 0
-                ? I18n.Format(I18n.Tr("自动下载到媒体库「{lib}」"), ("lib", targetLib))
-                : I18n.Tr("自动下载到缓存目录"),
-            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            FontSize = 13,
-            Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
-        });
-        return row;
-    }
-
-    private static Border CardShell(Grid head, StackPanel? row, string lastResult)
-    {
-        var body = new StackPanel();
+        DockPanel.SetDock(head, Dock.Top);
         body.Children.Add(head);
-        if (row != null)
-            body.Children.Add(row);
-        if (lastResult.Length > 0)
-            body.Children.Add(new TextBlock
+
+        if (info != null)
+        {
+            var line = new List<string>();
+            var tip = new List<string>();
+            if (info.LastCheck.Length > 0)
             {
-                Text = I18n.Format(I18n.Tr("上次结果：{text}"), ("text", lastResult)),
-                Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap,
-                FontSize = 13,
-                Foreground = Res<Brush>("CaptionBrush") ?? Brushes.Gray,
+                line.Add(I18n.Format(I18n.Tr("上次 {time}"), ("time", ShortTime(info.LastCheck))));
+                tip.Add(I18n.Format(I18n.Tr("上次检查 {time}"), ("time", info.LastCheck)));
+            }
+            else
+            {
+                line.Add(I18n.Tr("尚未检查过"));
+                tip.Add(I18n.Tr("尚未检查过"));
+            }
+            if (info.Next.Length > 0)
+            {
+                line.Add(I18n.Format(I18n.Tr("下次 {time}"), ("time", ShortTime(info.Next))));
+                tip.Add(I18n.Format(I18n.Tr("下次检查 {time}"), ("time", info.Next)));
+            }
+            if (info.Downloaded > 0)
+            {
+                line.Add(I18n.Format(I18n.Tr("累计 {n} {unit}"), ("n", info.Downloaded), ("unit", info.Unit)));
+                tip.Add(I18n.Format(I18n.Tr("累计自动下载 {n} {unit}"), ("n", info.Downloaded), ("unit", info.Unit)));
+            }
+            AddTop(body, MetaLine(string.Join(" · ", line), string.Join("\n", tip)));
+
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6), ToolTip = I18n.Tr("轮询间隔") };
+            var box = IntervalBox(info.IntervalMin, minutes =>
+            {
+                if (minutes != info.IntervalMin)
+                    info.OnInterval(minutes);
             });
+            DockPanel.SetDock(box, Dock.Left);
+            row.Children.Add(box);
+            var hasLib = info.TargetLib.Length > 0;
+            var lib = MetaLine(
+                hasLib ? I18n.Format(I18n.Tr("→ 媒体库「{lib}」"), ("lib", info.TargetLib)) : I18n.Tr("→ 缓存目录"),
+                hasLib ? I18n.Format(I18n.Tr("自动下载到媒体库「{lib}」"), ("lib", info.TargetLib)) : I18n.Tr("自动下载到缓存目录"));
+            lib.Margin = new Thickness(8, 0, 0, 0);
+            lib.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(lib);
+            DockPanel.SetDock(row, Dock.Top);
+            body.Children.Add(row);
+
+            var result = I18n.Format(I18n.Tr("上次结果：{text}"),
+                ("text", info.LastResult.Length > 0 ? info.LastResult : "—"));
+            AddTop(body, MetaLine(result, result));
+        }
+        else if (!string.IsNullOrEmpty(meta))
+        {
+            AddTop(body, MetaLine(meta, meta));
+        }
+
+        // 按钮行贴卡底（Web .wa 的 margin-top:auto），「删除」靠右
+        var actionRow = new DockPanel();
+        var left = new WrapPanel();
+        _lastButtons = [];
+        foreach (var (text, onClick, danger) in actions)
+        {
+            var button = new Button { Content = text, Style = Res<Style>(danger ? "MiniDangerButton" : "MiniButton") };
+            button.Click += (_, _) => onClick();
+            _lastButtons.Add(button);
+            if (danger)
+            {
+                DockPanel.SetDock(button, Dock.Right);
+                actionRow.Children.Add(button);
+            }
+            else
+            {
+                button.Margin = new Thickness(0, 0, 6, 0);
+                left.Children.Add(button);
+            }
+        }
+        actionRow.Children.Add(left);
+        DockPanel.SetDock(actionRow, Dock.Bottom);
+        body.Children.Add(actionRow);
 
         return new Border
         {
@@ -502,9 +549,40 @@ public class WatchPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12, 10, 12, 10),
-            Margin = new Thickness(0, 8, 0, 0),
+            Opacity = info != null && !on ? 0.6 : 1,
             Child = body,
         };
+    }
+
+    private static void AddTop(DockPanel panel, FrameworkElement child)
+    {
+        child.Margin = new Thickness(0, 0, 0, 6);
+        DockPanel.SetDock(child, Dock.Top);
+        panel.Children.Add(child);
+    }
+
+    private static TextBlock MetaLine(string text, string tip) => new()
+    {
+        Text = text, ToolTip = tip, FontSize = 12,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        Foreground = MutedBrush(),
+    };
+
+    private static Brush MutedBrush() => Res<Brush>("CaptionBrush") ?? Brushes.Gray;
+
+    /// <summary>检查时间只留「月-日 时:分」（同 Web watchShortTime；不是这个格式就原样显示）。</summary>
+    private static string ShortTime(string t)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(t, @"^\d{4}-(\d{2}-\d{2}) (\d{2}:\d{2})");
+        return m.Success ? m.Groups[1].Value + " " + m.Groups[2].Value : t;
+    }
+
+    /// <summary>作家头像：pawchive 站上的图，必须带 <see cref="PawchiveApi.UserAgent"/>；解不出（如 WebP）就留空底。</summary>
+    private static async Task LoadIconAsync(Image target, string url)
+    {
+        var bmp = await ThumbnailCache.LoadUrlAsync(url, 80, PawchiveApi.UserAgent);
+        if (bmp != null)
+            target.Source = bmp;
     }
 
     private static TextBlock EmptyText(string text) => new()

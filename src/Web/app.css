@@ -145,6 +145,12 @@
   .group-card .glinks a { font-size: 12px; line-height: 1; padding: 3px 7px; border-radius: 4px;
                           border: 1px solid var(--line); color: var(--muted); text-decoration: none; }
   .group-card .glinks a:hover { color: var(--text); border-color: var(--accent); }
+  /* 网格末尾的「添加」卡（媒体库首页的新建媒体库）：虚线框、透明底，与分组卡同高 */
+  .group-card.add-card { justify-content: center; background: transparent; border: 1px dashed var(--line);
+                         color: var(--muted); }
+  .group-card.add-card:hover { border-color: var(--accent); color: var(--text); }
+  .group-card.add-card .add-plus { font-size: 26px; line-height: 1; }
+  .group-card.add-card .add-label { font-size: 15px; font-weight: 600; }
   /* 封面占卡片高度的 2/3（flex-grow 2 : 文本 1，flex-basis 0 使按比例分配整卡高度） */
   .cover { position: relative; width: 100%; flex: 2 1 0; min-height: 0; background: #15151a; }
   .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -423,6 +429,24 @@
   .libcard .lh .ct { color: var(--muted); font-size: 12.5px; margin-right: auto; }
   .librow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .librow .fp { color: var(--muted); font-size: 13px; word-break: break-all; flex: 1; }
+  /* 作品监控（watch.js）：一位作家 / 一个账号一张小卡，自适应网格 */
+  .wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
+  .wcard { background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+           display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .wcard.off { opacity: .6; }
+  .wcard .wh { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .wcard .wav { flex: none; width: 40px; height: 40px; border-radius: 6px; background: var(--surface);
+                object-fit: contain; }
+  .wcard .wnm { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wcard .wst { flex: none; font-size: 12px; color: var(--muted); padding: 0 8px;
+                border: 1px solid var(--line); border-radius: 999px; }
+  .wcard .wst.on { color: #4ade80; border-color: #2f6b45; }
+  .wcard .wm { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wcard .wr { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .wcard .wr select { flex: none; }
+  .wcard .wr .wm { flex: 1; }
+  .wcard .wa { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 2px; }
+  .wcard .wa .danger { margin-left: auto; }
   /* 媒体库设置弹框里的文件夹卡片：一个文件夹一张（编辑 / 移除），末尾同尺寸的虚线「+」卡片 */
   .foldcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
   .foldcard { background: var(--surface2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;

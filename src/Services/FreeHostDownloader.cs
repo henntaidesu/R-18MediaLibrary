@@ -527,7 +527,8 @@ public static class FreeHostDownloader
             while ((m = re.exec(wait[1])) !== null) secs += parseInt(m[1], 10) * ({ d: 86400, h: 3600, m: 60, s: 1 })[m[2].toLowerCase()];
             r.secs = secs; return r;
           }
-          if (/delay between downloads|reached (?:your|the) (?:hourly |daily )?downloads? limit|not more than 1 file at a time/i.test(text)) { r.step = 'limit'; r.msg = text.slice(0, 200); return r; }
+          const lim = text.match(/[^.\n]*(?:delay between downloads|reached (?:your|the) (?:hourly |daily )?downloads? limit|not more than 1 file at a time)[^.\n]*/i);
+          if (lim) { r.step = 'limit'; r.msg = lim[0].trim(); return r; }
           if (/skipped countdown|wrong captcha|expired session/i.test(text) && !token) { r.step = 'retry'; return r; }
           if (/premium only|only for premium|for premium users only|premium members only/i.test(text) && !token && !op2) { r.step = 'premium'; return r; }
 

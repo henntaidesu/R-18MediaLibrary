@@ -856,6 +856,78 @@ public partial class MediaLibPage : UserControl
         ApplyCardFilter();
     }
 
+    /// <summary>
+    /// 媒体库首页网格末尾的虚线「新建媒体库」卡（对齐 Web drawGroups 的 add-card）。
+    /// 不放进 _gridCards，免得算进「共 N 个媒体库」；由 ApplyCardFilter 追加在过滤结果之后。
+    /// Border 画不了虚线，所以底下垫一个带 StrokeDashArray 的圆角 Rectangle 当边框，悬停时换强调色。
+    /// </summary>
+    private Border MakeAddLibCard()
+    {
+        var dash = new System.Windows.Shapes.Rectangle
+        {
+            RadiusX = 10, RadiusY = 10, StrokeThickness = 1,
+            StrokeDashArray = [4, 3],
+            Stroke = (Brush)FindResource("BorderBrush"),
+        };
+        var label = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var plus = new TextBlock { Text = "+", FontSize = 26, VerticalAlignment = VerticalAlignment.Center };
+        var text = new TextBlock
+        {
+            Text = I18n.Tr("新建媒体库"), FontSize = 15, FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+        };
+        label.Children.Add(plus);
+        label.Children.Add(text);
+        var layer = new Grid();
+        layer.Children.Add(dash);
+        layer.Children.Add(label);
+        var card = new Border
+        {
+            Background = Brushes.Transparent,   // 透明但可命中，整卡都能点
+            Cursor = Cursors.Hand,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Child = layer,
+        };
+        void Paint(bool hover)
+        {
+            dash.Stroke = (Brush)FindResource(hover ? "AccentLightBrush" : "BorderBrush");
+            var fg = (Brush)FindResource(hover ? "TextBrush" : "CaptionBrush");
+            plus.Foreground = fg;
+            text.Foreground = fg;
+        }
+        Paint(false);
+        card.MouseEnter += (_, _) => Paint(true);
+        card.MouseLeave += (_, _) => Paint(false);
+        card.MouseLeftButtonUp += (_, _) => CreateLibFromHome();
+        return card;
+    }
+
+    /// <summary>新建媒体库（对齐 Web createLibFromHome）：建好后直接打开该库的设置，好接着添加文件夹。</summary>
+    private void CreateLibFromHome()
+    {
+        var name = InAppDialog.Prompt(this, I18n.Tr("媒体库名称："), I18n.Tr("新建媒体库"))?.Trim();
+        if (string.IsNullOrEmpty(name))
+            return;
+        var libs = AppConfig.ReadMediaLibs();
+        if (libs.Any(l => l.Name == name))
+        {
+            InAppDialog.Info(this, I18n.Tr("已存在同名媒体库。"), I18n.Tr("媒体库"));
+            return;
+        }
+        libs.Add(new MediaLib { Name = name });
+        AppConfig.WriteMediaLibs(libs);
+        ShowLibs();
+        LibSettingsDialog.Show(this, name);
+        if (_level == "libs")
+            ShowLibs();
+    }
+
     /// <summary>二级：当前媒体库（或当前标签）下的社团卡片，懒加载，可按作品数/社团名排序。</summary>
     private void ShowMakers()
     {
@@ -1227,6 +1299,8 @@ public partial class MediaLibPage : UserControl
         _shownCards = key.Length == 0
             ? _gridCards.ToList()
             : _gridCards.Where(c => c.FilterKey.Contains(key)).ToList();
+        if (_level == "libs")
+            _shownCards.Add(new GridCard(MakeAddLibCard, ""));   // 末尾虚线「新建媒体库」卡
         ClearCards();   // 统一关闭详情按钮
         BackButton.Visibility = ShouldShowBack() ? Visibility.Visible : Visibility.Collapsed;
         SortBox.Visibility = _level is "makers" or "all_makers" or "works" or "filtered_works" or "favorites" or "lib_works"

@@ -471,9 +471,10 @@ function setSort(options, current, onChange) {
 
 function filtered() { const kw = $('search').value.trim().toLowerCase(); return kw ? curItems.filter(i => i._key.includes(kw)) : curItems; }
 
-let lastMap = null, lastUnit = '';
-function drawGroups(items, mapFn, unit) {
-  lastMap = mapFn; lastUnit = unit;
+let lastMap = null, lastUnit = '', lastAdd = null;
+// add（可选）：{ label, onClick }，在网格末尾放一张虚线「添加」卡（媒体库首页的新建媒体库）
+function drawGroups(items, mapFn, unit, add) {
+  lastMap = mapFn; lastUnit = unit; lastAdd = add || null;
   const items2 = filtered();
   const works = items.reduce((s, i) => s + (i.works || i.count || 0), 0);
   $('count').textContent = $('search').value.trim() ? `共 ${items.length} ${unit}，匹配 ${items2.length} 个` : `共 ${items.length} ${unit}，${works} 个作品`;
@@ -518,7 +519,13 @@ function drawGroups(items, mapFn, unit) {
     c.onclick = m.onClick;
     grid.appendChild(c);
   });
-  const host = $('content'); host.innerHTML = ''; host.appendChild(items2.length ? grid : el('div', 'empty', '没有内容'));
+  if (add) {
+    const c = el('div', 'card group-card add-card');
+    c.append(el('span', 'add-plus', '+'), el('span', 'add-label', add.label));
+    c.onclick = add.onClick;
+    grid.appendChild(c);
+  }
+  const host = $('content'); host.innerHTML = ''; host.appendChild(items2.length || add ? grid : el('div', 'empty', '没有内容'));
 }
 function makeWorkCard(w) {
   const c = el('div', 'card');
@@ -580,7 +587,7 @@ function lazyCards(host, items, makeFn, emptyText) {
   lazyGridFill(grid, items, makeFn);
 }
 function drawWorks(items) {
-  lastMap = null;
+  lastMap = null; lastAdd = null;
   const items2 = filtered();
   $('count').textContent = $('search').value.trim() ? `共 ${items.length} 个作品，匹配 ${items2.length} 个` : `共 ${items.length} 个作品`;
   lazyCards($('content'), items2, makeWorkCard, '没有内容');

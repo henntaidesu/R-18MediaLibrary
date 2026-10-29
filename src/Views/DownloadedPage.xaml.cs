@@ -20,12 +20,12 @@ public class DownloadedRow
     public string MakerName { get; init; } = "";
     public string WorkType { get; init; } = "";
     public string State { get; init; } = "";      // 数据库原始状态值（右键菜单/着色/筛选用）
-    public string StateText { get; init; } = "";  // 显示译文
+    public string StateText { get; init; } = "";  // 显示译文（已品悦 → 下载完成、已下载 → 待入库，见 StateLabel）
     public Brush StateBrush { get; init; } = Brushes.Gray;
     public string DownTime { get; init; } = "";
     public string OpenText => I18n.Tr("跳转作品");
     // 行内「标记为已品悦」：仅"已下载"状态显示（对齐 Web drawDownloaded 的 .mini 按钮；右键菜单仍保留）
-    public string MarkText => I18n.Tr("标记为已品悦");
+    public string MarkText => I18n.Tr("标记为下载完成");
     public Visibility MarkVisibility => State == "已下载" ? Visibility.Visible : Visibility.Collapsed;
 }
 
@@ -45,6 +45,17 @@ public partial class DownloadedPage : UserControl
 
     // 状态筛选下拉的取值（数据库原始值，空串 = 全部）
     private static readonly string[] StateFilterValues = ["", "下载中", "已下载", "已品悦"];
+
+    /// <summary>
+    /// 状态的显示文案（对齐 Web DLED_STATE_TEXT）：已品悦 = 已入媒体库，是下载流程的终点，本页显示「下载完成」；
+    /// 已下载 = 文件下好了但还没进媒体库，显示「待入库」。库里存的仍是原值。
+    /// </summary>
+    private static string StateLabel(string state) => I18n.Tr(state switch
+    {
+        "已品悦" => "下载完成",
+        "已下载" => "待入库",
+        _ => state,
+    });
 
     private List<DownloadedRow> _all = [];                          // 数据库全量
     private List<DownloadedRow> _filtered = [];                     // 过滤 + 排序后
@@ -82,7 +93,7 @@ public partial class DownloadedPage : UserControl
         WorksList.ItemsSource = _items;
         _headers =
         [
-            (HdrId, "RJ号", nameof(DownloadedRow.WorkId)),
+            (HdrId, "下载ID", nameof(DownloadedRow.WorkId)),
             (HdrName, "作品名称", nameof(DownloadedRow.WorkName)),
             (HdrMaker, "社团", nameof(DownloadedRow.MakerName)),
             (HdrType, "类型", nameof(DownloadedRow.WorkType)),
@@ -109,15 +120,15 @@ public partial class DownloadedPage : UserControl
     {
         RefreshButton.Content = I18n.Tr("刷新");
         BackButton.Content = "← " + I18n.Tr("下载");
-        SearchBox.ToolTip = I18n.Tr("搜索 RJ号 / 作品名 / 社团");
-        MarkMenuItem.Header = I18n.Tr("标记为已品悦");
+        SearchBox.ToolTip = I18n.Tr("搜索 下载ID / 作品名 / 社团");
+        MarkMenuItem.Header = I18n.Tr("标记为下载完成");
         EmptyLabel.Text = I18n.Tr("没有内容");
         UpdateHeaders();
 
         // 重建状态筛选下拉，保持当前选中项
         var index = Array.IndexOf(StateFilterValues, _stateFilter);
         StateFilter.ItemsSource = StateFilterValues
-            .Select(s => s.Length == 0 ? I18n.Tr("全部") : I18n.Tr(s)).ToList();
+            .Select(s => s.Length == 0 ? I18n.Tr("全部") : StateLabel(s)).ToList();
         StateFilter.SelectedIndex = index < 0 ? 0 : index;
 
         Refresh();
@@ -152,7 +163,7 @@ public partial class DownloadedPage : UserControl
                 MakerName = row[2] as string ?? "",
                 WorkType = row[3] as string ?? "",
                 State = state,
-                StateText = I18n.Tr(state),
+                StateText = StateLabel(state),
                 StateBrush = StateBrushes.GetValueOrDefault(state, Brushes.LightGray),
                 DownTime = downTime.Length > 19 ? downTime[..19] : downTime,  // 不显示微秒
             };
@@ -191,7 +202,6 @@ public partial class DownloadedPage : UserControl
         foreach (var row in _filtered.Skip(_loaded).Take(PageSize))
             _items.Add(row);
         _loaded = Math.Min(_loaded + PageSize, _filtered.Count);
-        UpdateCount();
     }
 
     /// <summary>滚动接近底部时加载下一批。</summary>
@@ -227,19 +237,6 @@ public partial class DownloadedPage : UserControl
         var index = StateFilter.SelectedIndex;
         _stateFilter = index >= 0 && index < StateFilterValues.Length ? StateFilterValues[index] : "";
         RebuildView();
-    }
-
-    private void UpdateCount()
-    {
-        var total = _all.Count;
-        var matched = _filtered.Count;
-        var text = matched == total
-            ? I18n.Format(I18n.Tr("共 {total} 个作品"), ("total", total))
-            : I18n.Format(I18n.Tr("共 {total} 个作品，匹配 {matched} 个"),
-                ("total", total), ("matched", matched));
-        if (_loaded < matched)
-            text += I18n.Format(I18n.Tr("（已加载 {loaded}）"), ("loaded", _loaded));
-        CountLabel.Text = text;
     }
 
     // ---------- 表头排序 ----------

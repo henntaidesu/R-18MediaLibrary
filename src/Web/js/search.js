@@ -188,7 +188,8 @@ function parseInput(raw) {
 }
 // 跨分区跳转：下载列表「重新搜索」等处调用，切到「DLsite 搜索」分区并立即以该番号查询
 function gotoSearch(id) {
-  selectSection('dlsearch');   // 同步渲染搜索视图，返回后 #sId 已就绪
+  searchSrc = 'dlsite';       // 重新搜索的都是 RJ 号：来源可能停在 FANBOX / E-Hentai 上，先切回 DLsite
+  selectSection('search');   // 同步渲染搜索视图，返回后 #sId 已就绪
   const inp = $('sId');
   if (!inp) return;
   inp.value = id;
@@ -430,7 +431,7 @@ async function startMakerDownPoll() {
   if (!s || s.dlPolling) return;
   s.dlPolling = true;
   while (true) {
-    if (makerState !== s || section !== 'dlsearch') break;
+    if (makerState !== s || section !== 'search') break;
     let d;
     try { d = await api('/api/downloads'); } catch (e) { break; }
     if (makerState !== s) break;
@@ -478,14 +479,14 @@ async function runMakerScans() {
   if (!s || s.scanning) return;
   s.scanning = true;
   while (s.scanQueue.length) {
-    if (makerState !== s || section !== 'dlsearch') break;   // 已开始新搜索或离开搜索分区则停止
+    if (makerState !== s || section !== 'search') break;   // 已开始新搜索或离开搜索分区则停止
     const id = s.scanQueue.shift();
     const st = s.cards[id];
     if (!st) continue;
     st.innerHTML = '<span class="spin"></span>';
     let d;
     try { d = await api('/api/asscan?id=' + enc(id)); } catch (e) { break; }
-    if (makerState !== s || section !== 'dlsearch') break;
+    if (makerState !== s || section !== 'search') break;
     if (d.count > 0) {
       st.textContent = `AS · ${d.count} 帖`; st.style.background = 'rgba(34,160,80,.88)';
       const card = st.closest('.card');

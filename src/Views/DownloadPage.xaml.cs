@@ -273,7 +273,6 @@ public partial class DownloadPage : UserControl
 
     private void RetranslateUi()
     {
-        ClearDoneButton.Content = I18n.Tr("清除已完成");
         ClearNoLinkButton.Content = I18n.Tr("清除无可用连接");
         ClearAllButton.Content = I18n.Tr("清空列表");
         ReparseAllButton.Content = I18n.Tr("全部重新解析");
@@ -336,7 +335,6 @@ public partial class DownloadPage : UserControl
     private void UpdateToolbarButtons(IEnumerable<(string Status, string? Error)> items)
     {
         var flags = DownloadListActions.FlagsOf(items);
-        ClearDoneButton.IsEnabled = flags.HasDone;
         ClearNoLinkButton.IsEnabled = flags.HasNoLink;
         ClearAllButton.IsEnabled = flags.HasRows;
         ReparseAllButton.IsEnabled = flags.CanReparse;
@@ -527,12 +525,16 @@ public partial class DownloadPage : UserControl
         {
             UpdateStartButton();
             // 全表读放到后台线程，避免每秒在 UI 线程阻塞（连接池 + WAL 下并发安全）
-            var (rows, works) = await Task.Run(() => (
+            var (rows, works) = await Task.Run(() =>
+            {
+                DownloadListActions.ClearFinished();   // 已入库的作品自动移出下载列表（取代「清除已完成」，同 Web）
+                return (
                 Db.Select(
                     "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid"),
                 // 「跳转作品」只给 works 里已有记录的番号（同 Web 的 canOpen：论坛源刚入队的占位番号可能还没有）
                 Db.Select(
-                    "SELECT \"work_id\" FROM \"works\" WHERE \"work_id\" IN (SELECT DISTINCT \"work_id\" FROM \"download_list\")")));
+                    "SELECT \"work_id\" FROM \"works\" WHERE \"work_id\" IN (SELECT DISTINCT \"work_id\" FROM \"download_list\")"));
+            });
             if (rows != null)
                 ApplyRows(rows, (works ?? []).Select(w => w[0] as string ?? "").ToHashSet());   // 集合改动回到 UI 线程执行（await 后续接续在 UI 上下文）
         }
@@ -1000,13 +1002,7 @@ public partial class DownloadPage : UserControl
         Refresh();
     }
 
-    // 四个批量动作都走 DownloadListActions（与 Web 的 /api/cleardone|clearnolink|clearall|reparseall 同一实现）
-    private void ClearDoneButton_Click(object sender, RoutedEventArgs e)
-    {
-        DownloadListActions.ClearDone();
-        Refresh();
-    }
-
+    // 三个批量动作都走 DownloadListActions（与 Web 的 /api/clearnolink|clearall|reparseall 同一实现）
     private void ClearNoLinkButton_Click(object sender, RoutedEventArgs e)
     {
         DownloadListActions.ClearNoLink();
