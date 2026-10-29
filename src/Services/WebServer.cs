@@ -2012,7 +2012,8 @@ public static class WebServer
             var items = grouped[workId];
             var statuses = items.Select(it => it.Status).ToList();
             var (aggText, aggColor) = AggregateStatus(
-                workId, items.Select(it => (it.Status, it.Error)).ToList());
+                workId, items.Select(it => (it.Status, it.Error)).ToList(),
+                FreeHostDownloader.WaitingUntilAll(items.Where(it => it.Status == "0").Select(it => it.Url)));
             var totalPct = 0;
             double totalSpeed = 0;
             var children = items.Select(it =>
@@ -2078,6 +2079,9 @@ public static class WebServer
                     key = x.lane.Key, label = x.lane.Label, works = x.works.Count,
                     downloading = statuses.Count(it => it.Status == "3"),
                     waiting = statuses.Count(it => it.Status == "0"),
+                    // 等待的分卷全在等网盘免费间隔时，写出最早几点轮到（否则为空）
+                    freeWait = FreeHostDownloader.WaitingUntilAll(
+                        statuses.Where(it => it.Status == "0").Select(it => it.Url)) is { } fw ? fw.ToString("HH:mm") : "",
                     failed = statuses.Count(it => it.Status == "2" && !DownloadEngine.IsSkipped(it.Error)),
                     done = statuses.Count(it => it.Status == "1"),
                     files = statuses.Count,
@@ -2102,7 +2106,7 @@ public static class WebServer
     }
 
     private static (string Text, string Color) AggregateStatus(
-        string workId, List<(string Status, string? Error)> items)
+        string workId, List<(string Status, string? Error)> items, DateTime? freeUntil = null)
     {
         var statuses = items.Select(i => i.Status).ToList();
         var done = statuses.Count(s => s == "1");
@@ -2110,6 +2114,9 @@ public static class WebServer
             return ($"下载中 {done}/{statuses.Count}", "#60a5fa");
         if (statuses.Contains("5"))
             return ("搜索可用下载连接", "#facc15");
+        // 等待的分卷全在等网盘免费间隔：写出几点轮到，免得以为卡住了（同文件行）
+        if (statuses.Contains("0") && freeUntil is { } until)
+            return ($"免费间隔 {until:HH:mm} {done}/{statuses.Count}", "#facc15");
         if (statuses.Contains("0"))
             return ($"等待下载 {done}/{statuses.Count}", "#facc15");
         if (statuses.Contains("4"))

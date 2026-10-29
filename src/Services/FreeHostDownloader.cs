@@ -245,6 +245,23 @@ public static class FreeHostDownloader
             return NextAllowed.TryGetValue(host, out var next) && next > DateTime.UtcNow ? next.ToLocalTime() : null;
     }
 
+    /// <summary>
+    /// 一批等待中的链接是不是全都在等免费间隔：是则返回最早轮到的时间（本地时间），有任何一条现在就能领、
+    /// 或一条都没有时返回 null。作品行与分区标题行用它把「等待下载」写成「免费间隔 HH:mm」。
+    /// </summary>
+    public static DateTime? WaitingUntilAll(IEnumerable<string> urls)
+    {
+        DateTime? earliest = null;
+        foreach (var url in urls)
+        {
+            if (WaitingUntil(url) is not { } until)
+                return null;
+            if (earliest is null || until < earliest)
+                earliest = until;
+        }
+        return earliest;
+    }
+
     // 验证没过等「可以再试」的失败次数（按分卷）：超过就停下标失败，不无限地每 10 分钟开一次浏览器
     private static readonly ConcurrentDictionary<string, int> SoftFailures = new();
     private const int MaxSoftFailures = 3;
@@ -285,7 +302,15 @@ public static class FreeHostDownloader
         BrowserGate.Wait();
         try
         {
-            return app.Dispatcher.InvokeAsync(() => ResolveAsync(url)).Task.Unwrap().GetAwaiter().GetResult();
+            // 兜底超时：浏览器那边任何一步不返回（控制器建不起来、脚本执行不回调…），这条线程就会一直攥着
+            // 该网盘的预约位与浏览器闸，间隔到了也没人能再领——宁可放弃这一轮，10 分钟后重来
+            var task = app.Dispatcher.InvokeAsync(() => ResolveAsync(url)).Task.Unwrap();
+            if (!task.Wait(ResolveTimeout + TimeSpan.FromMinutes(1)))
+            {
+                Logger.Warning($"网盘免费下载浏览器无响应，放弃本轮：{url}");
+                return new(null, DateTime.UtcNow + SoftRetryDelay, BrowserError, "浏览器无响应");
+            }
+            return task.Result;
         }
         catch (Exception e)
         {
@@ -352,7 +377,11 @@ public static class FreeHostDownloader
                 JsonElement state;
                 try
                 {
-                    using var doc = JsonDocument.Parse(await core.ExecuteScriptAsync(Autopilot));
+                    // 脚本执行偶尔不回调（页面卡死）：限时 15 秒，免得整个循环停在这里、上面的 deadline 永远查不到
+                    var exec = core.ExecuteScriptAsync(Autopilot);
+                    if (await Task.WhenAny(exec, Task.Delay(TimeSpan.FromSeconds(15))) != exec)
+                        continue;
+                    using var doc = JsonDocument.Parse(await exec);
                     state = doc.RootElement.Clone();
                 }
                 catch (Exception e) when (e is JsonException or InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -519,6 +548,9 @@ public static class FreeHostDownloader
 
           // 通用提示语（XFS 的错误页、rapidgator 的限额页）
           if (!op1 && !op2 && !free && /file (?:not found|has been removed|was deleted|is no longer available)|404 file|file does not exist/i.test(text)) { r.step = 'dead'; return r; }
+          // katfile（2026-10 起）的失效文件不再写「File Not Found」，整页只剩「推荐文件」列表（#rec-search 搜索框）；
+          // 正常文件页一定带 download1 表单，所以没有任何下载入口、却有推荐文件列表就是文件已失效
+          if (!op1 && !op2 && !free && !token && D.getElementById('rec-search')) { r.step = 'dead'; return r; }
           // 必须跟着 till/until next download 之类：rapidgator 的正常文件页上就写着「Wait 30 sec.」（免费倒计时）
           const wait = text.match(/wait\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)\b[,\s]*(?:and\s+)?)+)\s*(?:till|until|before|for (?:the )?next)/i);
           if (wait && !token) {
@@ -527,8 +559,15 @@ public static class FreeHostDownloader
             while ((m = re.exec(wait[1])) !== null) secs += parseInt(m[1], 10) * ({ d: 86400, h: 3600, m: 60, s: 1 })[m[2].toLowerCase()];
             r.secs = secs; return r;
           }
-          const lim = text.match(/[^.\n]*(?:delay between downloads|reached (?:your|the) (?:hourly |daily )?downloads? limit|not more than 1 file at a time)[^.\n]*/i);
+          // 明确的限额提示一律认。rapidgator 到限额时就停在普通文件页上：横幅写着 reached your hourly downloads limit，
+          // 「免费下载」按钮照样显示、只是解绑了点击（startTimerUrl 为空），不能因为看得见按钮就当还能往下走
+          const lim = text.match(/[^.\n]*(?:reached (?:your|the) (?:hourly |daily )?downloads? limit|not more than 1 file at a time)[^.\n]*/i);
           if (lim) { r.step = 'limit'; r.msg = lim[0].trim(); return r; }
+          // Delay between downloads 则只在页面已经没有下一步可走时才认：文件页的「免费/会员对比表」里本来就有这几个字，
+          // 照认的话每次间隔一到就被判成限额、再顺延 30 分钟，永远下不起来
+          const canGo = op1 || op2 || token || (free && vis(free) && W.startTimerUrl !== '');
+          const delay = canGo ? null : text.match(/[^.\n]*delay between downloads[^.\n]*/i);
+          if (delay) { r.step = 'limit'; r.msg = delay[0].trim(); return r; }
           if (/skipped countdown|wrong captcha|expired session/i.test(text) && !token) { r.step = 'retry'; return r; }
           if (/premium only|only for premium|for premium users only|premium members only/i.test(text) && !token && !op2) { r.step = 'premium'; return r; }
 

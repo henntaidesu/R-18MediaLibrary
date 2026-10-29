@@ -112,6 +112,8 @@
                                    Foreground="#60a5fa" FontWeight="SemiBold" />
                         <TextBlock Text="{Binding WaitingText}" Visibility="{Binding WaitingVisibility}"
                                    Foreground="#facc15" />
+                        <TextBlock Text="{Binding FreeWaitText}" Visibility="{Binding FreeWaitVisibility}"
+                                   Foreground="#facc15" />
                         <TextBlock Text="{Binding FailedText}" Visibility="{Binding FailedVisibility}"
                                    Foreground="#f87171" />
                         <TextBlock Text="{Binding DoneText}" />

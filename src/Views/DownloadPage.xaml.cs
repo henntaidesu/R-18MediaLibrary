@@ -121,6 +121,19 @@ public class DownloadSectionItem : ObservableBase
 
     public Visibility WaitingVisibility => WaitingText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
+    private string _freeWaitText = "";
+    public string FreeWaitText
+    {
+        get => _freeWaitText;
+        set
+        {
+            if (Set(ref _freeWaitText, value))
+                Raise(nameof(FreeWaitVisibility));
+        }
+    }
+
+    public Visibility FreeWaitVisibility => FreeWaitText.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
     private string _failedText = "";
     public string FailedText
     {
@@ -454,7 +467,7 @@ public partial class DownloadPage : UserControl
     }
 
     private (string Text, string Color) AggregateStatus(
-        string workId, List<(string Status, string? Error)> items)
+        string workId, List<(string Status, string? Error)> items, DateTime? freeUntil = null)
     {
         var statuses = items.Select(i => i.Status).ToList();
         var done = statuses.Count(s => s == "1");
@@ -463,6 +476,10 @@ public partial class DownloadPage : UserControl
                 ("done", done), ("total", statuses.Count)), "#60a5fa");
         if (statuses.Contains("5"))
             return (I18n.Tr("搜索可用下载连接"), "#facc15");
+        // 等待的分卷全在等网盘免费间隔：写出几点轮到，免得以为卡住了（同文件行）
+        if (statuses.Contains("0") && freeUntil is { } until)
+            return (I18n.Format(I18n.Tr("免费间隔 {time}"), ("time", until.ToString("HH:mm")))
+                + $" {done}/{statuses.Count}", "#facc15");
         if (statuses.Contains("0"))
             return (I18n.Format(I18n.Tr("等待下载 {done}/{total}"),
                 ("done", done), ("total", statuses.Count)), "#facc15");
@@ -588,7 +605,8 @@ public partial class DownloadPage : UserControl
 
             var statuses = items.Select(it => it.Status).ToList();
             var (aggText, aggColor) = AggregateStatus(
-                workId, items.Select(it => (it.Status, it.Error)).ToList());
+                workId, items.Select(it => (it.Status, it.Error)).ToList(),
+                FreeHostDownloader.WaitingUntilAll(items.Where(it => it.Status == "0").Select(it => it.Url)));
             group.StatusText = aggText;
             group.StatusBrush = BrushOf(aggColor);
             // 该番号有分卷解析失败时显示"重新解析/重新搜索"按钮
@@ -694,6 +712,11 @@ public partial class DownloadPage : UserControl
             var failed = files.Count(f => f.Status == "2" && !DownloadEngine.IsSkipped(f.Error));
             section.DownloadingText = downloading > 0 ? $"{I18n.Tr("下载中")} {downloading}" : "";
             section.WaitingText = waiting > 0 ? $"{I18n.Tr("等待")} {waiting}" : "";
+            // 等待的分卷全在等网盘免费间隔时，写出最早几点轮到（同 Web 的 freeWait）
+            section.FreeWaitText = FreeHostDownloader.WaitingUntilAll(
+                files.Where(f => f.Status == "0").Select(f => f.Url)) is { } fw
+                ? I18n.Format(I18n.Tr("免费间隔 {time}"), ("time", fw.ToString("HH:mm")))
+                : "";
             section.FailedText = failed > 0 ? $"{I18n.Tr("失败")} {failed}" : "";
             section.DoneText = $"{I18n.Tr("已完成")} {files.Count(f => f.Status == "1")}/{files.Count}";
             section.WorksText = I18n.Format(I18n.Tr("{count} 个作品"), ("count", works.Count.ToString()));

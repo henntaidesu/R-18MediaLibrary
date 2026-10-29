@@ -80,6 +80,7 @@ async function loadDownloads() {
     const part = (n, text, cls) => { if (n) sum.appendChild(el('span', cls, `${text} ${n}`)); };
     part(s.downloading, '下载中', 'on');
     part(s.waiting, '等待', 'wait');
+    if (s.freeWait) sum.appendChild(el('span', 'wait', `免费间隔 ${s.freeWait}`));
     part(s.failed, '失败', 'bad');
     sum.appendChild(el('span', null, `已完成 ${s.done}/${s.files}`));
     sum.appendChild(el('span', null, `${s.works} 个作品`));
