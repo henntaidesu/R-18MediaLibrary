@@ -478,54 +478,60 @@ function drawGroups(items, mapFn, unit, add) {
   const items2 = filtered();
   const works = items.reduce((s, i) => s + (i.works || i.count || 0), 0);
   $('count').textContent = $('search').value.trim() ? `共 ${items.length} ${unit}，匹配 ${items2.length} 个` : `共 ${items.length} ${unit}，${works} 个作品`;
-  const grid = el('div', 'grid groups');
-  items2.forEach(i => {
-    const m = mapFn(i);
-    const c = el('div', 'card group-card');
-    // 社团卡一律留出左侧头像位（m.avatar），没有头像的社团那一格就空着——
-    // 这样同一行里有头像和没头像的卡片版式一致，名称起始位置对得上。
-    // 有图时：图床接管就直取图床，取不到回退源站地址；再取不到就移除图片，但位置仍在
-    if (m.avatar) {
-      c.classList.add('avatar-slot');   // 切到 2:8 两栏栅格
-      if (m.icon) {
-        const ic = el('img', 'gicon'); ic.loading = 'lazy'; ic.src = m.icon;
-        ic.onerror = m.iconFallback
-          ? () => { ic.onerror = () => ic.remove(); ic.src = m.iconFallback; }
-          : () => ic.remove();
-        c.appendChild(ic);
-      }
+  const host = $('content');
+  if (_cardIO) { _cardIO.disconnect(); _cardIO = null; }
+  host.innerHTML = '';
+  if (!items2.length && !add) { host.appendChild(el('div', 'empty', '没有内容')); return; }
+  const grid = el('div', 'grid groups'); host.appendChild(grid);
+  // 分组卡同作品卡一样分批懒加载（社团动辄上千个，一次建完 DOM、发完头像请求页面会卡住）；
+  // 「添加」卡作为最后一项跟着分批走，始终在网格末尾
+  const ADD = {};
+  lazyGridFill(grid, add ? [...items2, ADD] : items2, i => i === ADD ? makeAddCard(add) : makeGroupCard(mapFn(i)));
+}
+function makeAddCard(add) {
+  const c = el('div', 'card group-card add-card');
+  c.append(el('span', 'add-plus', '+'), el('span', 'add-label', add.label));
+  c.onclick = add.onClick;
+  return c;
+}
+function makeGroupCard(m) {
+  const c = el('div', 'card group-card');
+  // 社团卡一律留出左侧头像位（m.avatar），没有头像的社团那一格就空着——
+  // 这样同一行里有头像和没头像的卡片版式一致，名称起始位置对得上。
+  // 有图时：图床接管就直取图床，取不到回退源站地址；再取不到就移除图片，但位置仍在
+  if (m.avatar) {
+    c.classList.add('avatar-slot');   // 切到 2:8 两栏栅格
+    if (m.icon) {
+      const ic = el('img', 'gicon'); ic.loading = 'lazy'; ic.src = m.icon;
+      ic.onerror = m.iconFallback
+        ? () => { ic.onerror = () => ic.remove(); ic.src = m.iconFallback; }
+        : () => ic.remove();
+      c.appendChild(ic);
     }
-    // 右侧信息块：名称 + 作品数竖排
-    const info = el('div', 'ginfo');
-    info.append(el('div', 'gt', m.title), el('div', 'gc', m.caption));
-    // 社团主页外链：新标签页打开，别让点击冒泡成"进入该分组"
-    if (m.links && m.links.length) {
-      const lk = el('div', 'glinks');
-      for (const l of m.links) {
-        const a = el('a', null, l.label); a.href = l.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-        a.title = l.url; a.onclick = (ev) => ev.stopPropagation();
-        lk.appendChild(a);
-      }
-      info.appendChild(lk);
-    }
-    c.appendChild(info);
-    // 右上角按钮（社团卡 🖊 改显示名、媒体库卡 ⚙ 设置）：别让点击冒泡成"进入该分组"
-    if (m.onEdit) {
-      const eb = el('button', 'gedit', m.editIcon || '🖊');
-      eb.title = m.editTitle || '自定义显示名称';
-      eb.onclick = (ev) => { ev.stopPropagation(); m.onEdit(); };
-      c.appendChild(eb);
-    }
-    c.onclick = m.onClick;
-    grid.appendChild(c);
-  });
-  if (add) {
-    const c = el('div', 'card group-card add-card');
-    c.append(el('span', 'add-plus', '+'), el('span', 'add-label', add.label));
-    c.onclick = add.onClick;
-    grid.appendChild(c);
   }
-  const host = $('content'); host.innerHTML = ''; host.appendChild(items2.length || add ? grid : el('div', 'empty', '没有内容'));
+  // 右侧信息块：名称 + 作品数竖排
+  const info = el('div', 'ginfo');
+  info.append(el('div', 'gt', m.title), el('div', 'gc', m.caption));
+  // 社团主页外链：新标签页打开，别让点击冒泡成"进入该分组"
+  if (m.links && m.links.length) {
+    const lk = el('div', 'glinks');
+    for (const l of m.links) {
+      const a = el('a', null, l.label); a.href = l.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.title = l.url; a.onclick = (ev) => ev.stopPropagation();
+      lk.appendChild(a);
+    }
+    info.appendChild(lk);
+  }
+  c.appendChild(info);
+  // 右上角按钮（社团卡 🖊 改显示名、媒体库卡 ⚙ 设置）：别让点击冒泡成"进入该分组"
+  if (m.onEdit) {
+    const eb = el('button', 'gedit', m.editIcon || '🖊');
+    eb.title = m.editTitle || '自定义显示名称';
+    eb.onclick = (ev) => { ev.stopPropagation(); m.onEdit(); };
+    c.appendChild(eb);
+  }
+  c.onclick = m.onClick;
+  return c;
 }
 function makeWorkCard(w) {
   const c = el('div', 'card');

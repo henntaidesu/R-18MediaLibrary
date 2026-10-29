@@ -439,7 +439,7 @@ async function startMakerDownPoll() {
   while (true) {
     if (makerState !== s || section !== 'search') break;
     let d;
-    try { d = await api('/api/downloads'); } catch (e) { break; }
+    try { d = await api('/api/downloads?all=1'); } catch (e) { break; }
     if (makerState !== s) break;
     const map = {}; (d.groups || []).forEach(g => { map[g.id] = g; });
     Object.keys(s.cards).forEach(id => {

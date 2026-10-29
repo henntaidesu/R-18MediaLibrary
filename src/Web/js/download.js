@@ -5,6 +5,12 @@ let dlExpanded = new Set();
 let dlSectionOpen = new Set();
 // 下载目录树里被手动折叠的文件夹（键 = 番号 + '\n' + 文件夹相对路径）；默认展开，对齐 WPF
 let dlFolderCollapsed = new Set();
+// 懒加载：展开的分区先画 DL_PAGE 个作品、滚到底再补；展开的作品先画 DL_FILE_PAGE 个文件、点「显示更多」再补。
+// 下载列表每秒整体重建，上千个作品/文件一次画完浏览器会卡
+const DL_PAGE = 50, DL_FILE_PAGE = 100;
+const dlSecShown = new Map();    // 分区 key → 已显示的作品数
+const dlFileShown = new Map();   // 作品号 → 已显示的文件数
+let dlMoreIO = null;
 let dlView = 'download';   // download | downloaded：两视图就地切换，不算一级导航
 // 视图调度：默认下载列表，可就地切到已下载。每次切换先清掉下载轮询定时器，避免重复叠加。
 function renderDownloadArea() {
@@ -51,7 +57,9 @@ function renderDownloadSection() {
 }
 async function loadDownloads() {
   if (section !== 'download' || dlView !== 'download') return;
-  let d; try { d = await api('/api/downloads'); } catch (e) { return; }
+  // 只要展开着的分区的作品、展开着的作品的文件明细（服务端据此裁剪，见 WebServer.ApiDownloads）
+  const q = `secs=${enc([...dlSectionOpen].join(','))}&open=${enc([...dlExpanded].join(','))}`;
+  let d; try { d = await api('/api/downloads?' + q); } catch (e) { return; }
   const btn = $('engineBtn');
   if (btn) {
     if (d.engine.running) { btn.dataset.running = '1'; if (d.engine.stopRequested) { btn.textContent = '暂停中…'; btn.disabled = true; } else { btn.textContent = '暂停下载'; btn.disabled = false; } }
@@ -67,7 +75,8 @@ async function loadDownloads() {
   // 用户正在该列表内选中文本时跳过本次重建：否则每秒刷新会清掉选区，导致文件名/失败原因无法复制
   const sel = window.getSelection && window.getSelection();
   if (sel && !sel.isCollapsed && sel.anchorNode && list.contains(sel.anchorNode)) return;
-  if (!d.groups.length) { list.innerHTML = '<div class="empty">下载列表为空</div>'; return; }
+  if (dlMoreIO) { dlMoreIO.disconnect(); dlMoreIO = null; }
+  if (!(d.sections || []).length) { list.innerHTML = '<div class="empty">下载列表为空</div>'; return; }
   list.innerHTML = '';
   // 一级：按下载源分区（各源并行下载，见 DownloadLanes），默认折叠，标题行显示该源的下载汇总；
   // 二级：分区内照旧是作品卡 → 目录树
@@ -89,11 +98,37 @@ async function loadDownloads() {
     sec.appendChild(head);
     if (open) {
       const body = el('div', 'dlsbody');
-      d.groups.filter(g => g.section === s.key).forEach(g => body.appendChild(renderDlGroup(g)));
+      const gs = d.groups.filter(g => g.section === s.key);
+      const n = dlSecShown.get(s.key) || DL_PAGE;
+      gs.slice(0, n).forEach(g => body.appendChild(renderDlGroup(g)));
+      if (gs.length > n) {
+        const more = el('div', 'dmore', `已显示 ${n} / ${gs.length} 个作品，下拉加载更多`);
+        more.dataset.sec = s.key;
+        more.onclick = () => dlShowMore(s.key);
+        body.appendChild(more);
+      }
       sec.appendChild(body);
     }
     list.appendChild(sec);
   });
+  // 按钮列统一取最宽那一行（先撤掉旧值量自然宽度，同一帧内写回，不闪）
+  list.style.removeProperty('--dacts-w');
+  let w = 0;
+  list.querySelectorAll('.drow > .dacts').forEach(a => { w = Math.max(w, a.scrollWidth); });
+  if (w) list.style.setProperty('--dacts-w', Math.ceil(w) + 'px');
+  // 「加载更多」行滚进视口即补下一批（重建后重新观察；仍在视口则连续补）
+  const mores = list.querySelectorAll('.dmore');
+  if (mores.length) {
+    dlMoreIO = new IntersectionObserver(es => {
+      const e = es.find(x => x.isIntersecting);
+      if (e) { dlMoreIO.disconnect(); dlShowMore(e.target.dataset.sec); }
+    }, { rootMargin: '200px' });
+    mores.forEach(m => dlMoreIO.observe(m));
+  }
+}
+function dlShowMore(key) {
+  dlSecShown.set(key, (dlSecShown.get(key) || DL_PAGE) + DL_PAGE);
+  loadDownloads();
 }
 // 下载列表里的一个作品（父行 + 可展开的目录树）
 function renderDlGroup(g) {
@@ -121,10 +156,18 @@ function renderDlGroup(g) {
     act.append(rp, rs);
   }
   if (g.canDelete) { const b = el('button', 'mini danger', '删除'); b.onclick = async () => { if (await uiConfirm(`将从下载列表删除 ${g.id}，并删除其作品记录与下载缓存。是否继续？`, { danger: true })) { await apiPost('/api/deletework', { id: g.id }); loadDownloads(); } }; act.appendChild(b); }
-  if (act.children.length) row.appendChild(act);
+  row.appendChild(act);   // 没有按钮也占住按钮列，各行进度条/状态才对得齐
   c.appendChild(row);
   const ch = el('div', 'children' + (open ? ' open' : ''));
-  if (g.children && g.children.length) { const tree = el('div', 'dtree'); renderDlTree(g.id, buildDlTree(g.children), tree); ch.appendChild(tree); }
+  if (g.children && g.children.length) {
+    const fn = dlFileShown.get(g.id) || DL_FILE_PAGE;
+    const tree = el('div', 'dtree'); renderDlTree(g.id, buildDlTree(g.children.slice(0, fn)), tree); ch.appendChild(tree);
+    if (g.children.length > fn) {
+      const b = el('button', 'mini dfmore', `还有 ${g.children.length - fn} 个文件，显示更多`);
+      b.onclick = () => { dlFileShown.set(g.id, fn + DL_FILE_PAGE); loadDownloads(); };
+      ch.appendChild(b);
+    }
+  }
   c.appendChild(ch);
   return c;
 }

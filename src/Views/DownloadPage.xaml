@@ -138,8 +138,8 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="240" />
                             <ColumnDefinition Width="140" />
-                            <ColumnDefinition Width="Auto" MinWidth="72" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" MinWidth="90" SharedSizeGroup="DlSpeed" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="DlActs" />
                         </Grid.ColumnDefinitions>
                         <ToggleButton IsChecked="{Binding IsExpanded}" Width="16" Height="20"
                                       HorizontalAlignment="Left"
@@ -302,7 +302,8 @@
         <!-- 下载列表：下载源分区标题 + （展开时）其下的作品卡，摊平成一条列表（见 DownloadPage.SyncItems），
              作品卡内再是目录树；虚拟化：仅渲染视口内的行。分区标题与作品卡模板不同，故用 Standard 不回收复用 -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" CanContentScroll="True">
-            <ItemsControl x:Name="GroupList"
+            <!-- 共享列宽作用域：各作品行的速度/按钮列取同一宽度（对齐 Web 的 dacts-w 变量），进度条与状态才不左右错位 -->
+            <ItemsControl x:Name="GroupList" Grid.IsSharedSizeScope="True"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Standard"
                           VirtualizingPanel.ScrollUnit="Pixel">

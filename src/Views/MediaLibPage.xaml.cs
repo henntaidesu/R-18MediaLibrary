@@ -287,6 +287,14 @@ public partial class MediaLibPage : UserControl
                 }
                 RestoreWorksScroll();
                 break;
+            case "lib_works" when _currentGenre != null:
+                _currentGenre = null;
+                ShowGenres();
+                break;
+            case "lib_works" when _currentType != null:
+                _currentType = null;
+                ShowTypes();
+                break;
             case "lib_works":
                 ShowLibs();
                 break;
@@ -369,10 +377,10 @@ public partial class MediaLibPage : UserControl
             ShowLibWorks();
     }
 
-    /// <summary>仅进入某个媒体库（非标签/形式流程）时显示"显示作品/显示社团"切换按钮。</summary>
+    /// <summary>进入某个媒体库，或标签/形式下钻的社团页时显示"显示作品/显示社团"切换按钮。</summary>
     private void UpdateLibToggleButton()
     {
-        var inLib = _currentLib != null && _currentGenre == null && _currentType == null
+        var inLib = (_currentLib != null || _currentGenre != null || _currentType != null)
                     && _level is "lib_works" or "makers";
         LibToggleButton.Visibility = inLib ? Visibility.Visible : Visibility.Collapsed;
         if (inLib)
@@ -501,7 +509,7 @@ public partial class MediaLibPage : UserControl
             ShowFavorites();
         else if (_level == "all_makers")
             ShowAllMakers();
-        else if (_level == "lib_works" && _currentLib != null)
+        else if (_level == "lib_works" && (_currentLib != null || _currentGenre != null || _currentType != null))
             ShowLibWorks();
         else if (_level is "works" && _currentMaker != null)
             ShowWorks();
@@ -566,7 +574,7 @@ public partial class MediaLibPage : UserControl
     private string PageTitle() => _level switch
     {
         "libs" => I18n.Tr("媒体库"),
-        "lib_works" => _currentLib ?? "",
+        "lib_works" => _currentGenre ?? _currentType ?? _currentLib ?? "",
         "makers" => _currentGenre ?? _currentType ?? _currentLib ?? I18n.Tr("作品社团"),
         "all_makers" => I18n.Tr("作品社团"),
         "genres" => I18n.Tr("作品标签"),
@@ -1169,15 +1177,23 @@ public partial class MediaLibPage : UserControl
             SetWorkCards(rows);
     }
 
-    /// <summary>进入媒体库后的默认视图：平铺当前媒体库下全部已品悦作品（可切换到社团视图）。</summary>
+    /// <summary>
+    /// 平铺作品视图（可切换到社团视图）：进入媒体库后的默认视图，也是标签/形式社团页的「显示作品」
+    /// （对齐 Web renderMakers 的 mode=works）。范围优先级与 ShowMakers 一致：标签 → 形式 → 媒体库。
+    /// </summary>
     private void ShowLibWorks()
     {
         _level = "lib_works";
         _currentMaker = null;
-        var rows = Db.Select(
-            "SELECT \"work_id\", \"work_name\", \"maker_name\", \"work_type\", \"age_category\", \"cover\" " +
-            "FROM \"works\" WHERE \"state\" = '已品悦' AND \"library\" = @lib " + WorkOrderClause(),
-            ("@lib", _currentLib ?? ""));
+        const string cols = "SELECT w.\"work_id\", w.\"work_name\", w.\"maker_name\", w.\"work_type\", w.\"age_category\", w.\"cover\" ";
+        var rows = _currentGenre != null
+            ? Db.Select(cols + "FROM \"works\" w JOIN \"work_genres\" g ON g.\"work_id\" = w.\"work_id\" " +
+                "WHERE w.\"state\" = '已品悦' AND g.\"genre\" = @g " + WorkOrderClause("w."), ("@g", _currentGenre))
+            : _currentType != null
+            ? Db.Select(cols + "FROM \"works\" w WHERE w.\"state\" = '已品悦' AND w.\"work_type\" = @t " + WorkOrderClause("w."),
+                ("@t", _currentType))
+            : Db.Select(cols + "FROM \"works\" w WHERE w.\"state\" = '已品悦' AND w.\"library\" = @lib " + WorkOrderClause("w."),
+                ("@lib", _currentLib ?? ""));
         if (rows != null)
             SetWorkCards(rows);
     }

@@ -59,13 +59,45 @@ public static class DlsiteApi
                 if (string.Equals(JStr(work, "workno"), workId, StringComparison.OrdinalIgnoreCase))
                     return Parse(work);
             }
-            return first is { } f ? Parse(f) : null;
+            // suggest 只覆盖 adult-jp，VJ（pro 站）与部分新作品搜不到 → 退用作品信息接口取作品名
+            return await GetInfoAsync(client, workId) ?? (first is { } f ? Parse(f) : null);
         }
         catch (Exception e)
         {
             Logger.Error(e, "DLsite suggest API");
             return null;
         }
+    }
+
+    /// <summary>作品信息接口（product/info/ajax）：各分站作品都能查到，但不给社团名。查不到返回 null。</summary>
+    private static async Task<DlWork?> GetInfoAsync(HttpClient client, string workId)
+    {
+        try
+        {
+            var text = await client.GetStringAsync(
+                $"https://www.dlsite.com/maniax/product/info/ajax?product_id={Uri.EscapeDataString(workId)}&cdn_cache_min=1");
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var p in doc.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(p.Name, workId, StringComparison.OrdinalIgnoreCase) ||
+                    p.Value.ValueKind != JsonValueKind.Object)
+                    continue;
+                var name = JStr(p.Value, "work_name");
+                if (name.Length == 0) return null;
+                return new DlWork
+                {
+                    WorkName = name, WorkNo = p.Name,
+                    MakerId = JStr(p.Value, "maker_id"), WorkType = JStr(p.Value, "work_type"),
+                    AgeCategory = JStr(p.Value, "age_category"), IsAna = JStr(p.Value, "is_ana"),
+                };
+            }
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, "DLsite product info API");
+        }
+        return null;
     }
 
     /// <summary>仅取作品名称（文件夹按作品名命名时使用），失败返回 null。</summary>

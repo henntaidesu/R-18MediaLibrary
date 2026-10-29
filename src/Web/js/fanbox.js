@@ -170,8 +170,8 @@ async function fbSearchArtists(kw) {
     ? (fbFt() ? `我关注的作者 ${artists.length} 位` : `我赞助 / 关注的作家 ${artists.length} 位`)
     : `搜索到 ${artists.length} 位作家` + (d.cachedAt ? `　索引更新于 ${d.cachedAt}` : '');
   const grid = el('div', 'grid cards');
-  artists.forEach(a => grid.appendChild(fbMakeArtistCard(a)));
   box.appendChild(grid);
+  lazyGridFill(grid, artists, fbMakeArtistCard);   // 分批渲染（「我赞助/关注的」可能上百位）
 }
 
 function fbMakeArtistCard(a) {

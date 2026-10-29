@@ -305,8 +305,11 @@
   .dl .dst { font-size: 13px; font-weight: 600; flex: 0 0 15%; min-width: 72px;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* 速度按内容宽右对齐；按钮紧随其后（作品名已吸收富余宽度，无需再把按钮推到最右） */
-  .dl .dsp { color: var(--muted); font-size: 12.5px; flex: 0 0 auto; min-width: 62px; text-align: right; }
-  .dl .dacts { display: flex; gap: 6px; flex: none; flex-wrap: wrap; }
+  .dl .dsp { color: var(--muted); font-size: 12.5px; flex: 0 0 80px; text-align: right;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 按钮列等宽（--dacts-w = 全列表按钮最多那一行的宽度，loadDownloads 实测写入）：
+     各行按钮数不同（无可用连接的没有「停止」等），不等宽会把进度条/状态挤得左右错位 */
+  .dl .dacts { display: flex; gap: 6px; flex: 0 0 var(--dacts-w, auto); flex-wrap: nowrap; }
   /* usage-card 复用（保留细进度条样式） */
   .bar { height: 6px; background: var(--surface2); border-radius: 4px; overflow: hidden; margin-top: 8px; }
   .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s; }
@@ -323,6 +326,10 @@
   .dlshead .dlssum .bad { color: #f87171; }
   .dlshead .dsp { color: var(--muted); font-size: 12.5px; flex: none; min-width: 62px; text-align: right; }
   .dlsbody { margin: 8px 0 0 16px; }
+  /* 懒加载的「加载更多」行（滚进视口自动补下一批，也可点）与作品内「显示更多文件」 */
+  .dmore { text-align: center; color: var(--muted); font-size: 12.5px; padding: 10px 0; cursor: pointer; }
+  .dmore:hover { color: var(--text); }
+  .dfmore { margin: 6px 0 2px; }
   .children { margin-top: 8px; padding-left: 22px; display: none; }
   .children.open { display: block; }
   /* 下载目录树：文件夹节点（可折叠）+ 文件叶子（进度条/速度/状态/复制链接） */

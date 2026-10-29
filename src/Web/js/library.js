@@ -65,15 +65,27 @@ async function renderAllMakers() {
   curItems = d.makers.map(m => ({ ...m, _key: `${m.maker} ${m.display || ''}`.trim().toLowerCase() || '未知社团' }));
   drawGroups(curItems, m => makerGroup(m, () => pushView('works', { maker: m.maker, label: makerLabel(m) })), '个社团');
 }
+// 标签 / 作品形式下钻的社团页：同库内视图一样带"显示作品/显示社团"就地切换（ctx.mode，缺省社团）
 async function renderMakers(ctx) {
   $('title').textContent = ctx.genre || ctx.type || ctx.lib || '作品社团';
-  setSort(MAKER_SORTS, makerSort, v => { makerSort = v; render(); });
   const q = new URLSearchParams();
   if (ctx.lib) q.set('lib', ctx.lib); if (ctx.genre) q.set('genre', ctx.genre); if (ctx.type) q.set('type', ctx.type);
+  const switchable = !!(ctx.genre || ctx.type);
+  if (switchable && ctx.mode === 'works') {
+    setSort(WORK_SORTS, workSort, v => { workSort = v; render(); });
+    q.set('all', '1'); q.set('sort', workSort);   // all=1：不按社团过滤，列出该分组的全部作品
+    const d = await api('/api/works?' + q);
+    curItems = d.works.map(w => ({ ...w, _key: `${w.id} ${w.name} ${w.maker}`.toLowerCase() }));
+    drawWorks(curItems);
+    prependLibToggle('🏢 显示社团', 'makers');
+    return;
+  }
+  setSort(MAKER_SORTS, makerSort, v => { makerSort = v; render(); });
   q.set('sort', makerSort);
   const d = await api('/api/makers?' + q);
   curItems = d.makers.map(m => ({ ...m, _key: `${m.maker} ${m.display || ''}`.trim().toLowerCase() || '未知社团' }));
-  drawGroups(curItems, m => makerGroup(m, () => pushView('works', { ...ctx, maker: m.maker, label: makerLabel(m) })), '个社团');
+  drawGroups(curItems, m => makerGroup(m, () => pushView('works', { ...ctx, mode: undefined, maker: m.maker, label: makerLabel(m) })), '个社团');
+  if (switchable) prependLibToggle('▦ 显示作品', 'works');
 }
 // 社团显示名：设过别名用别名，否则真名；两者都空是"未知社团"
 function makerLabel(m) { return m.display || m.maker || '未知社团'; }

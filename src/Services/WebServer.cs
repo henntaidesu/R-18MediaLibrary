@@ -385,7 +385,7 @@ public static class WebServer
                 case "/api/autodownload": ApiAutoDownload(stream, req); break;
                 case "/api/combine": await ApiCombineAsync(stream, req); break;
                 // 下载 / 已下载
-                case "/api/downloads": ApiDownloads(stream); break;
+                case "/api/downloads": ApiDownloads(stream, req); break;
                 case "/api/usage": await ApiUsageAsync(stream); break;
                 case "/api/engine": ApiEngine(stream, req); break;
                 case "/api/reparse": ApiReparse(stream, req); break;
@@ -818,8 +818,9 @@ public static class WebServer
         var genre = req.Query.GetValueOrDefault("genre");
         var type = req.Query.GetValueOrDefault("type");
         var order = WorkOrderClause(GetInt(req, "sort"));
-        // maker 为空串表示"未知社团"
-        var makerCond = maker.Length == 0
+        // maker 为空串表示"未知社团"；all=1 不按社团过滤（标签/形式页的「显示作品」）
+        var makerCond = req.Query.GetValueOrDefault("all") == "1" ? "1 = 1"
+            : maker.Length == 0
             ? "({p}\"maker_name\" IS NULL OR {p}\"maker_name\" = '')"
             : "{p}\"maker_name\" = @maker";
         List<object?[]>? rows;
@@ -1943,6 +1944,12 @@ public static class WebServer
 
     /// <summary>补齐 works 行的作品名等元数据（仅在为空时写入，避免覆盖已刮削的数据、不触碰目标库/状态）。
     /// 自动下载入队时未经作品搜索，works.work_name 常为空 → 下载页会退显番号，此处按番号拉取 DL API 补上。</summary>
+    private static string DisplayNameOf(string id, Dictionary<string, string> nameMap)
+    {
+        var name = nameMap.GetValueOrDefault(id, "");
+        return name.Length > 0 ? name : SearchCache.GetValueOrDefault(id)?.WorkName ?? "";
+    }
+
     private static async Task EnsureWorkMetaAsync(string id)
     {
         if (!MetaBackfilled.TryAdd(id, 0))
@@ -1954,7 +1961,9 @@ public static class WebServer
                 return;   // 确实查不到该作品数据 → 保留去重标记，不再重试（避免每秒轮询空拉）
             SearchCache[id] = work;
             Db.Execute(
-                "UPDATE \"works\" SET \"work_name\" = @n, \"maker_id\" = @mi, \"maker_name\" = @mn, \"work_type\" = @t " +
+                // 作品信息接口不给社团名（见 DlsiteApi.GetInfoAsync），空值不覆盖已有字段
+                "UPDATE \"works\" SET \"work_name\" = @n, \"maker_id\" = COALESCE(NULLIF(@mi, ''), \"maker_id\"), " +
+                "\"maker_name\" = COALESCE(NULLIF(@mn, ''), \"maker_name\"), \"work_type\" = COALESCE(NULLIF(@t, ''), \"work_type\") " +
                 "WHERE \"work_id\" = @w AND (\"work_name\" IS NULL OR \"work_name\" = '')",
                 ("@w", id), ("@n", work.WorkName), ("@mi", work.MakerId ?? ""),
                 ("@mn", work.MakerName ?? ""), ("@t", work.WorkType ?? ""));
@@ -1987,8 +1996,15 @@ public static class WebServer
 
     // ---------- API：下载 / 已下载 ----------
 
-    private static void ApiDownloads(NetworkStream stream)
+    private static void ApiDownloads(NetworkStream stream, Request req)
     {
+        // 前端只画展开着的分区与作品：secs = 展开的分区 key、open = 展开的作品号（逗号分隔）。
+        // 折叠的分区不回作品、折叠的作品不回文件明细——列表上千个文件时，每秒整包下发会把浏览器拖慢。
+        // 分区汇总与工具栏可用性仍按全部记录计算。all=1 回全部作品（仍不带折叠作品的文件明细）。
+        static HashSet<string> SetOf(string? v) => (v ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        var openSecs = SetOf(req.Query.GetValueOrDefault("secs"));
+        var openWorks = SetOf(req.Query.GetValueOrDefault("open"));
+        var allGroups = req.Query.GetValueOrDefault("all") == "1";   // 社团页角标要全部作品的聚合状态（不要文件明细）
         DownloadListActions.ClearFinished();   // 已入库的作品自动移出下载列表（取代「清除已完成」）
         var rows = Db.Select(
             "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid");
@@ -2066,7 +2082,8 @@ public static class WebServer
                 ? unzip.Pct : (double)totalPct / Math.Max(1, items.Count);
             return new
             {
-                id = workId, name = nameMap.GetValueOrDefault(workId, ""),
+                // works 里没有行（如「无可用下载连接」的占位作品）时用后台查到的作品名
+                id = workId, name = DisplayNameOf(workId, nameMap),
                 // 一级折叠分区（按下载源，见 DownloadLanes.SectionOf）
                 section = DownloadLanes.SectionOf(sourceOf[workId], items.Select(it => it.Url)),
                 pct = (int)groupPct, statusText = aggText, color = aggColor,
@@ -2079,7 +2096,8 @@ public static class WebServer
                 canDelete = workId.Length > 0,
                 // 「跳转作品」：works 里有这一行才有详情可看（论坛源刚入队的占位番号可能还没有）
                 canOpen = nameMap.ContainsKey(workId),
-                children,
+                files = items.Count,
+                children = openWorks.Contains(workId) ? children : children.Take(0).ToList(),
             };
         }).ToList();
         // 下载源分区的汇总（分区默认折叠，标题行上就要看出这个源正在下几个、等几个、速度多少）
@@ -2117,7 +2135,7 @@ public static class WebServer
                 canReparseAll = flags.CanReparse,
             },
             sections,
-            groups,
+            groups = groups.Where(g => allGroups || openSecs.Contains(g.section)),
         });
     }
 
