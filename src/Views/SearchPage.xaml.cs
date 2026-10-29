@@ -669,6 +669,19 @@ public partial class SearchPage : UserControl
         FanboxView.OpenArtist(artistId, artistName);
     }
 
+    /// <summary>
+    /// 作品监控 → Pixiv 的「查看收藏」：切到「Pixiv（该账号）」来源、输入框留空查询，即列出该账号的收藏
+    /// （对齐 Web watch.js 的 pxGotoFavorites）。账号已不在下拉里时什么也不做。
+    /// </summary>
+    public void OpenPixivFavorites(string userId)
+    {
+        var tag = SourcePixiv + ":" + userId;
+        if (_sourceTag != tag && !SelectSource(tag))
+            return;
+        InputBox.Text = "";
+        _ = PixivView.RunSearchAsync("");
+    }
+
     /// <summary>搜索栏返回按钮：E-Hentai 的详情回画廊网格。</summary>
     private void EhentaiBack_Click(object sender, RoutedEventArgs e) => EhentaiView.GoBack();
 

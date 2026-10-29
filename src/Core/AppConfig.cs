@@ -59,6 +59,8 @@ public static class AppConfig
         // FANBOX 作家监控：总开关 + 新建监控时的默认轮询间隔（分钟）。
         // 总开关只管后台自动轮询，手动「立即检查」不受它影响；没有监控项时轮询是空转。
         ["fanbox_watch"] = new() { ["enabled"] = "True", ["interval"] = "360" },
+        // Pixiv 收藏监控：总开关 + 新建监控时的默认轮询间隔（分钟）+ 批量入队时两件作品之间的间隔（秒，防 429）
+        ["pixiv_watch"] = new() { ["enabled"] = "True", ["interval"] = "60", ["pace"] = "3" },
         // E-Hentai 数据源：表站(e-hentai.org)可匿名浏览，里站(exhentai.org)必须登录；
         // original=True 时下原图（fullimg），否则下站点显示用的缩放图（省看图额度）。
         // 三个站点的登录账号不在这里，在 site_accounts 表（SiteAccounts，经「账号访问 → 在服务器上登录」加入）
@@ -208,6 +210,15 @@ public static class AppConfig
          Read("proxy", "port", "")!, Read("proxy", "type", "http")!);
 
     public static string DebridApiKey => Read("debrid", "api_key", "") ?? "";
+
+    /// <summary>
+    /// debrid-link 没配置 / Key 失效 / 会员到期时，论坛源的 rapidgator、katfile 链接改走网盘自己的免费下载
+    /// （见 FreeHostDownloader）。默认开启。
+    /// </summary>
+    public static bool FreeHostEnabled => Read("free_host", "enabled", "True") != "False";
+
+    /// <summary>网盘免费下载每个网盘两次下载之间的间隔（分钟）：rapidgator 免费账户限「每 120 分钟 1 个文件」。</summary>
+    public static int FreeHostInterval => Math.Clamp(ReadInt("free_host", "interval", 120), 1, 24 * 60);
 
     public static bool AutoDownload => Read("down_list", "auto_download") == "True";
 
@@ -419,6 +430,32 @@ public static class AppConfig
         get => Math.Clamp(ReadInt("fanbox_watch", "interval", 360), 10, 7 * 24 * 60);
         set => Write("fanbox_watch", "interval",
             Math.Clamp(value, 10, 7 * 24 * 60).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Pixiv 收藏监控的后台轮询总开关（关掉只停自动轮询，手动「立即检查」照常可用）。</summary>
+    public static bool PixivWatchEnabled
+    {
+        get => Read("pixiv_watch", "enabled", "True") != "False";
+        set => Write("pixiv_watch", "enabled", value ? "True" : "False");
+    }
+
+    /// <summary>新建收藏监控时的默认轮询间隔（分钟）；已有监控各自存自己的间隔。</summary>
+    public static int PixivWatchInterval
+    {
+        get => Math.Clamp(ReadInt("pixiv_watch", "interval", 60), 10, 7 * 24 * 60);
+        set => Write("pixiv_watch", "interval",
+            Math.Clamp(value, 10, 7 * 24 * 60).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// 收藏监控批量入队时两件作品之间歇多少秒（每件要打 2~3 个接口）。
+    /// 历史收藏动辄上千件，不歇着连打必然 429；遇到 429 时另有 60 秒冷却。
+    /// </summary>
+    public static int PixivWatchPace
+    {
+        get => Math.Clamp(ReadInt("pixiv_watch", "pace", 3), 1, 60);
+        set => Write("pixiv_watch", "pace",
+            Math.Clamp(value, 1, 60).ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     // ---------- E-Hentai 数据源 ----------

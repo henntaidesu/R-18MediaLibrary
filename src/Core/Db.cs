@@ -233,6 +233,26 @@ public static class Db
                         PRIMARY KEY ("artist_id")
                     );
 
+                    -- Pixiv 收藏监控：一个 pixiv 账号一行（user_id = site_accounts 里的 pixiv 用户号），
+                    -- 按间隔轮询该账号的收藏（公开 + 非公开），发现新收藏就自动入队下载。
+                    -- last_bookmark 是水位线：站点给每次收藏发的收藏号（bookmarkData.id）随收藏先后递增，
+                    -- 比它大的才算新收藏（旧作新收藏也算）。'0' 表示连历史收藏也要下——
+                    -- 历史按收藏先后从旧到新分批入队，每批成功后水位线随即推进，中途停下下一轮接着来。
+                    CREATE TABLE IF NOT EXISTS "pixiv_watch" (
+                        "user_id" text NOT NULL,
+                        "user_name" text,
+                        "interval_min" integer,
+                        "enabled" text,
+                        "last_check" text,
+                        "last_bookmark" text,
+                        "target_lib" text,
+                        "target_folder" text,
+                        "last_result" text,
+                        "downloaded" integer,
+                        "add_time" text,
+                        PRIMARY KEY ("user_id")
+                    );
+
                     -- 外部访问（Web 端）的登录用户，由门户单点登录首次登录时建出来（Services/PortalSso）。
                     -- 认人只认 portal_sub（门户的用户 id）：用户名在门户里能改，跟着它走会把改过名的人
                     -- 认成另一个人。用户名只在首次绑定时用来匹配同名的已有用户。

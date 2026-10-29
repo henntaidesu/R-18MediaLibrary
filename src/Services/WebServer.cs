@@ -81,6 +81,7 @@ public static class WebServer
         "downpath/downpath",
         "down_list/auto_download", "down_list/auto_unzip", "down_list/download_processes",
         "down_list/min_speed", "down_list/speed_limit",
+        "free_host/enabled", "free_host/interval",
         "proxy/openproxy", "proxy/host", "proxy/port", "proxy/type",
         "debrid/api_key", "language/lang", "loglevel/level", "encoding/encoding",
         "unzip/passwords",
@@ -417,6 +418,12 @@ public static class WebServer
                 case "/api/fanbox/watch/update": ApiFanboxWatchUpdate(stream, req); break;
                 case "/api/fanbox/watch/check": ApiFanboxWatchCheck(stream, req); break;
                 case "/api/fanbox/watch/config": ApiFanboxWatchConfig(stream, req); break;
+                // Pixiv 收藏监控（账号有新收藏就自动下载）
+                case "/api/pixiv/watches": ApiPixivWatches(stream); break;
+                case "/api/pixiv/watch/add": await ApiPixivWatchAddAsync(stream, req); break;
+                case "/api/pixiv/watch/update": ApiPixivWatchUpdate(stream, req); break;
+                case "/api/pixiv/watch/check": ApiPixivWatchCheck(stream, req); break;
+                case "/api/pixiv/watch/config": ApiPixivWatchConfig(stream, req); break;
 
                 case "/api/eh/search": await ApiEhSearchAsync(stream, req); break;
                 case "/api/eh/gallery": await ApiEhGalleryAsync(stream, req); break;
@@ -2021,6 +2028,9 @@ public static class WebServer
                 // 已完成、但存的是源站预览图而非原图
                 else if (it.Status == "1" && DownloadEngine.IsThumb(it.Error))
                     text = "已完成（预览图）";
+                // 网盘免费下载在等该网盘的下载间隔：写出几点轮到它（镜像 WPF）
+                else if (it.Status == "0" && FreeHostDownloader.WaitingUntil(it.Url) is { } until)
+                    text = $"免费间隔 {until:HH:mm}";
                 // asmr 直链带作品内目录层级（sub_path 含子目录），用于前端构建目录树；
                 // 论坛源无 sub_path，回退到 URL 解码后的文件名（位于根层级），对齐 WPF 下载页
                 var rel = string.IsNullOrEmpty(it.SubPath) ? FileNameOf(it.Url) : it.SubPath!;
@@ -2382,6 +2392,12 @@ public static class WebServer
             DownloadEngine.RetryFailedError => "下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）",
             "floodDetected" => "请求过于频繁，请稍后再试",
             "badFileType" => "不支持的文件类型",
+            // debrid-link 不可用时的网盘免费下载（见 FreeHostDownloader）
+            FreeHostDownloader.UnsupportedError => "debrid-link 不可用，且该网盘不支持免费下载（只支持 rapidgator / katfile）",
+            FreeHostDownloader.PremiumOnlyError => "该文件只能会员下载（rapidgator 免费账户只能下 500MB 以内的文件）",
+            FreeHostDownloader.CaptchaError => "网盘免费下载的人机验证多次没有自动通过（可点「全部重新解析」再试）",
+            FreeHostDownloader.BrowserError => "网盘免费下载需要内嵌浏览器（WebView2），这台电脑上打不开",
+            FreeHostDownloader.FetchError => "网盘免费下载页面多次没有走通（可点「全部重新解析」再试）",
             _ => $"解析失败（{raw}）",
         };
     }
@@ -2408,6 +2424,11 @@ public static class WebServer
         "floodDetected" => "请求频繁",
         "badFileType" => "类型不支持",
         "maxLink" or "maxLinkHost" => "超链接数",
+        FreeHostDownloader.UnsupportedError => "网盘不支持",
+        FreeHostDownloader.PremiumOnlyError => "需会员",
+        FreeHostDownloader.CaptchaError => "验证未通过",
+        FreeHostDownloader.BrowserError => "浏览器不可用",
+        FreeHostDownloader.FetchError => "免费下载失败",
         _ => "解析失败",
     };
 
@@ -2582,6 +2603,7 @@ public static class WebServer
             proxy = new { open = proxyOpen == "True", host = proxyHost, port = proxyPort, type = proxyType },
             // 敏感值不回传明文，仅告知是否已设置（编辑时留空表示不修改）
             debridKeySet = AppConfig.DebridApiKey.Length > 0,
+            freeHost = new { enabled = AppConfig.FreeHostEnabled, interval = AppConfig.FreeHostInterval },
             downProc = AppConfig.DownloadProcesses,
             minSpeed = AppConfig.MinSpeedKb,
             speedLimit = AppConfig.SpeedLimitKb,
@@ -3246,6 +3268,100 @@ public static class WebServer
             AppConfig.FanboxWatchInterval = interval;
         if (AppConfig.FanboxWatchEnabled)
             FanboxWatchService.Kick();
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    // ---------- API：Pixiv 收藏监控 ----------
+
+    /// <summary>
+    /// 已登录的 pixiv 账号（每个账号一张卡：已监控 / 未监控）+ 监控记录 + 全局设置 + 当前检查状态。
+    /// 账号退出登录后监控行仍在（<c>hasAccount=false</c>），重新登录同一账号即可接着用。
+    /// </summary>
+    private static void ApiPixivWatches(NetworkStream stream)
+    {
+        var (busy, status) = PixivWatchService.State();
+        WriteJson(stream, 200, new
+        {
+            enabled = AppConfig.PixivWatchEnabled,
+            interval = AppConfig.PixivWatchInterval,
+            pace = AppConfig.PixivWatchPace,
+            busy,
+            status,
+            summary = PixivWatchService.IdleSummary(),
+            accounts = SiteAccounts.List(AccountService.Pixiv).Select(a => new { uid = a.UserId, name = a.DisplayName }),
+            watches = PixivWatchService.All().Select(w => new
+            {
+                uid = w.UserId, name = w.Display, hasAccount = w.HasAccount,
+                interval = w.IntervalMin, enabled = w.Enabled,
+                lastCheck = w.LastCheck, lastResult = w.LastResult,
+                downloaded = w.Downloaded, lib = w.TargetLib,
+                next = PixivWatchService.NextCheckText(w),
+            }),
+        });
+    }
+
+    /// <summary>为某个 pixiv 账号开启收藏监控；history=true 时连历史收藏一起（慢速）下。</summary>
+    private static async Task ApiPixivWatchAddAsync(NetworkStream stream, Request req)
+    {
+        var uid = ReadStringField(req.Body, "uid").Trim();
+        if (!IsPlainId(uid))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        var (ok, message) = await PixivWatchService.AddAsync(
+            uid,
+            ReadIntField(req.Body, "interval"),
+            ReadBoolField(req.Body, "history"),
+            ReadStringField(req.Body, "lib"),
+            ReadStringField(req.Body, "folder"));
+        WriteJson(stream, 200, new { ok, message });
+    }
+
+    /// <summary>改间隔 / 暂停恢复 / 移除（remove=true 时其余字段忽略）。</summary>
+    private static void ApiPixivWatchUpdate(NetworkStream stream, Request req)
+    {
+        var uid = ReadStringField(req.Body, "uid").Trim();
+        if (!IsPlainId(uid))
+        {
+            WriteJson(stream, 400, new { error = "bad request" });
+            return;
+        }
+        if (ReadBoolField(req.Body, "remove"))
+        {
+            PixivWatchService.Remove(uid);
+            WriteJson(stream, 200, new { ok = true });
+            return;
+        }
+        if (ReadIntField(req.Body, "interval") is var interval and > 0)
+            PixivWatchService.SetInterval(uid, interval);
+        if (ReadOptionalBoolField(req.Body, "enabled") is { } on)
+            PixivWatchService.SetEnabled(uid, on);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>立即检查（uid 为空 = 全部）；检查在后台跑，前端轮询 /api/pixiv/watches 看进度。</summary>
+    private static void ApiPixivWatchCheck(NetworkStream stream, Request req)
+    {
+        var uid = ReadStringField(req.Body, "uid").Trim();
+        if (uid.Length == 0)
+            _ = PixivWatchService.CheckAllAsync();
+        else if (IsPlainId(uid))
+            _ = PixivWatchService.CheckNowAsync(uid);
+        WriteJson(stream, 200, new { ok = true });
+    }
+
+    /// <summary>全局开关 / 默认轮询间隔 / 批量入队间隔（秒）。</summary>
+    private static void ApiPixivWatchConfig(NetworkStream stream, Request req)
+    {
+        if (ReadOptionalBoolField(req.Body, "enabled") is { } on)
+            AppConfig.PixivWatchEnabled = on;
+        if (ReadIntField(req.Body, "interval") is var interval and > 0)
+            AppConfig.PixivWatchInterval = interval;
+        if (ReadIntField(req.Body, "pace") is var pace and > 0)
+            AppConfig.PixivWatchPace = pace;
+        if (AppConfig.PixivWatchEnabled)
+            PixivWatchService.Kick();
         WriteJson(stream, 200, new { ok = true });
     }
 

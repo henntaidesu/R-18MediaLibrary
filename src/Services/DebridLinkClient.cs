@@ -117,6 +117,21 @@ public class DebridLinkClient : IDisposable
         return (root.TryGetProperty("value", out var value) ? value.Clone() : null, null);
     }
 
+    /// <summary>
+    /// 账户信息并带回错误码（Key 失效时为 badToken）。value 里 accountType 0 = 免费账户、premiumLeft = 会员剩余秒数，
+    /// 会员到期后两者都是 0——据此判断还能不能走中转（见 <see cref="FreeHostDownloader.DebridUsable"/>）。
+    /// </summary>
+    public async Task<(JsonElement? Value, string? Error)> AccountInfosDetailedAsync(CancellationToken ct = default)
+    {
+        using var response = await _client.GetAsync($"{ApiBase}/account/infos", ct);
+        var text = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(text);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("success", out var success) || !success.GetBoolean())
+            return (null, root.TryGetProperty("error", out var e) ? e.ToString() : "unknown");
+        return (root.TryGetProperty("value", out var value) ? value.Clone() : null, null);
+    }
+
     /// <summary>debrid-link 支持的域名列表（每次运行只请求一次 API，失败用兜底列表）。</summary>
     public static async Task<List<string>> SupportedDomainsAsync()
     {

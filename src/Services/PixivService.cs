@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using R18MediaLibrary.Core;
 
@@ -18,6 +19,14 @@ public class PixivEnqueueResult
     public int Skipped { get; init; }
     public string? Error { get; init; }
     public bool Ok => Error is null && ArtworkCount > 0;
+
+    /// <summary>
+    /// 按顺序处理完的作品数（入队、跳过、确定下不了的都算）。没中途停下时等于传入的件数；
+    /// 慢速批量模式因限流/断网停下时（<see cref="Aborted"/> 非空）只算到停下之前——收藏监控据此只把水位线推到这里。
+    /// </summary>
+    public int Processed { get; init; }
+    /// <summary>中途停下的原因（限流重试用尽 / 断网 / 被取消）；跑完为 null。</summary>
+    public string? Aborted { get; init; }
 }
 
 /// <summary>
@@ -73,15 +82,26 @@ public static class PixivService
     /// 入口只收作品号、元数据一律在这里现取：搜索结果里的条目没有说明文与收藏数
     /// （站点的列表接口就不给），直接拿它入库会比从详情页入队的同一件作品少一截信息。
     /// 两端都走这一个入口，入库结果才一致。
+    ///
+    /// <paramref name="pace"/> 给值即「慢速批量」模式（收藏监控的历史收藏动辄上千件）：每两件作品之间歇这么久，
+    /// 遇到 HTTP 429 先冷却 <see cref="ThrottleCooldown"/> 再重试同一件，重试用尽或断网就停下，
+    /// 用 <see cref="PixivEnqueueResult.Processed"/> 报告处理到了哪里，而不是把后面的作品一路当成失败跳过。
+    /// 不给值（手动入队）保持原来的行为：失败的作品记一条错误、接着处理下一件。
     /// </summary>
     public static Task<PixivEnqueueResult> EnqueueByIdsAsync(
         IReadOnlyList<string> illustIds, string? targetFolder = null, string? targetLib = null,
-        Action<int, int, string>? onProgress = null) =>
-        Task.Run(() => Enqueue(illustIds, targetFolder, targetLib, onProgress));
+        Action<int, int, string>? onProgress = null, TimeSpan? pace = null, CancellationToken ct = default) =>
+        Task.Run(() => Enqueue(illustIds, targetFolder, targetLib, onProgress, pace, ct));
+
+    /// <summary>慢速批量模式下遇到 429 的冷却时间：站点的限流按分钟计，几秒后热重试只会把封锁续期。</summary>
+    public static readonly TimeSpan ThrottleCooldown = TimeSpan.FromSeconds(60);
+
+    /// <summary>慢速批量模式下同一件作品遇到 429 的最多重试次数。</summary>
+    private const int ThrottleRetries = 3;
 
     private static async Task<PixivEnqueueResult> Enqueue(
         IReadOnlyList<string> illustIds, string? targetFolder, string? targetLib,
-        Action<int, int, string>? onProgress)
+        Action<int, int, string>? onProgress, TimeSpan? pace, CancellationToken ct)
     {
         if (illustIds.Count == 0)
             return new PixivEnqueueResult { Error = "未选择任何作品" };
@@ -90,8 +110,22 @@ public static class PixivService
 
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.ffffff");
         var original = AppConfig.PixivOriginal;
-        int artworkCount = 0, fileCount = 0, skipped = 0;
-        string? lastError = null;
+        int artworkCount = 0, fileCount = 0, skipped = 0, processed = illustIds.Count;
+        string? lastError = null, aborted = null;
+
+        // 慢速批量模式：限流时冷却后重试同一个请求；手动入队（pace 为 null）只请求一次
+        async Task<(T Value, string? Error)> Fetch<T>(Func<Task<(T, string?)>> call, int index)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                var (value, error) = await call();
+                if (pace is null || error != PixivApi.ThrottledError || attempt >= ThrottleRetries)
+                    return (value, error);
+                Logger.Warning($"pixiv 请求过于频繁（HTTP 429），冷却 {ThrottleCooldown.TotalSeconds:0} 秒后重试");
+                onProgress?.Invoke(index, illustIds.Count, $"请求过于频繁，等待 {ThrottleCooldown.TotalSeconds:0} 秒…");
+                await Task.Delay(ThrottleCooldown, ct);
+            }
+        }
 
         for (var i = 0; i < illustIds.Count; i++)
         {
@@ -105,7 +139,32 @@ public static class PixivService
                 continue;   // 已入库或队列里还有未完成的文件；元数据也就不必白取一次
             }
 
-            var (art, error) = await PixivApi.GetArtworkAsync(illustId);
+            PixivArtwork? art;
+            string? error;
+            List<PixivPageImage> pages;
+            try
+            {
+                // 两件作品之间歇一下：一件作品要打 2~3 个接口，连着打上千件必然 429
+                if (pace is { } gap && i > 0)
+                    await Task.Delay(gap, ct);
+                (art, error) = await Fetch(() => PixivApi.GetArtworkAsync(illustId), i + 1);
+                // 图片地址现取：详情接口只给封面一张，逐页地址要另走 pages 接口
+                pages = [];
+                if (art != null)
+                    (pages, error) = await Fetch(() => PixivApi.FetchPagesAsync(illustId), i + 1);
+            }
+            catch (OperationCanceledException)
+            {
+                (processed, aborted) = (i, "已取消");
+                break;
+            }
+            // 限流重试用尽 / 断网：停在这一件之前，下一轮从这里接着来（不当成「作品下不了」跳过）
+            if (pace != null && (art is null || pages.Count == 0) && PixivApi.IsTransientError(error))
+            {
+                (processed, aborted) = (i, error);
+                break;
+            }
+
             if (art is null)
             {
                 lastError = $"{workId} 取不到作品信息：{error ?? "站点无响应"}";
@@ -114,8 +173,6 @@ public static class PixivService
             }
             onProgress?.Invoke(i + 1, illustIds.Count, Display(art));
 
-            // 图片地址现取：详情接口只给封面一张，逐页地址要另走 pages 接口
-            var pages = await PixivApi.GetPagesAsync(illustId);
             if (pages.Count == 0)
             {
                 lastError = $"《{Display(art)}》没有取到任何图片（作品可能已删除，或 R-18 作品需要登录）";
@@ -186,8 +243,8 @@ public static class PixivService
         if (artworkCount == 0)
             return new PixivEnqueueResult
             {
-                Skipped = skipped,
-                Error = lastError ??
+                Skipped = skipped, Processed = processed, Aborted = aborted,
+                Error = aborted ?? lastError ??
                         (skipped > 0 ? "选中的作品都已在库或已在下载队列中" : "选中的作品没有可下载的图片"),
             };
 
@@ -196,6 +253,7 @@ public static class PixivService
         return new PixivEnqueueResult
         {
             ArtworkCount = artworkCount, FileCount = fileCount, Skipped = skipped,
+            Processed = processed, Aborted = aborted,
         };
     }
 

@@ -665,20 +665,33 @@ public static class DownloadEngine
         }
     }
 
-    /// <summary>从队列原子地领取一条属于该车道的待下载任务并立即标记为下载中；无任务返回 null。</summary>
-    private static (string Key, string WorkId, string Url, string Source, string SubPath, string Account)? ClaimNext(
-        string lane)
+    /// <summary>
+    /// 从队列原子地领取一条属于该车道的待下载任务并立即标记为下载中；无任务返回 null。
+    /// FreeHost：论坛源在 debrid-link 不可用时走网盘免费下载，领到的那个网盘的预约位（空串 = 该网盘不支持免费下载）；
+    /// 其余情况为 null。非 null 时用完必须 <see cref="FreeHostDownloader.Release"/>。
+    /// </summary>
+    private static (string Key, string WorkId, string Url, string Source, string SubPath, string Account, string? FreeHost)?
+        ClaimNext(string lane)
     {
+        // 要不要走免费下载会按需问一次 debrid-link，放在锁外，免得卡住其它车道领任务
+        var free = lane == DownloadLanes.AnimeSharing && FreeHostDownloader.Active;
         lock (ClaimLock)
         {
             // fanbox 来源的三条车道（pawchive / 官方站 / 谷歌网盘）与 Fantia 的两条（站点 / 谷歌网盘）
-            // SQL 只能筛到来源，余下按 url 在这里细分；其它车道一个来源就是一条车道，取第一行即可
-            var split = DownloadLanes.SplitsByUrl(lane);
+            // SQL 只能筛到来源，余下按 url 在这里细分；其它车道一个来源就是一条车道，取第一行即可。
+            // 免费下载也要逐行看：正在等间隔的网盘跳过，先下别的网盘
+            var split = DownloadLanes.SplitsByUrl(lane) || free;
             var rows = Db.Select(
                 "SELECT \"UUID\", \"work_id\", \"url\", \"source\", \"sub_path\", \"account\" FROM \"download_list\" " +
                 $"WHERE \"status\" = '0' AND {DownloadLanes.SourceFilter(lane)} ORDER BY rowid" + (split ? "" : " LIMIT 1"));
+            string? freeHost = null;
             var row = rows?.FirstOrDefault(r =>
-                !split || DownloadLanes.LaneOf(r[3] as string, r[2] as string ?? "") == lane);
+            {
+                var url = r[2] as string ?? "";
+                if (free)
+                    return FreeHostDownloader.TryReserve(url, out freeHost);
+                return !split || DownloadLanes.LaneOf(r[3] as string, url) == lane;
+            });
             if (row is null)
                 return null;
             var key = row[0] as string ?? "";
@@ -687,7 +700,7 @@ public static class DownloadEngine
                 "UPDATE \"download_list\" SET \"status\" = '3', \"long\" = '0', \"error\" = NULL WHERE \"UUID\" = @k",
                 ("@k", key));
             return (key, row[1] as string ?? "", row[2] as string ?? "",
-                row[3] as string ?? "", row[4] as string ?? "", row[5] as string ?? "");
+                row[3] as string ?? "", row[4] as string ?? "", row[5] as string ?? "", freeHost);
         }
     }
 
@@ -720,7 +733,7 @@ public static class DownloadEngine
     /// <summary>单连接下载（断点续传 + 暂停 + 低速重试），返回 done/paused/slow/failed/throttled/missing。</summary>
     private static string DownloadSingle(HttpClient client, string url, string filePath,
         string filename, string key, string workId, string? userAgent, string? cookie,
-        string? referer = null, bool expectImage = false)
+        string? referer = null, bool expectImage = false, bool noSlowRetry = false)
     {
         long downloaded = 0;
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -788,7 +801,8 @@ public static class DownloadEngine
                 downloaded = 0;  // 服务器不支持续传，从头下载
 
             var totalSize = downloaded + (response.Content.Headers.ContentLength ?? 0);
-            var minSpeedBytes = AppConfig.MinSpeedKb * 1024L;
+            // 网盘免费下载本来就限速（rapidgator 免费约几十 KB/s），低速重试只会扔掉一条好不容易换来的直链
+            var minSpeedBytes = noSlowRetry ? 0 : AppConfig.MinSpeedKb * 1024L;
             // 全局限速：所有下载线程共享同一总上限；限速时关闭低速重试，避免被限的速度误判为卡死
             var speedLimited = AppConfig.SpeedLimitKb > 0;
             Limiter.SetRate(AppConfig.SpeedLimitKb * 1024L);
@@ -975,6 +989,7 @@ public static class DownloadEngine
         {
             string? key = null;
             var thumbFallback = false;   // 本轮是否以预览图代替了原图
+            string? freeHost = null;     // 网盘免费下载占着的网盘预约位（见 ClaimNext），finally 里放掉
             try
             {
                 if (_stopRequested)
@@ -993,8 +1008,10 @@ public static class DownloadEngine
                     continue;
                 }
 
-                var (k, workId, url, source, subPath, account) = claimed.Value;
+                var (k, workId, url, source, subPath, account, reserved) = claimed.Value;
                 key = k;
+                freeHost = reserved;
+                FreeLink? freeLink = null;
                 // pixiv / FANBOX 多账号：用入队时那个账号的 cookie（官方站附件只对赞助到档位的账号开放）。
                 // 这里是线程的同步循环，设进去的上下文一直有效到下一条覆盖；旧记录没有 account，用默认账号
                 if (source is FanboxService.SourceName or PixivApi.SourceName or FantiaApi.SourceName)
@@ -1084,6 +1101,14 @@ public static class DownloadEngine
                         ? url.TrimEnd('/').Split('/')[^1].Split('?')[0]
                         : Path.GetFileName(subPath);
                 }
+                else if (freeHost != null)
+                {
+                    // debrid-link 不可用（没配 Key / Key 失效 / 会员到期）：走网盘自己的免费下载
+                    if (!TryResolveFree(key, workId, url, freeHost, out freeLink))
+                        continue;
+                    directUrl = freeLink!.Url;
+                    filename = freeLink.FileName;
+                }
                 else
                 {
                     Logger.Info($"通过 debrid-link 解析: {url}");
@@ -1095,6 +1120,14 @@ public static class DownloadEngine
                     if (string.IsNullOrEmpty(directUrl))
                     {
                         Logger.Error($"{workId} debrid-link 解析失败: {url} ({parseError})");
+                        // Key 失效 / 会员到期：中转整个用不了，不是这条链接的问题。放回队列，
+                        // 重新领取时就走网盘免费下载（关掉了免费下载则照旧记失败）
+                        if (AppConfig.FreeHostEnabled && FreeHostDownloader.IsDebridUnusableError(parseError))
+                        {
+                            FreeHostDownloader.MarkDebridUnusable(parseError);
+                            SetStatus(key, "0");
+                            continue;
+                        }
                         // 流量用尽：暂停该网盘（或账户级全部论坛源）下载，等流量重置后自动继续
                         if (parseError is "maxData" or "maxDataHost")
                             RegisterTrafficExhausted(url, parseError);
@@ -1131,9 +1164,18 @@ public static class DownloadEngine
                     : isFanboxOfficial ? FanboxOfficialApi.Referer : null;
                 // E-Hentai 的每一条都是图片，响应不是图片就说明站点回了错误页（见 notimage 分支）
                 // 官方站不能走下载线程共用的 client：它的 cookie 罐会让 Cloudflare 403（见 FanboxOfficialApi.Build）
-                var result = DownloadFile(isFanboxOfficial ? FanboxOfficialApi.DownloadClient() : client,
-                    directUrl, filePath, filename, key, workId, userAgent, cookie, referer, expectImage: isEhentai);
+                // 免费直链：带上浏览器取链时的 UA / cookie / Referer；不先探测大小（免费直链多半一次性，
+                // 多一个请求可能就把它用掉了），也不做低速重试
+                var result = freeLink != null
+                    ? DownloadSingle(client, directUrl, filePath, filename, key, workId,
+                        freeLink.UserAgent, freeLink.Cookie, freeLink.Referer, noSlowRetry: true)
+                    : DownloadFile(isFanboxOfficial ? FanboxOfficialApi.DownloadClient() : client,
+                        directUrl, filePath, filename, key, workId, userAgent, cookie, referer, expectImage: isEhentai);
                 DownloadProgress.TryRemove(key, out _);
+                // 免费下载没下完：直链已经作废，这个网盘不必干等满一个间隔，几分钟后重新取链
+                // （网盘若还算着上一次，页面会说要等多久，到时以页面为准）
+                if (freeLink != null && result != "done")
+                    FreeHostDownloader.SetCooldown(freeHost!, DateTime.UtcNow.AddMinutes(5));
                 // pawchive 对只归档了预览的投稿（has_full=false）原图一律 404，但 img.<host> 上
                 // 800px 的预览图是有的。原图没有就存预览图，总好过整篇空手而归；
                 // 只对 fanbox 的图片附件生效（压缩包/PDF 没有预览图，asmr 也没有这套机制）。
@@ -1234,7 +1276,53 @@ public static class DownloadEngine
                 }
                 Thread.Sleep(5000);
             }
+            finally
+            {
+                if (freeHost != null)
+                    FreeHostDownloader.Release(freeHost);
+            }
         }
+    }
+
+    /// <summary>
+    /// 论坛源的免费下载取链（debrid-link 不可用时）：成功给出直链并按间隔顺延该网盘的下一次；
+    /// 不成功就把这一行放回队列等着（网盘要求等待 / 验证没过）或记失败（不支持的网盘 / 只能会员下 / 文件失效），返回 false。
+    /// </summary>
+    private static bool TryResolveFree(string key, string workId, string url, string freeHost, out FreeLink? link)
+    {
+        link = null;
+        if (freeHost.Length == 0)
+        {
+            Logger.Warning($"{workId} debrid-link 不可用，且该网盘不支持免费下载: {url}");
+            SetParseFailed(key, FreeHostDownloader.UnsupportedError);
+            return false;
+        }
+        Logger.Info($"debrid-link 不可用，改走网盘免费下载: {url}");
+        var free = FreeHostDownloader.Resolve(url);
+        if (free.Link != null)
+        {
+            FreeHostDownloader.ClearFailures(key);
+            FreeHostDownloader.MarkStarted(freeHost);
+            link = free.Link;
+            return true;
+        }
+        if (free.RetryAt is { } at)
+        {
+            FreeHostDownloader.SetCooldown(freeHost, at);
+            // 网盘明说要等（免费间隔 / 限额）不算失败；验证没过之类才计次，次数用完停下
+            if (free.Error != null && FreeHostDownloader.GiveUp(key))
+            {
+                Logger.Error($"{workId} 网盘免费下载多次未成功，停止自动重试: {url}（{free.Message}）");
+                SetParseFailed(key, free.Error);
+                return false;
+            }
+            Logger.Warning($"{workId} 网盘免费下载暂不可用: {url}（{free.Message}）");
+            SetStatus(key, "0");
+            return false;
+        }
+        Logger.Error($"{workId} 网盘免费下载失败: {url}（{free.Message}）");
+        SetParseFailed(key, free.Error);
+        return false;
     }
 
     /// <summary>下载调度：把遗留的"下载中"任务重新排队，再按设置启动 N 个下载线程。</summary>
@@ -1247,6 +1335,18 @@ public static class DownloadEngine
         // 一律重新排队重试——流量若已重置则直接续传，否则再次失败并以新的重置时间重新暂停（自我修正）
         Db.Execute(
             "UPDATE \"download_list\" SET \"status\" = '0', \"error\" = NULL WHERE \"status\" = '2' AND \"error\" IN ('maxData', 'maxDataHost')");
+
+        // 以前因 debrid-link Key 失效 / 会员到期而解析失败的论坛源分卷：开着网盘免费下载就重新排队，
+        // 领取时会按 debrid-link 当下的状态决定走中转还是免费下载
+        if (AppConfig.FreeHostEnabled)
+        {
+            var codes = FreeHostDownloader.DebridUnusableErrors;
+            Db.Execute(
+                "UPDATE \"download_list\" SET \"status\" = '0', \"error\" = NULL WHERE \"status\" = '2' " +
+                $"AND \"error\" IN ({string.Join(", ", codes.Select((_, i) => "@e" + i))}) " +
+                $"AND {DownloadLanes.SourceFilter(DownloadLanes.AnimeSharing)}",
+                codes.Select((c, i) => ("@e" + i, (object?)c)).ToArray());
+        }
 
         // 上次中途中断的作品：分卷已全部下载完但还未入库，重新触发解压/收尾 → 移动 → 入库
         var stuck = Db.Select("""

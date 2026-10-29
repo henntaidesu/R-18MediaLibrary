@@ -40,6 +40,7 @@ public static class MediaLibraryService
         Db.Execute("UPDATE \"works\" SET \"library\" = @n WHERE \"library\" = @o", ("@n", newName), ("@o", oldName));
         Db.Execute("UPDATE \"works\" SET \"target_lib\" = @n WHERE \"target_lib\" = @o", ("@n", newName), ("@o", oldName));
         Db.Execute("UPDATE \"fanbox_watch\" SET \"target_lib\" = @n WHERE \"target_lib\" = @o", ("@n", newName), ("@o", oldName));
+        Db.Execute("UPDATE \"pixiv_watch\" SET \"target_lib\" = @n WHERE \"target_lib\" = @o", ("@n", newName), ("@o", oldName));
         Logger.Info($"媒体库改名：{oldName} → {newName}");
         return null;
     }
@@ -86,7 +87,7 @@ public static class MediaLibraryService
 
         static string Prefix(string p) => p.EndsWith('\\') || p.EndsWith('/') ? p : p + "\\";
         var (oldP, newP) = (Prefix(oldFolder), Prefix(newFolder));
-        foreach (var (table, col) in new[] { ("works", "folder"), ("works", "cover"), ("works", "target"), ("fanbox_watch", "target_folder") })
+        foreach (var (table, col) in new[] { ("works", "folder"), ("works", "cover"), ("works", "target"), ("fanbox_watch", "target_folder"), ("pixiv_watch", "target_folder") })
         {
             Db.Execute($"UPDATE \"{table}\" SET \"{col}\" = @n WHERE lower(\"{col}\") = lower(@o)",
                 ("@n", newFolder), ("@o", oldFolder));

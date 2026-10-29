@@ -50,6 +50,8 @@ public partial class SettingsPage : UserControl
         AutoDownloadCombo.Items.Add(I18n.Tr("关闭"));
         AutoUnzipCombo.Items.Add(I18n.Tr("开启"));
         AutoUnzipCombo.Items.Add(I18n.Tr("关闭"));
+        FreeHostCombo.Items.Add(I18n.Tr("开启"));
+        FreeHostCombo.Items.Add(I18n.Tr("关闭"));
         WebEnableCombo.Items.Add(I18n.Tr("开启"));
         WebEnableCombo.Items.Add(I18n.Tr("关闭"));
         ImageHostEnableCombo.Items.Add(I18n.Tr("开启"));
@@ -188,6 +190,10 @@ public partial class SettingsPage : UserControl
         AutoUnzipLabel.Text = I18n.Tr("自动解压");
         ProxyStatusLabel.Text = I18n.Tr("代理");
         DebridTestButton.Content = I18n.Tr("测试");
+        FreeHostLabel.Text = I18n.Tr("网盘免费下载");
+        FreeHostCombo.ToolTip = I18n.Tr("debrid-link 没配置、Key 失效或会员到期时，rapidgator / katfile 链接改用网盘自己的免费下载（每个网盘按间隔一个一个下）");
+        FreeHostIntervalLabel.Text = I18n.Tr("下载间隔 (分钟)");
+        FreeHostIntervalBox.ToolTip = I18n.Tr("同一个网盘两次免费下载之间至少隔多久；rapidgator 免费账户为 120 分钟");
         DownProcLabel.Text = I18n.Tr("单文件线程数");
         DownProcLabel.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段");
         DownProcBox.ToolTip = I18n.Tr("单个文件分成多少段并发下载（多线程下载），1 为不分段，最大 6");
@@ -231,6 +237,8 @@ public partial class SettingsPage : UserControl
         AutoDownloadCombo.Items[1] = I18n.Tr("关闭");
         AutoUnzipCombo.Items[0] = I18n.Tr("开启");
         AutoUnzipCombo.Items[1] = I18n.Tr("关闭");
+        FreeHostCombo.Items[0] = I18n.Tr("开启");
+        FreeHostCombo.Items[1] = I18n.Tr("关闭");
         WebEnableCombo.Items[0] = I18n.Tr("开启");
         WebEnableCombo.Items[1] = I18n.Tr("关闭");
         ImageHostEnableCombo.Items[0] = I18n.Tr("开启");
@@ -299,6 +307,8 @@ public partial class SettingsPage : UserControl
         };
 
         DebridKeyBox.Text = AppConfig.DebridApiKey;
+        FreeHostCombo.SelectedIndex = AppConfig.FreeHostEnabled ? 0 : 1;
+        FreeHostIntervalBox.Text = AppConfig.FreeHostInterval.ToString();
 
         foreach (var (code, combo) in _sourceCombos)
             combo.SelectedIndex = WorkTypes.SupportsAsmr(code) && AppConfig.SouSearchSource != "anime-sharing"
@@ -430,6 +440,23 @@ public partial class SettingsPage : UserControl
         if (_loading)
             return;
         AppConfig.Write("debrid", "api_key", DebridKeyBox.Text.Trim());
+    }
+
+    private void FreeHostCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading)
+            return;
+        AppConfig.Write("free_host", "enabled", FreeHostCombo.SelectedIndex == 0 ? "True" : "False");
+    }
+
+    private void FreeHostIntervalBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+            return;
+        var value = FreeHostIntervalBox.Text.Trim();
+        if (int.TryParse(value, out _))
+            AppConfig.Write("free_host", "interval", value);
+        FreeHostIntervalBox.Text = AppConfig.FreeHostInterval.ToString();   // 回显实际生效值（越界已夹紧）
     }
 
     private async void DebridTestButton_Click(object sender, RoutedEventArgs e)

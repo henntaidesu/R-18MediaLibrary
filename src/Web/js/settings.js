@@ -111,6 +111,13 @@ async function renderSettings() {
     testRes.textContent = r.ok ? '✓ 有效' : '✗ 无效'; testRes.style.color = r.ok ? '#4ade80' : '#f87171';
   };
   s.appendChild(frow('API Key', keyInput, eyeBtn, testBtn, testRes));
+  // debrid-link 不可用（无 Key / Key 失效 / 会员到期）时 rapidgator、katfile 走网盘免费下载（桌面端同一行）
+  const fh = d.freeHost || { enabled: true, interval: 120 };
+  const fhSel = w(mkSelect(boolOpts, fh.enabled ? 'True' : 'False', v => write('free_host', 'enabled', v)), 120);
+  fhSel.title = 'debrid-link 没配置、Key 失效或会员到期时，rapidgator / katfile 链接改用网盘自己的免费下载（每个网盘按间隔一个一个下）';
+  const fhInt = w(mkInput(fh.interval, v => write('free_host', 'interval', v)), 80);
+  fhInt.title = '同一个网盘两次免费下载之间至少隔多久；rapidgator 免费账户为 120 分钟';
+  s.appendChild(frow('网盘免费下载', fhSel, '下载间隔 (分钟)', fhInt));
   host.appendChild(s);
 
   // 系统（桌面端：语言 + 日志级别 + 解压编码 同一行；「关闭按钮」为桌面独有项）

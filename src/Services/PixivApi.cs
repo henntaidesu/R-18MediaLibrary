@@ -39,6 +39,11 @@ public class PixivArtwork
     public int BookmarkCount { get; init; }
     public int LikeCount { get; init; }
     public int ViewCount { get; init; }
+    /// <summary>
+    /// 收藏号（只有收藏列表里的条目才有，其余为 0）。站点按收藏先后递增发号，
+    /// 所以「比它大」即「比它晚收藏」——收藏监控拿它当水位线，不看作品的投稿日（旧作新收藏也要算新）。
+    /// </summary>
+    public long BookmarkId { get; init; }
 
     /// <summary>动图（ugoira）：本体是一个装着逐帧图的 zip，要另走 ugoira_meta 取。</summary>
     public bool IsUgoira => IllustType == 2;
@@ -143,6 +148,15 @@ public static class PixivApi
 
     public static string UserUrl(string userId) => $"{Origin}/users/{userId}";
 
+    /// <summary>站点限流（HTTP 429）时 <see cref="GetBodyAsync"/> 给出的错误文案；按它认出限流。</summary>
+    public const string ThrottledError = "站点返回 HTTP 429（请求过于频繁，请稍后再试）";
+
+    /// <summary>网络不通时的错误文案（与限流一样属于「过一会再试就好」的暂时性失败）。</summary>
+    public const string NetworkError = "连不上 Pixiv：检查网络与代理设置";
+
+    /// <summary>该错误是否只是暂时性的（限流 / 断网）——批量入队遇到它应当停下等待，而不是把作品当成失败跳过。</summary>
+    public static bool IsTransientError(string? error) => error is ThrottledError or NetworkError;
+
     /// <summary>
     /// 当前上下文用的是登录账号（<see cref="SiteAccounts.Active"/>：来源下拉选中的那个 pixiv 账号）。
     /// 匿名也能搜索，但结果里不会有 R-18。
@@ -216,9 +230,12 @@ public static class PixivApi
             if (!resp.IsSuccessStatusCode)
             {
                 Logger.Error($"pixiv 请求失败 HTTP {(int)resp.StatusCode}: {url}");
-                return (null, resp.StatusCode == HttpStatusCode.NotFound
-                    ? "站点上没有这件作品（可能已删除或设为不公开）"
-                    : $"站点返回 HTTP {(int)resp.StatusCode}");
+                return (null, resp.StatusCode switch
+                {
+                    HttpStatusCode.NotFound => "站点上没有这件作品（可能已删除或设为不公开）",
+                    HttpStatusCode.TooManyRequests => ThrottledError,
+                    _ => $"站点返回 HTTP {(int)resp.StatusCode}",
+                });
             }
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
             var root = doc.RootElement;
@@ -241,7 +258,7 @@ public static class PixivApi
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {
             Logger.Error($"pixiv 网络请求失败: {e.Message} ({url})");
-            return (null, "连不上 Pixiv：检查网络与代理设置");
+            return (null, NetworkError);
         }
     }
 
@@ -497,28 +514,55 @@ public static class PixivApi
         };
     }
 
+    /// <summary>
+    /// 取一段收藏（收藏监控逐段往下翻用；<paramref name="rest"/> 为 show 公开 / hide 非公开）。
+    /// Raw = 站点返回的条数（含已删除/不可见的占位条目，偏移要按它算），
+    /// Oldest = 这一段里最小的收藏号（占位条目也算）——站点按收藏先后倒序返回，它不比水位线大即可停止往下翻。
+    /// </summary>
+    public static Task<(List<PixivArtwork> Items, int Raw, int Total, long Oldest, string? Error)> GetBookmarkSliceAsync(
+        string userId, string rest, int offset, int limit) =>
+        FetchBookmarksAsync(userId, "", rest, offset, limit);
+
     /// <summary>取一段收藏。Raw = 站点返回的条数（含已删除/不可见的占位条目，偏移要按它算）。</summary>
-    private static async Task<(List<PixivArtwork> Items, int Raw, int Total, string? Error)> FetchBookmarksAsync(
+    private static async Task<(List<PixivArtwork> Items, int Raw, int Total, long Oldest, string? Error)> FetchBookmarksAsync(
         string userId, string tag, string rest, int offset, int limit)
     {
         var url = $"{Origin}/ajax/user/{userId}/illusts/bookmarks?tag={Uri.EscapeDataString(tag ?? "")}" +
                   $"&offset={offset}&limit={limit}&rest={rest}&lang=zh";
         var (body, error) = await GetBodyAsync(url);
         if (body is not { } b)
-            return ([], 0, 0, error ?? "获取收藏失败");
+            return ([], 0, 0, 0, error ?? "获取收藏失败");
         var items = new List<PixivArtwork>();
         var raw = 0;
+        var oldest = 0L;
         if (b.TryGetProperty("works", out var works) && works.ValueKind == JsonValueKind.Array)
             foreach (var w in works.EnumerateArray())
             {
                 raw++;
+                if (BookmarkIdOf(w) is var bid and > 0 && (oldest == 0 || bid < oldest))
+                    oldest = bid;
                 // 作者删除或设为不公开的作品还占着收藏位，但标记 isMasked、内容全空，下不了，挑掉
                 if (w.TryGetProperty("isMasked", out var masked) && masked.ValueKind == JsonValueKind.True)
                     continue;
                 if (ParseListItem(w) is { } artwork)
                     items.Add(artwork);
             }
-        return (items, raw, JInt(b, "total"), null);
+        return (items, raw, JInt(b, "total"), oldest, null);
+    }
+
+    /// <summary>收藏条目的 bookmarkData.id（字符串形式的数字）；不是收藏条目返回 0。</summary>
+    private static long BookmarkIdOf(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object ||
+            !item.TryGetProperty("bookmarkData", out var data) || data.ValueKind != JsonValueKind.Object ||
+            !data.TryGetProperty("id", out var id))
+            return 0;
+        return id.ValueKind switch
+        {
+            JsonValueKind.String => long.TryParse(id.GetString(), out var s) ? s : 0,
+            JsonValueKind.Number => id.TryGetInt64(out var n) ? n : 0,
+            _ => 0,
+        };
     }
 
     /// <summary>搜索结果 / 收藏列表里的一条。没有 id（广告位/占位条目）返回 null。</summary>
@@ -544,6 +588,7 @@ public static class PixivApi
             Width = JInt(item, "width"),
             Height = JInt(item, "height"),
             Tags = JStrArray(item, "tags"),
+            BookmarkId = BookmarkIdOf(item),
         };
     }
 
@@ -592,12 +637,16 @@ public static class PixivApi
     }
 
     /// <summary>取一件作品的逐页图片地址（单图投稿也回一条）。</summary>
-    public static async Task<List<PixivPageImage>> GetPagesAsync(string id)
+    public static async Task<List<PixivPageImage>> GetPagesAsync(string id) =>
+        (await FetchPagesAsync(id)).Pages;
+
+    /// <summary>同 <see cref="GetPagesAsync"/>，另带失败原因（批量入队要据此分辨「限流」与「作品没了」）。</summary>
+    public static async Task<(List<PixivPageImage> Pages, string? Error)> FetchPagesAsync(string id)
     {
-        var (body, _) = await GetBodyAsync($"{Origin}/ajax/illust/{id}/pages?lang=zh");
+        var (body, error) = await GetBodyAsync($"{Origin}/ajax/illust/{id}/pages?lang=zh");
         var pages = new List<PixivPageImage>();
         if (body is not { } b || b.ValueKind != JsonValueKind.Array)
-            return pages;
+            return (pages, error);
         var index = 0;
         foreach (var page in b.EnumerateArray())
         {
@@ -613,7 +662,7 @@ public static class PixivApi
                 Height = JInt(page, "height"),
             });
         }
-        return pages;
+        return (pages, null);
     }
 
     /// <summary>

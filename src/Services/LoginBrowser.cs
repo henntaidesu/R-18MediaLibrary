@@ -156,7 +156,10 @@ public static class LoginBrowser
         Directory.CreateDirectory(ProfileDir);
         // 关掉「窗口被遮挡就停止绘制」：服务器上远程桌面断开/锁屏时窗口算被遮挡，浏览器停画，
         // 网页端串流（CapturePreviewAsync）就只能拿到一张不动的旧画面
-        var args = "--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows";
+        // 后两项给网盘免费下载（FreeHostDownloader）：它在不显示的浏览器里跑网盘页面的倒计时与人机验证，
+        // 后台页的计时器被节流的话 30 秒的倒计时会拖成几分钟
+        var args = "--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows" +
+                   " --disable-background-timer-throttling --disable-renderer-backgrounding";
         var (proxyOn, proxy) = AppConfig.ReadProxy();
         if (proxyOn && proxy.Address != null)
             args += $" --proxy-server={proxy.Address.Authority}";
@@ -319,8 +322,8 @@ public static class LoginBrowser
 
     // ---------- 后台：不显示的浏览器 ----------
 
-    /// <summary>挂在一个从不显示的窗口下的浏览器控制器（控制器必须有父窗口），用指定的资料。</summary>
-    private static async Task<CoreWebView2Controller> HiddenControllerAsync(string profile)
+    /// <summary>挂在一个从不显示的窗口下的浏览器控制器（控制器必须有父窗口），用指定的资料。网盘免费下载也用它。</summary>
+    internal static async Task<CoreWebView2Controller> HiddenControllerAsync(string profile)
     {
         _hiddenHost ??= new Window { ShowInTaskbar = false, Width = 0, Height = 0, WindowStyle = WindowStyle.None };
         var parent = new WindowInteropHelper(_hiddenHost).EnsureHandle();

@@ -50,6 +50,12 @@ public partial class MainWindow : Window
                 NavSearch.IsChecked = true;   // 触发 Nav_Checked 切页
                 SearchPage.OpenFanboxArtist(id, name);
             };
+            // Pixiv 收藏监控卡的「查看收藏」：跨分区切到"作品搜索 → Pixiv（该账号）"并列出收藏
+            page.OpenPixivFavoritesRequested += uid =>
+            {
+                NavSearch.IsChecked = true;
+                SearchPage.OpenPixivFavorites(uid);
+            };
             return page;
         }
     }
@@ -119,7 +125,7 @@ public partial class MainWindow : Window
         NavMediaLibLabel.Text = I18n.Tr("媒体库");
         NavDownloadLabel.Text = I18n.Tr("下载管理");
         NavSearchLabel.Text = I18n.Tr("作品搜索");
-        NavWatchLabel.Text = I18n.Tr("作家监控");
+        NavWatchLabel.Text = I18n.Tr("作品监控");
         NavTagLabel.Text = I18n.Tr("作品标签");
         NavTypeLabel.Text = I18n.Tr("作品形式");
         NavMakerLabel.Text = I18n.Tr("作品社团");

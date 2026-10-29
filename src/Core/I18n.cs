@@ -415,6 +415,55 @@ public static class I18n
         ["请求频繁"] = new() { ["zh_TW"] = "請求頻繁", ["ja"] = "リクエスト過多", ["en"] = "Rate limited" },
         ["类型不支持"] = new() { ["zh_TW"] = "類型不支援", ["ja"] = "非対応形式", ["en"] = "Bad file type" },
         ["超链接数"] = new() { ["zh_TW"] = "超連結數", ["ja"] = "リンク数超過", ["en"] = "Too many links" },
+        // 网盘免费下载（debrid-link 不可用时，见 FreeHostDownloader）
+        ["免费间隔 {time}"] = new() { ["zh_TW"] = "免費間隔 {time}", ["ja"] = "無料待機 {time}", ["en"] = "Free wait {time}" },
+        ["验证未通过"] = new() { ["zh_TW"] = "驗證未通過", ["ja"] = "認証失敗", ["en"] = "Captcha failed" },
+        ["浏览器不可用"] = new() { ["zh_TW"] = "瀏覽器不可用", ["ja"] = "ブラウザ不可", ["en"] = "No browser" },
+        ["免费下载失败"] = new() { ["zh_TW"] = "免費下載失敗", ["ja"] = "無料DL失敗", ["en"] = "Free DL failed" },
+        ["debrid-link 不可用，且该网盘不支持免费下载（只支持 rapidgator / katfile）"] = new()
+        {
+            ["zh_TW"] = "debrid-link 不可用，且該網盤不支援免費下載（只支援 rapidgator / katfile）",
+            ["ja"] = "debrid-link が使えず、このホストは無料ダウンロード非対応です（rapidgator / katfile のみ対応）",
+            ["en"] = "debrid-link is unavailable and this host has no free download support (rapidgator / katfile only)",
+        },
+        ["该文件只能会员下载（rapidgator 免费账户只能下 500MB 以内的文件）"] = new()
+        {
+            ["zh_TW"] = "該檔案只能會員下載（rapidgator 免費帳戶只能下 500MB 以內的檔案）",
+            ["ja"] = "このファイルはプレミアム限定です（rapidgator の無料枠は 500MB まで）",
+            ["en"] = "Premium-only file (rapidgator free downloads are limited to 500 MB)",
+        },
+        ["网盘免费下载的人机验证多次没有自动通过（可点「全部重新解析」再试）"] = new()
+        {
+            ["zh_TW"] = "網盤免費下載的人機驗證多次沒有自動通過（可點「全部重新解析」再試）",
+            ["ja"] = "無料ダウンロードの認証が何度も自動で通りませんでした（「すべて再解析」で再試行）",
+            ["en"] = "The free-download captcha did not pass automatically after several tries (use Reparse all to retry)",
+        },
+        ["网盘免费下载需要内嵌浏览器（WebView2），这台电脑上打不开"] = new()
+        {
+            ["zh_TW"] = "網盤免費下載需要內嵌瀏覽器（WebView2），這台電腦上打不開",
+            ["ja"] = "無料ダウンロードには内蔵ブラウザ（WebView2）が必要ですが、このPCでは起動できません",
+            ["en"] = "Free downloads need the embedded browser (WebView2), which cannot start on this PC",
+        },
+        ["网盘免费下载页面多次没有走通（可点「全部重新解析」再试）"] = new()
+        {
+            ["zh_TW"] = "網盤免費下載頁面多次沒有走通（可點「全部重新解析」再試）",
+            ["ja"] = "無料ダウンロードのページを何度も進められませんでした（「すべて再解析」で再試行）",
+            ["en"] = "The free-download page failed several times (use Reparse all to retry)",
+        },
+        ["网盘免费下载"] = new() { ["zh_TW"] = "網盤免費下載", ["ja"] = "無料ダウンロード", ["en"] = "Free host download" },
+        ["下载间隔 (分钟)"] = new() { ["zh_TW"] = "下載間隔 (分鐘)", ["ja"] = "間隔 (分)", ["en"] = "Interval (min)" },
+        ["debrid-link 没配置、Key 失效或会员到期时，rapidgator / katfile 链接改用网盘自己的免费下载（每个网盘按间隔一个一个下）"] = new()
+        {
+            ["zh_TW"] = "debrid-link 沒設定、Key 失效或會員到期時，rapidgator / katfile 連結改用網盤自己的免費下載（每個網盤按間隔一個一個下）",
+            ["ja"] = "debrid-link 未設定・Key 無効・会員期限切れの時、rapidgator / katfile はホストの無料ダウンロードを使います（ホストごとに間隔を空けて1つずつ）",
+            ["en"] = "When debrid-link is not set up, its key is invalid or premium has expired, rapidgator / katfile links use the host's own free download (one file per host per interval)",
+        },
+        ["同一个网盘两次免费下载之间至少隔多久；rapidgator 免费账户为 120 分钟"] = new()
+        {
+            ["zh_TW"] = "同一個網盤兩次免費下載之間至少隔多久；rapidgator 免費帳戶為 120 分鐘",
+            ["ja"] = "同じホストで無料ダウンロードを行う最短間隔。rapidgator の無料枠は 120 分",
+            ["en"] = "Minimum gap between two free downloads from the same host; rapidgator free is 120 minutes",
+        },
         ["点击查看各网盘流量详情"] = new() { ["zh_TW"] = "點擊查看各網盤流量詳情", ["ja"] = "各ホストの通信量詳細を表示", ["en"] = "Click for per-host data usage" },
         ["debrid-link 流量详情"] = new() { ["zh_TW"] = "debrid-link 流量詳情", ["ja"] = "debrid-link 通信量詳細", ["en"] = "debrid-link data usage" },
         ["总用量 {pct}%"] = new() { ["zh_TW"] = "總用量 {pct}%", ["ja"] = "合計 {pct}%", ["en"] = "Total {pct}%" },

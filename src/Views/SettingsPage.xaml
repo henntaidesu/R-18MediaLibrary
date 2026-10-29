@@ -94,12 +94,23 @@
 
             <!-- Debrid-Link -->
             <GroupBox x:Name="DebridGroup" Header="Debrid-Link 下载中转站">
-                <DockPanel Margin="0,5">
-                    <TextBlock Text="API Key" Style="{StaticResource FieldLabel}" DockPanel.Dock="Left" />
-                    <Button x:Name="DebridTestButton" Content="测试" Margin="8,0,0,0" DockPanel.Dock="Right"
-                            Click="DebridTestButton_Click" />
-                    <TextBox x:Name="DebridKeyBox" LostFocus="DebridKeyBox_LostFocus" />
-                </DockPanel>
+                <StackPanel>
+                    <DockPanel Margin="0,5">
+                        <TextBlock Text="API Key" Style="{StaticResource FieldLabel}" DockPanel.Dock="Left" />
+                        <Button x:Name="DebridTestButton" Content="测试" Margin="8,0,0,0" DockPanel.Dock="Right"
+                                Click="DebridTestButton_Click" />
+                        <TextBox x:Name="DebridKeyBox" LostFocus="DebridKeyBox_LostFocus" />
+                    </DockPanel>
+                    <!-- debrid-link 不可用（无 Key / Key 失效 / 会员到期）时 rapidgator、katfile 走网盘免费下载（FreeHostDownloader） -->
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
+                        <TextBlock x:Name="FreeHostLabel" Text="网盘免费下载" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="FreeHostCombo" Width="120"
+                                  SelectionChanged="FreeHostCombo_SelectionChanged" />
+                        <TextBlock x:Name="FreeHostIntervalLabel" Text="下载间隔 (分钟)" Style="{StaticResource FieldLabel}"
+                                   MinWidth="0" Margin="24,0,10,0" />
+                        <TextBox x:Name="FreeHostIntervalBox" Width="80" LostFocus="FreeHostIntervalBox_LostFocus" />
+                    </StackPanel>
+                </StackPanel>
             </GroupBox>
 
             <!-- 作品类型优先搜索 -->

@@ -387,6 +387,12 @@
   .frow.top { align-items: flex-start; }
   .frow.top > label { padding-top: 9px; }
   .ro { color: var(--muted); font-size: 13px; word-break: break-all; }
+  /* 页内二级导航（作品监控的 FANBOX / Pixiv）：一组相连的按钮，选中项同 .icon-btn.on */
+  .seg { display: inline-flex; }
+  .seg > .icon-btn { border-radius: 0; margin-left: -1px; }
+  .seg > .icon-btn:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; margin-left: 0; }
+  .seg > .icon-btn:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+  .seg > .icon-btn.on { position: relative; z-index: 1; }
   .frow .tres { font-size: 13px; }   /* 测试结果文字（.res 已被搜索结果卡占用，勿复用） */
   /* 手机：标签独占一行、控件接在下面（同原栅格在窄屏的折行行为） */
   @media (max-width: 560px) {

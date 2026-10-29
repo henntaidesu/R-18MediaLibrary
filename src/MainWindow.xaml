@@ -46,7 +46,7 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="⏱" FontFamily="Segoe UI Emoji" FontSize="15" Width="26"
                                    TextAlignment="Center" VerticalAlignment="Center" />
-                        <TextBlock x:Name="NavWatchLabel" Text="作家监控" VerticalAlignment="Center" />
+                        <TextBlock x:Name="NavWatchLabel" Text="作品监控" VerticalAlignment="Center" />
                     </StackPanel>
                 </RadioButton>
                 <RadioButton x:Name="NavTag" Style="{StaticResource NavButton}" GroupName="nav"

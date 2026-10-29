@@ -627,6 +627,9 @@ public partial class DownloadPage : UserControl
                 // 已完成、但存的是源站预览图而非原图
                 else if (it.Status == "1" && DownloadEngine.IsThumb(it.Error))
                     text = I18n.Tr("已完成（预览图）");
+                // 网盘免费下载在等该网盘的下载间隔：写出几点轮到它，免得以为卡住了
+                else if (it.Status == "0" && FreeHostDownloader.WaitingUntil(it.Url) is { } until)
+                    text = I18n.Format(I18n.Tr("免费间隔 {time}"), ("time", until.ToString("HH:mm")));
 
                 if (!existingChildren.TryGetValue(it.Uuid, out var child))
                 {
@@ -830,6 +833,12 @@ public partial class DownloadPage : UserControl
             DownloadEngine.RetryFailedError => I18n.Tr("下载超时或连接中断，已自动重试 3 次仍失败（可点「全部重新解析」再试）"),
             "floodDetected" => I18n.Tr("请求过于频繁，请稍后再试"),
             "badFileType" => I18n.Tr("不支持的文件类型"),
+            // debrid-link 不可用时的网盘免费下载（见 FreeHostDownloader）
+            FreeHostDownloader.UnsupportedError => I18n.Tr("debrid-link 不可用，且该网盘不支持免费下载（只支持 rapidgator / katfile）"),
+            FreeHostDownloader.PremiumOnlyError => I18n.Tr("该文件只能会员下载（rapidgator 免费账户只能下 500MB 以内的文件）"),
+            FreeHostDownloader.CaptchaError => I18n.Tr("网盘免费下载的人机验证多次没有自动通过（可点「全部重新解析」再试）"),
+            FreeHostDownloader.BrowserError => I18n.Tr("网盘免费下载需要内嵌浏览器（WebView2），这台电脑上打不开"),
+            FreeHostDownloader.FetchError => I18n.Tr("网盘免费下载页面多次没有走通（可点「全部重新解析」再试）"),
             _ => I18n.Format(I18n.Tr("解析失败（{code}）"), ("code", raw)),
         };
     }
@@ -856,6 +865,11 @@ public partial class DownloadPage : UserControl
         "floodDetected" => I18n.Tr("请求频繁"),
         "badFileType" => I18n.Tr("类型不支持"),
         "maxLink" or "maxLinkHost" => I18n.Tr("超链接数"),
+        FreeHostDownloader.UnsupportedError => I18n.Tr("网盘不支持"),
+        FreeHostDownloader.PremiumOnlyError => I18n.Tr("需会员"),
+        FreeHostDownloader.CaptchaError => I18n.Tr("验证未通过"),
+        FreeHostDownloader.BrowserError => I18n.Tr("浏览器不可用"),
+        FreeHostDownloader.FetchError => I18n.Tr("免费下载失败"),
         _ => I18n.Tr("解析失败"),
     };
 

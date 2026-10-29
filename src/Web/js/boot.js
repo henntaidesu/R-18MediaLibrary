@@ -40,6 +40,7 @@ function restoreFromHash() {
   if (!p) { selectSection('medialib'); return; }
   if (p.key === 'search') { restoreSearch(p); return; }
   if (p.key === 'download') { restoreDownload(p); return; }
+  if (p.key === 'watch') { watchTab = p.tab; selectSection('watch'); return; }
   if (!p.root) { selectSection(p.key); return; }
   section = p.key; stopTimers(); closeVideo(); closeAudio(); closeDrawer();
   buildTabs();
