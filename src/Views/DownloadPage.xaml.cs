@@ -157,7 +157,46 @@ public class DownloadSectionItem : ObservableBase
     public string SpeedText { get => _speedText; set => Set(ref _speedText, value); }
 }
 
-/// <summary>下载页二级：番号分组（作品卡）。</summary>
+/// <summary>
+/// 下载页二级：社团/作者（对齐 Web .dlmhead）。同一下载源分区内按社团真名归并，默认折叠，
+/// 标题行显示该社团的汇总（下载中/等待/失败/已完成、作品数与合计速度）。
+/// </summary>
+public class DownloadMakerItem : ObservableBase
+{
+    /// <summary>分区 + 社团的复合键：展开状态挂在对象上，刷新时按它找回。</summary>
+    public string Key { get; init; } = "";
+
+    /// <summary>所属下载源分区（车道键）。</summary>
+    public string SectionKey { get; init; } = "";
+
+    /// <summary>社团真名（分组键，作品卡按它归属）；空串 = 未知社团。</summary>
+    public string MakerKey { get; init; } = "";
+
+    /// <summary>显示名：经社团别名映射后的名字（同媒体库社团卡）。</summary>
+    private string _name = "";
+    public string Name { get => _name; set => Set(ref _name, value); }
+
+    private bool _isExpanded;
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (Set(ref _isExpanded, value))
+                Raise(nameof(Arrow));
+        }
+    }
+
+    public string Arrow => IsExpanded ? "▾" : "▸";
+
+    private string _summaryText = "";
+    public string SummaryText { get => _summaryText; set => Set(ref _summaryText, value); }
+
+    private string _speedText = "";
+    public string SpeedText { get => _speedText; set => Set(ref _speedText, value); }
+}
+
+/// <summary>下载页三级：番号分组（作品卡）。</summary>
 public class DownloadGroupItem : ObservableBase
 {
     public string WorkId { get; init; } = "";
@@ -165,11 +204,15 @@ public class DownloadGroupItem : ObservableBase
     /// <summary>所属下载源分区（DownloadLanes 的车道键）。</summary>
     public string Section { get; set; } = "";
 
+    /// <summary>所属社团真名（分组键，见 <see cref="DownloadMakerItem.MakerKey"/>）。</summary>
+    public string MakerKey { get; set; } = "";
+
     /// <summary>
     /// 列表上显示的名称：DLsite 作品直接用番号；fanbox 作品的 work_id 是内部键（fb_+作品号），
     /// 对用户无意义，改显示"作家 · 标题"。
     /// </summary>
-    public string DisplayName { get; init; } = "";
+    public string DisplayName { get => _displayName; set => Set(ref _displayName, value); }
+    private string _displayName = "";
 
     /// <summary>全部分卷文件（扁平，按 UUID 就地更新进度/状态）。</summary>
     public ObservableCollection<DownloadFileItem> Children { get; } = [];
@@ -263,7 +306,10 @@ public partial class DownloadPage : UserControl
     private readonly List<DownloadGroupItem> _groups = [];
     // 下载源分区（键 = 车道键）；折叠状态挂在分区对象上，刷新时保留
     private readonly Dictionary<string, DownloadSectionItem> _sections = new();
-    // 实际绑定到列表的摊平序列：分区标题，展开的分区后面跟着它的作品卡（见 SyncItems）
+    // 二级社团/作者（键 = 分区 + 社团，展开状态挂在对象上）；_makerOrder 为本轮各分区内的显示顺序（首次出现）
+    private readonly Dictionary<string, DownloadMakerItem> _makers = new();
+    private List<DownloadMakerItem> _makerOrder = [];
+    // 实际绑定到列表的摊平序列：分区标题，展开的分区后面跟着它的社团标题，社团展开后再跟作品卡（见 SyncItems）
     private readonly ObservableCollection<object> _items = [];
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _usageTimer = new() { Interval = TimeSpan.FromSeconds(15) };
@@ -548,12 +594,25 @@ public partial class DownloadPage : UserControl
                 return (
                 Db.Select(
                     "SELECT \"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"error\", \"sub_path\", \"source\" FROM \"download_list\" ORDER BY rowid"),
-                // 「跳转作品」只给 works 里已有记录的番号（同 Web 的 canOpen：论坛源刚入队的占位番号可能还没有）
+                // 「跳转作品」只给 works 里已有记录的番号（同 Web 的 canOpen：论坛源刚入队的占位番号可能还没有）；
+                // 顺带取社团真名（二级「社团/作者」分组，无记录归入未知社团）与作品名（列表显示名）
                 Db.Select(
-                    "SELECT \"work_id\" FROM \"works\" WHERE \"work_id\" IN (SELECT DISTINCT \"work_id\" FROM \"download_list\")"));
+                    "SELECT \"work_id\", \"maker_name\", \"work_name\" FROM \"works\" WHERE \"work_id\" IN (SELECT DISTINCT \"work_id\" FROM \"download_list\")"));
             });
             if (rows != null)
-                ApplyRows(rows, (works ?? []).Select(w => w[0] as string ?? "").ToHashSet());   // 集合改动回到 UI 线程执行（await 后续接续在 UI 上下文）
+            {
+                var info = new Dictionary<string, (string Maker, string Name)>();
+                foreach (var w in works ?? [])
+                    info[w[0] as string ?? ""] = (w[1] as string ?? "", w[2] as string ?? "");
+                // 作品名还没有的（多为自动下载刚入队、尚未刮削元数据）后台补齐，下一轮刷新即显示作品名
+                foreach (var row in rows)
+                {
+                    var wid = row[1] as string ?? "";
+                    if (wid.Length > 0 && string.IsNullOrEmpty(info.GetValueOrDefault(wid).Name))
+                        _ = WebServer.EnsureWorkMetaAsync(wid);
+                }
+                ApplyRows(rows, info);   // 集合改动回到 UI 线程执行（await 后续接续在 UI 上下文）
+            }
         }
         finally
         {
@@ -561,7 +620,7 @@ public partial class DownloadPage : UserControl
         }
     }
 
-    private void ApplyRows(List<object?[]> rows, HashSet<string> inWorks)
+    private void ApplyRows(List<object?[]> rows, Dictionary<string, (string Maker, string Name)> info)
     {
         // 按番号分组，同一番号合并为一个父条目
         var groups = new Dictionary<string, List<(string Uuid, string Url, string Status, string Long, string? Error, string? SubPath)>>();
@@ -597,11 +656,14 @@ public partial class DownloadPage : UserControl
                 group = new DownloadGroupItem
                 {
                     WorkId = workId,
-                    DisplayName = workId,
                 };
                 _groups.Add(group);
             }
             group.Section = DownloadLanes.SectionOf(sourceOf[workId], items.Select(it => it.Url));
+            // 显示作品名（同 Web 的 DisplayNameOf）：没有作品名时才退回番号
+            var workInfo = info.GetValueOrDefault(workId);
+            group.DisplayName = string.IsNullOrEmpty(workInfo.Name) ? workId : workInfo.Name;
+            group.MakerKey = workInfo.Maker;
 
             var statuses = items.Select(it => it.Status).ToList();
             var (aggText, aggColor) = AggregateStatus(
@@ -619,7 +681,7 @@ public partial class DownloadPage : UserControl
             anyActive |= hasActive || DownloadEngine.UnzipProgress.ContainsKey(workId);
             group.PauseVisibility = hasActive && workId.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             group.ResumeVisibility = hasPaused && workId.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-            group.OpenVisibility = inWorks.Contains(workId) ? Visibility.Visible : Visibility.Collapsed;
+            group.OpenVisibility = info.ContainsKey(workId) ? Visibility.Visible : Visibility.Collapsed;
 
             var totalPct = 0;
             var totalSpeed = 0.0;
@@ -723,6 +785,46 @@ public partial class DownloadPage : UserControl
             var speed = files.Sum(f => FileProgress(f.Uuid, f.Status, f.Long).Speed ?? 0);
             section.SpeedText = speed > 0 ? FormatSpeed(speed) : "";
         }
+        // 二级社团/作者（同 Web 的 sections[].makers）：同一分区内按社团真名归并，顺序取作品首次出现的顺序
+        var byId = _groups.ToDictionary(g => g.WorkId);
+        var worksOfMaker = new Dictionary<string, List<string>>();
+        var makerOrder = new List<DownloadMakerItem>();
+        foreach (var workId in order)
+        {
+            var g = byId[workId];
+            var key = g.Section + "\n" + g.MakerKey;
+            if (!_makers.TryGetValue(key, out var maker))
+                _makers[key] = maker = new DownloadMakerItem { Key = key, SectionKey = g.Section, MakerKey = g.MakerKey };
+            if (!worksOfMaker.TryGetValue(key, out var ids))
+            {
+                worksOfMaker[key] = ids = [];
+                makerOrder.Add(maker);
+            }
+            ids.Add(workId);
+        }
+        foreach (var key in _makers.Keys.Where(k => !worksOfMaker.ContainsKey(k)).ToList())
+            _makers.Remove(key);
+        foreach (var maker in makerOrder)
+        {
+            var ids = worksOfMaker[maker.Key];
+            var g = byId[ids[0]];
+            maker.Name = g.MakerKey.Length == 0 ? I18n.Tr("未知社团") : MakerAliasService.Display(g.MakerKey);
+            var files = ids.SelectMany(id => groups[id]).ToList();
+            var downloading = files.Count(f => f.Status == "3");
+            var waiting = files.Count(f => f.Status == "0");
+            var failed = files.Count(f => f.Status == "2" && !DownloadEngine.IsSkipped(f.Error));
+            var done = files.Count(f => f.Status == "1");
+            var parts = new List<string>();
+            if (downloading > 0) parts.Add($"{I18n.Tr("下载中")} {downloading}");
+            if (waiting > 0) parts.Add($"{I18n.Tr("等待")} {waiting}");
+            if (failed > 0) parts.Add($"{I18n.Tr("失败")} {failed}");
+            parts.Add($"{I18n.Tr("已完成")} {done}/{files.Count}");
+            parts.Add(I18n.Format(I18n.Tr("{count} 个作品"), ("count", ids.Count.ToString())));
+            maker.SummaryText = string.Join("  ·  ", parts);
+            var speed = files.Sum(f => FileProgress(f.Uuid, f.Status, f.Long).Speed ?? 0);
+            maker.SpeedText = speed > 0 ? FormatSpeed(speed) : "";
+        }
+        _makerOrder = makerOrder;
         SyncItems();
 
         // 有活动任务时每秒刷新（进度平滑）；全部完成/失败/空闲时降到 3 秒，减少空转开销
@@ -743,8 +845,14 @@ public partial class DownloadPage : UserControl
             if (!_sections.TryGetValue(key, out var section))
                 continue;
             wanted.Add(section);
-            if (section.IsExpanded)
-                wanted.AddRange(_groups.Where(g => g.Section == key));
+            if (!section.IsExpanded)
+                continue;
+            foreach (var maker in _makerOrder.Where(m => m.SectionKey == key))
+            {
+                wanted.Add(maker);
+                if (maker.IsExpanded)
+                    wanted.AddRange(_groups.Where(g => g.Section == key && g.MakerKey == maker.MakerKey));
+            }
         }
         for (var i = 0; i < wanted.Count; i++)
         {
@@ -772,6 +880,15 @@ public partial class DownloadPage : UserControl
         if ((sender as FrameworkElement)?.DataContext is not DownloadSectionItem section)
             return;
         section.IsExpanded = !section.IsExpanded;
+        SyncItems();
+    }
+
+    /// <summary>点社团/作者标题：展开/收起该社团下的作品（默认折叠）。</summary>
+    private void Maker_Click(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not DownloadMakerItem maker)
+            return;
+        maker.IsExpanded = !maker.IsExpanded;
         SyncItems();
     }
 

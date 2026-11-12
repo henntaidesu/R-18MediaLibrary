@@ -126,10 +126,36 @@
             </Border>
         </DataTemplate>
 
-        <!-- 作品卡（分区展开时列在分区标题下，左缩进 16，对齐 Web .dlsbody） -->
+        <!-- 社团/作者标题（二级，对齐 Web .dlmhead）：缩进 16，▸ 社团名 · 汇总 · 速度；默认折叠，点整行展开/收起 -->
+        <DataTemplate DataType="{x:Type v:DownloadMakerItem}">
+            <Border Style="{StaticResource ClickCard}" Background="{StaticResource ButtonBrush}"
+                    Padding="12,8" Margin="16,8,0,0" Cursor="Hand"
+                    MouseLeftButtonUp="Maker_Click">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" MinWidth="72" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Arrow}" Foreground="{StaticResource CaptionBrush}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding SummaryText}" Margin="10,0,0,0"
+                               Foreground="{StaticResource CaptionBrush}" FontSize="13"
+                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding SpeedText}"
+                               Foreground="{StaticResource CaptionBrush}" FontSize="12.5"
+                               TextAlignment="Right" Margin="10,0,0,0" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- 作品卡（分区展开、社团展开时列在社团标题下，左缩进 32，对齐 Web .dlmbody） -->
         <DataTemplate DataType="{x:Type v:DownloadGroupItem}">
             <!-- Web .dl：padding 10/14、行间距 8 -->
-            <Border Style="{StaticResource Card}" Padding="14,10" Margin="16,0,0,8">
+            <Border Style="{StaticResource Card}" Padding="14,10" Margin="32,0,0,8">
                 <StackPanel>
                     <!-- 父行：列序对齐 Web .drow——▸ · 作品名（撑满）· 进度条 · 状态 · 速度 · 操作，间距 10 -->
                     <Grid>

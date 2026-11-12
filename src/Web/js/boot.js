@@ -32,6 +32,9 @@ async function boot() {
   } catch (e) {}
   // 作品搜索的来源下拉要知道 FANBOX 登没登（登了才多出「FANBOX（账号名）」），先取一次再恢复页面
   await loadAccounts();
+  // 账号访问的「在服务器上登录」新开的标签页（#/login/<站点>/<站名>）：只跑登录串流，不恢复别的分区
+  const login = /^#\/login\/([^/]+)\/(.+)$/.exec(location.hash);
+  if (login) { GS.startLogin(decodeURIComponent(login[1]), decodeURIComponent(login[2])); return; }
   restoreFromHash();
 }
 // 按地址栏哈希恢复：叶子分区直接进入；卡片分区可深链接到具体层级（刷新/分享）

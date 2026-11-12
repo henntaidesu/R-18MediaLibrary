@@ -35,10 +35,12 @@ public static class DownloadListActions
     private static long _lastSweep;
 
     /// <summary>
-    /// 已完成的作品自动移出下载列表（取代原「清除已完成」按钮）：作品已入媒体库（works.state = 已品悦），
+    /// 已完成的作品自动移出下载列表（取代原「清除已完成」按钮）：作品已下载完成，
     /// 且它的每条下载行都已终结（完成 '1'，或源站无此文件被跳过）、也不在解压/入库收尾中，就删掉这些下载行——
-    /// 作品记录本身不动，之后在「已下载」里显示为「下载完成」。
-    /// 只认已品悦：入库失败（移动媒体库出错，停在已下载）的作品要靠下载行在下次启动时重试，不能清。
+    /// 作品记录本身不动，之后在「已下载」里显示。
+    /// 「下载完成」的判定：已入媒体库（works.state = 已品悦）；或论坛源未开自动解压（下完即终态，
+    /// 不会再有收尾，停在已下载属正常结果）。
+    /// 其余停在已下载的（自动解压失败、或移动媒体库出错）要靠下载行在下次启动时重试，不能清。
     /// 两端的下载列表每秒刷新时调用；内部限流 3 秒一次，免得每次轮询都扫表。
     /// </summary>
     public static void ClearFinished()
@@ -49,10 +51,12 @@ public static class DownloadListActions
         System.Threading.Interlocked.Exchange(ref _lastSweep, now);
         var rows = Db.Select(
             "SELECT d.\"work_id\" FROM \"download_list\" d JOIN \"works\" w ON w.\"work_id\" = d.\"work_id\" " +
-            "WHERE w.\"state\" = '已品悦' GROUP BY d.\"work_id\" " +
+            "WHERE (w.\"state\" = '已品悦' OR (w.\"state\" = '已下载' AND @noUnzip = 1 " +
+            "AND IFNULL(w.\"source\", '') IN ('', 'anime-sharing'))) " +
+            "GROUP BY d.\"work_id\" " +
             "HAVING SUM(CASE WHEN d.\"status\" = '1' OR (d.\"status\" = '2' AND IFNULL(d.\"error\", '') = @sk) " +
             "THEN 0 ELSE 1 END) = 0",
-            ("@sk", DownloadEngine.SkippedError));
+            ("@sk", DownloadEngine.SkippedError), ("@noUnzip", AppConfig.AutoUnzip ? 0 : 1));
         foreach (var row in rows ?? [])
         {
             var wid = row[0] as string ?? "";

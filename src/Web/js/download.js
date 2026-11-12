@@ -3,6 +3,8 @@
 let dlExpanded = new Set();
 // 展开着的下载源分区（键 = 分区 key，如 pixiv / ehentai）；默认全部折叠，标题行上看汇总
 let dlSectionOpen = new Set();
+// 展开着的社团/作者（键 = 分区 key + '\n' + 社团键）；二级同样默认折叠，标题行上看汇总（对齐 WPF）
+let dlMakerOpen = new Set();
 // 下载目录树里被手动折叠的文件夹（键 = 番号 + '\n' + 文件夹相对路径）；默认展开，对齐 WPF
 let dlFolderCollapsed = new Set();
 // 懒加载：展开的分区先画 DL_PAGE 个作品、滚到底再补；展开的作品先画 DL_FILE_PAGE 个文件、点「显示更多」再补。
@@ -85,22 +87,31 @@ async function loadDownloads() {
     const sec = el('div', 'dlsec');
     const head = el('div', 'dlshead');
     head.append(el('span', 'dtoggle', open ? '▾' : '▸'), el('span', 'dlsname', s.label));
-    const sum = el('span', 'dlssum');
-    const part = (n, text, cls) => { if (n) sum.appendChild(el('span', cls, `${text} ${n}`)); };
-    part(s.downloading, '下载中', 'on');
-    part(s.waiting, '等待', 'wait');
-    if (s.freeWait) sum.appendChild(el('span', 'wait', `免费间隔 ${s.freeWait}`));
-    part(s.failed, '失败', 'bad');
-    sum.appendChild(el('span', null, `已完成 ${s.done}/${s.files}`));
-    sum.appendChild(el('span', null, `${s.works} 个作品`));
-    head.append(sum, el('span', 'dsp', s.speed || ''));
+    head.append(dlSumOf(s), el('span', 'dsp', s.speed || ''));
     head.onclick = () => { if (dlSectionOpen.has(s.key)) dlSectionOpen.delete(s.key); else dlSectionOpen.add(s.key); loadDownloads(); };
     sec.appendChild(head);
     if (open) {
       const body = el('div', 'dlsbody');
       const gs = d.groups.filter(g => g.section === s.key);
       const n = dlSecShown.get(s.key) || DL_PAGE;
-      gs.slice(0, n).forEach(g => body.appendChild(renderDlGroup(g)));
+      const shown = gs.slice(0, n);
+      // 二级：社团/作者（服务端已按社团归并汇总）。只列出可见作品里出现过的社团，懒加载未到的不画
+      (s.makers || []).forEach(m => {
+        const mine = shown.filter(g => g.makerKey === m.key);
+        if (!mine.length) return;
+        const mkey = s.key + '\n' + m.key;
+        const mopen = dlMakerOpen.has(mkey);
+        const mhead = el('div', 'dlshead dlmhead');
+        mhead.append(el('span', 'dtoggle', mopen ? '▾' : '▸'), el('span', 'dlsname', m.name));
+        mhead.append(dlSumOf(m), el('span', 'dsp', m.speed || ''));
+        mhead.onclick = () => { if (dlMakerOpen.has(mkey)) dlMakerOpen.delete(mkey); else dlMakerOpen.add(mkey); loadDownloads(); };
+        body.appendChild(mhead);
+        if (mopen) {
+          const mbody = el('div', 'dlmbody');
+          mine.forEach(g => mbody.appendChild(renderDlGroup(g)));
+          body.appendChild(mbody);
+        }
+      });
       if (gs.length > n) {
         const more = el('div', 'dmore', `已显示 ${n} / ${gs.length} 个作品，下拉加载更多`);
         more.dataset.sec = s.key;
@@ -129,6 +140,18 @@ async function loadDownloads() {
 function dlShowMore(key) {
   dlSecShown.set(key, (dlSecShown.get(key) || DL_PAGE) + DL_PAGE);
   loadDownloads();
+}
+// 分区 / 社团标题行的汇总文字（下载中 · 等待 · 失败 · 已完成 · 作品数）
+function dlSumOf(s) {
+  const sum = el('span', 'dlssum');
+  const part = (n, text, cls) => { if (n) sum.appendChild(el('span', cls, `${text} ${n}`)); };
+  part(s.downloading, '下载中', 'on');
+  part(s.waiting, '等待', 'wait');
+  if (s.freeWait) sum.appendChild(el('span', 'wait', `免费间隔 ${s.freeWait}`));
+  part(s.failed, '失败', 'bad');
+  sum.appendChild(el('span', null, `已完成 ${s.done}/${s.files}`));
+  sum.appendChild(el('span', null, `${s.works} 个作品`));
+  return sum;
 }
 // 下载列表里的一个作品（父行 + 可展开的目录树）
 function renderDlGroup(g) {

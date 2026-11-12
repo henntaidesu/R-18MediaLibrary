@@ -617,6 +617,7 @@ public static class I18n
         ["简介"] = new() { ["zh_TW"] = "簡介", ["ja"] = "紹介", ["en"] = "Description" },
         ["未知社团"] = new() { ["zh_TW"] = "未知社團", ["ja"] = "不明なサークル", ["en"] = "Unknown maker" },
         ["{count} 个作品"] = new() { ["zh_TW"] = "{count} 個作品", ["ja"] = "作品 {count} 件", ["en"] = "{count} works" },
+        ["未知社团"] = new() { ["zh_TW"] = "未知社團", ["ja"] = "不明なサークル", ["en"] = "Unknown circle" },
         ["{works} 个作品 · {folders} 个文件夹"] = new()
         {
             ["zh_TW"] = "{works} 個作品 · {folders} 個資料夾",

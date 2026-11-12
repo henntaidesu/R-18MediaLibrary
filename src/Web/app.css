@@ -7,6 +7,9 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
+  /* 手机端禁止纵向回弹/下拉刷新：回弹时整页下移，顶栏与吸顶工具栏就盖在被拉出来的内容上，
+     松手后再上拉又可能卡在过界位置恢复不了。body 的值会传给视口（html 未设置时）。 */
+  body.layout-mobile { overscroll-behavior-y: none; }
   body {
     background: var(--bg); color: var(--text);
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; font-size: 15px; line-height: 1.5;
@@ -41,7 +44,7 @@
   .nav { position: fixed; left: 0; top: 0; bottom: 0; width: var(--nav-w); z-index: 40;
          background: var(--surface); border-right: 1px solid var(--line);
          display: flex; flex-direction: column; gap: 4px;
-         padding: 12px 10px max(12px, env(safe-area-inset-bottom)); overflow-y: auto; }
+         padding: 12px 10px max(12px, env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
   .nav .brand { font-weight: 700; font-size: 16px; padding: 6px 10px 14px; color: var(--text); }
   .navitem { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; font-size: 16pt;
              cursor: pointer; color: var(--muted); font-size: 14.5px; white-space: nowrap; }
@@ -326,6 +329,10 @@
   .dlshead .dlssum .bad { color: #f87171; }
   .dlshead .dsp { color: var(--muted); font-size: 12.5px; flex: none; min-width: 62px; text-align: right; }
   .dlsbody { margin: 8px 0 0 16px; }
+  /* 二级：社团/作者标题行（比分区行轻一级，背景透明）；展开后作品缩进 16px */
+  .dlmhead { margin-top: 8px; padding: 8px 12px; background: transparent; font-size: 13.5px; }
+  .dlmhead .dlsname { font-weight: 600; }
+  .dlmbody { margin: 8px 0 0 16px; }
   /* 懒加载的「加载更多」行（滚进视口自动补下一批，也可点）与作品内「显示更多文件」 */
   .dmore { text-align: center; color: var(--muted); font-size: 12.5px; padding: 10px 0; cursor: pointer; }
   .dmore:hover { color: var(--text); }

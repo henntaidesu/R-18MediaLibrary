@@ -1950,7 +1950,8 @@ public static class WebServer
         return name.Length > 0 ? name : SearchCache.GetValueOrDefault(id)?.WorkName ?? "";
     }
 
-    private static async Task EnsureWorkMetaAsync(string id)
+    /// <summary>补全作品名（DLsite 作品信息接口）；桌面端下载列表与 Web 共用，同一番号只尝试一次。</summary>
+    internal static async Task EnsureWorkMetaAsync(string id)
     {
         if (!MetaBackfilled.TryAdd(id, 0))
             return;   // 已尝试过则跳过（去重，防轮询重复拉取）
@@ -2025,15 +2026,19 @@ public static class WebServer
         }
         // 下载列表内番号对应的作品名（下载页以作品名代替番号显示；仅查列表内的番号，避免全表扫描）
         var nameMap = new Dictionary<string, string>();
+        var makerMap = new Dictionary<string, string>();   // 作品 → 社团/作者真名（分组键；无记录的占位番号视为未知社团）
         var ids = order.Where(w => w.Length > 0).ToList();
         if (ids.Count > 0)
         {
             var pars = ids.Select((v, idx) => ($"@w{idx}", (object?)v)).ToArray();
             var inClause = string.Join(",", ids.Select((_, idx) => $"@w{idx}"));
             var nameRows = Db.Select(
-                $"SELECT \"work_id\", \"work_name\" FROM \"works\" WHERE \"work_id\" IN ({inClause})", pars);
+                $"SELECT \"work_id\", \"work_name\", \"maker_name\" FROM \"works\" WHERE \"work_id\" IN ({inClause})", pars);
             foreach (var nr in nameRows ?? [])
+            {
                 nameMap[nr[0] as string ?? ""] = nr[1] as string ?? "";
+                makerMap[nr[0] as string ?? ""] = nr[2] as string ?? "";
+            }
             // 仍缺作品名的番号（多为自动下载入队、尚未刮削元数据）后台补齐，下一次轮询即显示作品名
             foreach (var wid in ids)
                 if (string.IsNullOrEmpty(nameMap.GetValueOrDefault(wid)))
@@ -2080,12 +2085,15 @@ public static class WebServer
             }).ToList();
             var groupPct = DownloadEngine.UnzipProgress.TryGetValue(workId, out var unzip)
                 ? unzip.Pct : (double)totalPct / Math.Max(1, items.Count);
+            var makerKey = makerMap.GetValueOrDefault(workId, "");
             return new
             {
                 // works 里没有行（如「无可用下载连接」的占位作品）时用后台查到的作品名
                 id = workId, name = DisplayNameOf(workId, nameMap),
                 // 一级折叠分区（按下载源，见 DownloadLanes.SectionOf）
                 section = DownloadLanes.SectionOf(sourceOf[workId], items.Select(it => it.Url)),
+                // 二级折叠：社团/作者（分组键为真名，显示用别名；与媒体库社团卡同一规则）
+                makerKey, maker = makerKey.Length == 0 ? "未知社团" : MakerAliasService.Display(makerKey),
                 pct = (int)groupPct, statusText = aggText, color = aggColor,
                 totalSpeed,
                 speed = totalSpeed > 0 ? FormatSpeed(totalSpeed) : "",
@@ -2108,6 +2116,22 @@ public static class WebServer
             {
                 var statuses = x.works.SelectMany(g => grouped[g.id]).ToList();
                 var speed = x.works.Sum(g => g.totalSpeed);
+                // 二级：社团/作者的汇总（同一分区内按 makerKey 归并，顺序取首次出现的顺序）
+                var makers = x.works.GroupBy(g => g.makerKey).Select(mg =>
+                {
+                    var mStatuses = mg.SelectMany(g => grouped[g.id]).ToList();
+                    var mSpeed = mg.Sum(g => g.totalSpeed);
+                    return new
+                    {
+                        key = mg.Key, name = mg.First().maker, works = mg.Count(),
+                        downloading = mStatuses.Count(it => it.Status == "3"),
+                        waiting = mStatuses.Count(it => it.Status == "0"),
+                        failed = mStatuses.Count(it => it.Status == "2" && !DownloadEngine.IsSkipped(it.Error)),
+                        done = mStatuses.Count(it => it.Status == "1"),
+                        files = mStatuses.Count,
+                        speed = mSpeed > 0 ? FormatSpeed(mSpeed) : "",
+                    };
+                }).ToList();
                 return new
                 {
                     key = x.lane.Key, label = x.lane.Label, works = x.works.Count,
@@ -2120,6 +2144,7 @@ public static class WebServer
                     done = statuses.Count(it => it.Status == "1"),
                     files = statuses.Count,
                     speed = speed > 0 ? FormatSpeed(speed) : "",
+                    makers,
                 };
             });
         // 工具栏按钮的可用性：与桌面端同源（DownloadListActions.FlagsOf），避免两端灰显规则漂移

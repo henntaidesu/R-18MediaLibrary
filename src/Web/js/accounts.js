@@ -7,6 +7,9 @@
 
 let accounts = {};   // site → [{ uid, name, keep, canKeep }]，作品搜索的来源下拉也读它
 let accountSites = [];   // [{ site, title, multi }]，页面顺序
+// 登录在新开的标签页里完成（stream.js）：那边结束时通知这里刷新账号列表
+if ('BroadcastChannel' in window)
+  new BroadcastChannel('r18-accounts').onmessage = () => { if (section === 'accounts') renderAccountsPage(); };
 
 async function loadAccounts() {
   let d;
@@ -41,11 +44,7 @@ function accountCard(meta) {
   const login = el('button', 'icon-btn primary',
     multi ? (list.length ? '＋ 在服务器上登录其它账号' : '🖥 在服务器上登录')
       : (list.length ? '🖥 在服务器上重新登录' : '🖥 在服务器上登录'));
-  login.onclick = () => GS.openLogin(site, title, async msg => {
-    if (section !== 'accounts') return;
-    await renderAccountsPage();
-    if (msg) uiAlert(msg, title);
-  });
+  login.onclick = () => GS.openLogin(site, title);   // 新开浏览器标签页登录，本页不动
   const r = el('div', 'frow acct-add');
   r.append(login);
   s.appendChild(r);

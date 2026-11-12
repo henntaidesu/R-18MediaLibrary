@@ -1,7 +1,8 @@
 // stream.js —— 远程串流：作品里的 Windows 程序在电脑上运行，画面经 WebSocket（/api/stream）传到这里，
 // 鼠标/触摸/键盘回传给电脑注入。协议见 Services/GameStream.cs：二进制帧首字节 1=JPEG 画面、2=16 位 PCM 声音。
 // 同看图一样算一层历史：返回手势只关掉串流页（core.js popstate），关掉串流不结束程序，结束要点「结束程序」。
-// 账号访问的「在服务器上登录」也走这里（openLogin）：电脑上开的是登录浏览器，登录成功它自己关窗、串流随之结束。
+// 账号访问的「在服务器上登录」新开一个标签页（openLogin → 那页的 startLogin）：电脑上开的是登录浏览器，
+// 登录成功它自己关窗、串流随之结束，标签页自动关掉，当前页与浏览历史不受影响。
 // 那一路由服务端 Services/LoginStream 直接用浏览器自己出图、收输入（不依赖服务器桌面），协议相同；
 // 键盘事件因此额外带上 key（可打印字符直接插入页面），游戏串流忽略这个字段。
 
@@ -18,15 +19,19 @@ const GS = {
   open(id, n) {
     this.start(`api/stream?id=${enc(id)}&path=${enc(n.rel)}`, n.name, false);
   },
-  // 登录 pixiv / FANBOX：电脑上开内嵌浏览器，在这里操作它；关掉串流页时 onHide 刷新账号页
-  openLogin(site, title, onHide) {
-    this.start(`api/stream?login=${enc(site)}`, `登录 ${title}（电脑上的浏览器）`, true);
-    this.onHide = onHide;
+  // 登录 pixiv / FANBOX 等：新开一个浏览器标签页跑登录串流，当前页（账号访问）不动、不压历史层级；
+  // 登录结束（或关掉）由那个标签页自己关掉，账号页靠 BroadcastChannel 刷新（见 accounts.js）
+  openLogin(site, title) {
+    window.open(location.href.split('#')[0] + '#/login/' + enc(site) + '/' + enc(title), '_blank');
   },
-  start(path, title, login) {
+  // 登录标签页（地址 #/login/<站点>/<站名>）启动时调用：只跑登录串流，不恢复别的分区
+  startLogin(site, title) {
+    this.start(`api/stream?login=${enc(site)}`, `登录 ${title}（电脑上的浏览器）`, true, true);
+  },
+  start(path, title, login, standalone = false) {
     this.hide();
     this.isOpen = true; this.exited = false; this.frameW = this.frameH = 0;
-    this.login = login; this.onHide = null; this.exitText = ''; this.gotAny = false;
+    this.login = login; this.standalone = standalone; this.onHide = null; this.exitText = ''; this.gotAny = false;
     $('stitle').textContent = title;
     $('saudio').style.display = login ? 'none' : '';
     $('squit').textContent = login ? '✕ 关闭浏览器' : '⏻ 结束程序';
@@ -37,7 +42,7 @@ const GS = {
     // 触屏设备默认展开按键：没有实体键盘就没法操作 RPG 类游戏
     $('spad').classList.toggle('show', !login && matchMedia('(pointer: coarse)').matches);
     this.syncBtns();
-    history.pushState({ nav: true, gs: true }, '');
+    if (!standalone) history.pushState({ nav: true, gs: true }, '');
     // 地址按页面所在目录解析（相对路径），不能写成 /api/stream：经门户代理打开时页面在 /api/proxy/<卡片>/ 底下，
     // 根绝对地址会落到门户自己的根路径上。普通请求有门户按 Referer 兜底转回来，WebSocket 握手不带 Referer，
     // 直接被门户拒掉（浏览器只看到关闭码 1006）
@@ -60,6 +65,7 @@ const GS = {
   },
   close() {
     if (!this.isOpen) return;
+    if (this.standalone) { this.hide(); window.close(); return; }   // 登录标签页没有历史层级，直接关掉自己
     if (history.state && history.state.gs) history.back();   // 由 popstate 再调 hide()
     else this.hide();
   },
@@ -197,6 +203,11 @@ const GS = {
     pad.append(dpad, keys);
   },
 };
+
+// 登录标签页无论怎么结束（登完自动关、点关闭、用户手动关标签）都通知账号页刷新
+window.addEventListener('pagehide', () => {
+  if (GS.standalone) new BroadcastChannel('r18-accounts').postMessage('changed');
+});
 
 (() => {
   const c = $('scanvas');
