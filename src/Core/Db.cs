@@ -372,6 +372,22 @@ public static class Db
                 cmd.ExecuteNonQuery();
             }
 
+            // DLsite 监控新增「列表页链接」类型：kind = maker（maker_id 存社团号）| url（maker_id 存列表页地址）
+            var dwColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "PRAGMA table_info(\"dlsite_watch\")";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    dwColumns.Add(reader.GetString(1));
+            }
+            if (dwColumns.Count > 0 && !dwColumns.Contains("kind"))
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "ALTER TABLE \"dlsite_watch\" ADD COLUMN \"kind\" text";
+                cmd.ExecuteNonQuery();
+            }
+
             // 为高频过滤/排序列建二级索引（列必已由上方建表或补列保证存在），
             // 避免媒体库/标签/形式/已下载页的全表扫描。
             using (var cmd = conn.CreateCommand())

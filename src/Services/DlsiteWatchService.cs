@@ -8,11 +8,15 @@ using R18MediaLibrary.Core;
 
 namespace R18MediaLibrary.Services;
 
-/// <summary>一条 DLsite 社团监控记录（dlsite_watch 表的一行）。</summary>
+/// <summary>一条 DLsite 监控记录（dlsite_watch 表的一行）。</summary>
 public class DlsiteWatch
 {
+    /// <summary>监控的键：社团号（kind = maker）或列表页地址（kind = url）。表里列名仍叫 maker_id。</summary>
     public string MakerId { get; init; } = "";
     public string MakerName { get; init; } = "";
+    /// <summary>监控类型：maker（社团）| url（DLsite 列表页）。</summary>
+    public string Kind { get; init; } = DlsiteWatchService.KindMaker;
+    public bool IsUrl => Kind == DlsiteWatchService.KindUrl;
     /// <summary>轮询间隔（分钟）。</summary>
     public int IntervalMin { get; init; } = 360;
     /// <summary>该条监控是否参与自动轮询（暂停的监控仍可手动「立即检查」）。</summary>
@@ -50,6 +54,9 @@ public static class DlsiteWatchService
     public const int MinIntervalMin = 10;
     public const int MaxIntervalMin = 7 * 24 * 60;
 
+    public const string KindMaker = "maker";
+    public const string KindUrl = "url";
+
     /// <summary>翻页上限：社团页一页 30 件左右，200 页足够任何社团。</summary>
     private const int MaxPages = 200;
 
@@ -80,7 +87,7 @@ public static class DlsiteWatchService
 
     private const string Columns =
         "\"maker_id\", \"maker_name\", \"interval_min\", \"enabled\", \"last_check\", " +
-        "\"target_lib\", \"target_folder\", \"last_result\", \"downloaded\", \"add_time\"";
+        "\"target_lib\", \"target_folder\", \"last_result\", \"downloaded\", \"add_time\", \"kind\"";
 
     // ---------- 查询 ----------
 
@@ -122,7 +129,7 @@ public static class DlsiteWatchService
         if (all.Count == 0)
             return "";
         var live = all.Count(w => w.Enabled);
-        var text = $"监控 {all.Count} 个社团" + (live < all.Count ? $"（{all.Count - live} 个已暂停）" : "");
+        var text = $"监控 {all.Count} 项" +(live < all.Count ? $"（{all.Count - live} 个已暂停）" : "");
         if (!AppConfig.DlsiteWatchEnabled)
             return text + "　自动轮询已关闭";
         var next = all.Where(w => w.Enabled).Select(DueAt).DefaultIfEmpty().Min();
@@ -144,17 +151,24 @@ public static class DlsiteWatchService
     // ---------- 增删改 ----------
 
     /// <summary>
-    /// 添加（或覆盖）一条社团监控。先把社团现有的作品列表整份抓下来：
-    /// includeExisting=false 时全部记为 base（只管今后的新作品），true 时记为 backfill（首轮各找一次源）。
+    /// 添加（或覆盖）一条监控。input 可以是社团号 / 社团链接（监控该社团），或 DLsite 列表页链接（搜索、排行、分类等，监控该页出现的新作品）。
+    /// 先把现有的作品列表整份抓下来：includeExisting=false 时全部记为 base（只管今后的新作品），true 时记为 backfill（首轮各找一次源）。
     /// 列表抓不全就不建——宁可让用户重试，也好过把没抓到的老作品当成新作品。
     /// </summary>
-    public static async Task<(bool Ok, string Message)> AddAsync(
+    public static Task<(bool Ok, string Message)> AddAsync(
+        string input, int intervalMin, bool includeExisting, string? lib, string? folder)
+    {
+        var (kind, id) = DlsiteApi.ParseSearchInput(input);
+        if (kind == SearchKind.Maker)
+            return AddMakerAsync(id, intervalMin, includeExisting, lib, folder);
+        if (kind == SearchKind.Catalog && IsDlsiteUrl(id))
+            return AddUrlAsync(id, intervalMin, includeExisting, lib, folder);
+        return Task.FromResult((false, "请输入社团号（RG 开头）、社团链接，或 DLsite 列表页链接"));
+    }
+
+    private static async Task<(bool Ok, string Message)> AddMakerAsync(
         string makerId, int intervalMin, bool includeExisting, string? lib, string? folder)
     {
-        makerId = makerId.Trim().ToUpperInvariant();
-        if (!System.Text.RegularExpressions.Regex.IsMatch(makerId, @"^RG\d+$"))
-            return (false, "社团号无效");
-
         var works = await ListAllAsync(makerId, CancellationToken.None);
         if (works is null)
             return (false, "获取该社团的作品列表失败，请稍后重试");
@@ -170,35 +184,58 @@ public static class DlsiteWatchService
                 name = data.MakerName;
         }
 
+        var message = StoreWatch(makerId, KindMaker, name, works, intervalMin, includeExisting, lib, folder);
+        _ = DlsiteMakerIcon.EnsureAsync(makerId);   // 被监控的社团未必有作品入库，头像要单独查
+        return (true, message);
+    }
+
+    private static async Task<(bool Ok, string Message)> AddUrlAsync(
+        string url, int intervalMin, bool includeExisting, string? lib, string? folder)
+    {
+        var works = await ListUrlAllAsync(url, CancellationToken.None);
+        if (works is null)
+            return (false, "获取该列表页的作品失败（页面没有作品或 DLsite 无响应），请确认链接后重试");
+
+        var message = StoreWatch(url, KindUrl, url, works, intervalMin, includeExisting, lib, folder);
+        return (true, message);
+    }
+
+    /// <summary>写入（或覆盖）一条监控并重新定基线：现有作品按 includeExisting 记为 base / backfill，之后只找新的。返回给界面的提示文案。</summary>
+    private static string StoreWatch(
+        string key, string kind, string name, List<string> works, int intervalMin, bool includeExisting, string? lib, string? folder)
+    {
         var interval = NormalizeInterval(intervalMin);
-        var existing = Get(makerId);
+        var existing = Get(key);
         var now = Now();
         Db.Execute(
             $"INSERT INTO \"dlsite_watch\" ({Columns}) VALUES " +
-            "(@m, @n, @iv, '1', '', @lib, @folder, '', @dl, @time) " +
+            "(@m, @n, @iv, '1', '', @lib, @folder, '', @dl, @time, @k) " +
             "ON CONFLICT(\"maker_id\") DO UPDATE SET " +
             "\"maker_name\" = excluded.\"maker_name\", \"interval_min\" = excluded.\"interval_min\", " +
             "\"enabled\" = '1', \"target_lib\" = excluded.\"target_lib\", " +
-            "\"target_folder\" = excluded.\"target_folder\"",
-            ("@m", makerId), ("@n", name), ("@iv", interval),
+            "\"target_folder\" = excluded.\"target_folder\", \"kind\" = excluded.\"kind\"",
+            ("@m", key), ("@n", name), ("@iv", interval),
             ("@lib", lib ?? ""), ("@folder", folder ?? ""),
-            ("@dl", existing?.Downloaded ?? 0), ("@time", now));
+            ("@dl", existing?.Downloaded ?? 0), ("@time", now), ("@k", kind));
 
         // 重新添加即重新定基线：以前记过的作品状态一并作废
-        Db.Execute("DELETE FROM \"dlsite_watch_works\" WHERE \"maker_id\" = @m", ("@m", makerId));
+        Db.Execute("DELETE FROM \"dlsite_watch_works\" WHERE \"maker_id\" = @m", ("@m", key));
         var state = includeExisting ? StateBackfill : StateBase;
         foreach (var id in works)
-            InsertWork(makerId, id, state, now);
+            InsertWork(key, id, state, now);
 
-        Logger.Info($"DLsite 社团监控已添加：{(name.Length > 0 ? name : makerId)}" +
+        Logger.Info($"DLsite 监控已添加：{(name.Length > 0 ? name : key)}" +
             $"（现有 {works.Count} 件作品，每 {interval} 分钟检查一次{(includeExisting ? "，含现有作品" : "")}）");
-        _ = DlsiteMakerIcon.EnsureAsync(makerId);   // 被监控的社团未必有作品入库，头像要单独查
         Start();
         Kick();
-        return (true, includeExisting
-            ? $"已添加监控，正在为该社团现有的 {works.Count} 件作品查找下载源"
-            : "已添加监控，今后发布的新作品会自动下载");
+        return includeExisting
+            ? $"已添加监控，正在为现有的 {works.Count} 件作品查找下载源"
+            : "已添加监控，今后出现的新作品会自动下载";
     }
+
+    /// <summary>只接受 dlsite.com 的链接，列表页监控会替用户去抓这个地址。</summary>
+    private static bool IsDlsiteUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Host.EndsWith("dlsite.com", StringComparison.OrdinalIgnoreCase);
 
     public static void Remove(string makerId)
     {
@@ -346,7 +383,7 @@ public static class DlsiteWatchService
         SetStatus($"正在检查 {w.Display}…");
         var now = Now();
 
-        var listed = await ListAllAsync(w.MakerId, ct);
+        var listed = w.IsUrl ? await ListUrlAllAsync(w.MakerId, ct) : await ListAllAsync(w.MakerId, ct);
         if (listed is null)
         {
             Save(w.MakerId, lastCheck: now, lastResult: "检查失败（DLsite 无响应）");
@@ -441,9 +478,10 @@ public static class DlsiteWatchService
 
         var data = await DlsiteApi.GetWorkDataAsync(id);
         ct.ThrowIfCancellationRequested();
-        if (data != null && data.MakerId.Length > 0
+        // 社团页上可能混进来别家作品（列表页监控本就不限社团，不查这一条）
+        if (!w.IsUrl && data != null && data.MakerId.Length > 0
             && !string.Equals(data.MakerId, w.MakerId, StringComparison.OrdinalIgnoreCase))
-            return (Outcome.Skip, false);   // 社团页上混进来的别家作品
+            return (Outcome.Skip, false);
 
         var isSou = string.Equals(data?.WorkType, "SOU", StringComparison.OrdinalIgnoreCase);
         if (isSou && AppConfig.SouUsesAsmr
@@ -492,14 +530,23 @@ public static class DlsiteWatchService
     /// 抓社团的全部作品号（按页面顺序去重）。任何一页没取到都返回 null，见类注释第 (3) 条。
     /// 全量翻页而不是"见到旧的就停"：不依赖社团页的排序，一轮也不过几次请求。
     /// </summary>
-    private static async Task<List<string>?> ListAllAsync(string makerId, CancellationToken ct)
+    private static Task<List<string>?> ListAllAsync(string makerId, CancellationToken ct) =>
+        ListPagesAsync(page => DlsiteApi.TryGetMakerWorksAsync(makerId, page), ct);
+
+    /// <summary>列表页监控：抓 DLsite 搜索 / 排行 / 分类等列表页的全部作品号，规则与社团相同（任何一页取不到即整轮作废）。</summary>
+    private static Task<List<string>?> ListUrlAllAsync(string url, CancellationToken ct) =>
+        ListPagesAsync(page => DlsiteApi.TryGetCatalogWorksAsync(url, page), ct);
+
+    /// <summary>按页抓全部作品号：fetch 返回 null（没取到）则整体返回 null。</summary>
+    private static async Task<List<string>?> ListPagesAsync(
+        Func<int, Task<(List<DlMakerWork> Works, bool HasMore)?>> fetch, CancellationToken ct)
     {
         var ids = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var page = 1; page <= MaxPages; page++)
         {
             ct.ThrowIfCancellationRequested();
-            var batch = await DlsiteApi.TryGetMakerWorksAsync(makerId, page);
+            var batch = await fetch(page);
             if (batch is not { } b)
                 return null;
             if (b.Works.Count == 0)
@@ -614,5 +661,6 @@ public static class DlsiteWatchService
         LastResult = r[7] as string ?? "",
         Downloaded = r[8] is null ? 0 : Convert.ToInt32(r[8]),
         AddTime = r[9] as string ?? "",
+        Kind = r[10] as string is { Length: > 0 } k ? k : KindMaker,
     };
 }

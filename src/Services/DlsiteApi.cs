@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -37,39 +38,57 @@ public class DlMakerWork
 /// <summary>DLsite 公开 suggest API 客户端（对应 Python 版 DLapi_call.py）。</summary>
 public static class DlsiteApi
 {
-    /// <summary>调用 DL suggest API，返回该 RJ 号作品的全部数据；未获取到返回 null。</summary>
+    /// <summary>取该番号作品的全部数据（作品名、社团真名等）；取不到返回 null。</summary>
     public static async Task<DlWork?> GetWorkDataAsync(string workId)
     {
         try
         {
             using var client = Http.CreateClient(TimeSpan.FromSeconds(15));
+            var (exact, first) = await SuggestAsync(client, workId);
+            if (exact is not null)
+                return exact;
+            // suggest 只覆盖 adult-jp，VJ（pro 站）与部分新作品搜不到，且它已对所有番号回 404 页面 → 退用作品信息接口
+            return await GetInfoAsync(client, workId) ?? first;
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, "DLsite work data");
+            return null;
+        }
+    }
+
+    /// <summary>DL suggest API：返回 workno 完全匹配的作品（exact），以及结果里第一条（first）。失败两者都为 null，不抛出。</summary>
+    private static async Task<(DlWork? Exact, DlWork? First)> SuggestAsync(HttpClient client, string workId)
+    {
+        try
+        {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var url = $"https://www.dlsite.com/suggest/?term={workId}&site=adult-jp&time={timestamp}&touch=0&_={timestamp + 10}";
             var text = await client.GetStringAsync(url);
             using var doc = JsonDocument.Parse(text);
             if (!doc.RootElement.TryGetProperty("work", out var works) ||
                 works.ValueKind != JsonValueKind.Array)
-                return null;
+                return (null, null);
 
-            JsonElement? first = null;
+            DlWork? first = null;
             foreach (var work in works.EnumerateArray())
             {
-                first ??= work;
+                first ??= Parse(work);
                 // 优先返回 workno 完全匹配的作品
                 if (string.Equals(JStr(work, "workno"), workId, StringComparison.OrdinalIgnoreCase))
-                    return Parse(work);
+                    return (Parse(work), first);
             }
-            // suggest 只覆盖 adult-jp，VJ（pro 站）与部分新作品搜不到 → 退用作品信息接口取作品名
-            return await GetInfoAsync(client, workId) ?? (first is { } f ? Parse(f) : null);
+            return (null, first);
         }
         catch (Exception e)
         {
-            Logger.Error(e, "DLsite suggest API");
-            return null;
+            // 接口已改版（回 HTML 404 时解析会抛）：记下后交给作品信息接口，不能让它拖垮整个取数
+            Logger.Warning($"DLsite suggest API 不可用（{workId}）：{e.Message}");
+            return (null, null);
         }
     }
 
-    /// <summary>作品信息接口（product/info/ajax）：各分站作品都能查到，但不给社团名。查不到返回 null。</summary>
+    /// <summary>作品信息接口（product/info/ajax）：各分站作品都能查到。社团名不在此接口里，另从作品页面取（见 <see cref="GetMakerNameAsync"/>）。查不到返回 null。</summary>
     private static async Task<DlWork?> GetInfoAsync(HttpClient client, string workId)
     {
         try
@@ -90,6 +109,7 @@ public static class DlsiteApi
                     WorkName = name, WorkNo = p.Name,
                     MakerId = JStr(p.Value, "maker_id"), WorkType = JStr(p.Value, "work_type"),
                     AgeCategory = JStr(p.Value, "age_category"), IsAna = JStr(p.Value, "is_ana"),
+                    MakerName = await GetMakerNameAsync(client, workId),
                 };
             }
         }
@@ -99,6 +119,28 @@ public static class DlsiteApi
         }
         return null;
     }
+
+    /// <summary>
+    /// 社团真名：作品页面面包屑里 `maker_id/RG…` 链接的文字（作品信息接口不给社团名）。取不到返回空串，不影响作品名。
+    /// </summary>
+    private static async Task<string> GetMakerNameAsync(HttpClient client, string workId)
+    {
+        try
+        {
+            var html = await client.GetStringAsync(
+                $"https://www.dlsite.com/maniax/work/=/product_id/{Uri.EscapeDataString(workId)}.html");
+            var m = MakerLabelRe.Match(html);
+            return m.Success ? WebUtility.HtmlDecode(m.Groups[1].Value).Trim() : "";
+        }
+        catch (Exception e)
+        {
+            Logger.Warning($"DLsite 作品页取社团名失败（{workId}）：{e.Message}");
+            return "";
+        }
+    }
+
+    private static readonly Regex MakerLabelRe = new(
+        @"maker_id/RG\d+\.html""[^>]*class=""breadcrumb__label""[^>]*>([^<]+)<", RegexOptions.Compiled);
 
     /// <summary>仅取作品名称（文件夹按作品名命名时使用），失败返回 null。</summary>
     public static async Task<string?> GetWorkNameAsync(string workId)
@@ -218,6 +260,24 @@ public static class DlsiteApi
         {
             Logger.Error(e, "DLsite catalog works");
             return ([], false);
+        }
+    }
+
+    /// <summary>
+    /// 同 <see cref="GetCatalogWorksAsync"/>，但请求失败返回 null 而不是空列表——列表页监控要分清「这页没作品」与「这页没取到」，理由同 <see cref="TryGetMakerWorksAsync"/>。
+    /// </summary>
+    public static async Task<(List<DlMakerWork> Works, bool HasMore)?> TryGetCatalogWorksAsync(string searchUrl, int page)
+    {
+        try
+        {
+            using var client = Http.CreateClient(TimeSpan.FromSeconds(20));
+            var html = await client.GetStringAsync(BuildCatalogPageUrl(searchUrl, page));
+            return ParseWorkListHtml(html, page);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, "DLsite catalog works");
+            return null;
         }
     }
 

@@ -129,7 +129,7 @@ public class WatchPage : UserControl
         _barCard.Child = _tab switch
         {
             TabPixiv => BuildPixivBar(),
-            TabDlsite => BuildDlsiteBar(),
+            TabDlsite => WithDlsiteAddRow(),
             _ => BuildFanboxBar(),
         };
         _filling = false;
@@ -252,6 +252,54 @@ public class WatchPage : UserControl
         return WrapBar(bar, "12.3");
     }
 
+    /// <summary>DLsite 工具栏 + 其下的「添加监控」行（对齐 Web dlWatchRefresh 的 addBar）。</summary>
+    private UIElement WithDlsiteAddRow()
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(BuildDlsiteBar());
+
+        // 社团号 / 社团链接 / DLsite 列表页链接（搜索、排行、分类等）；连现有作品一起下是可选的
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        var input = new TextBox
+        {
+            Width = 420, Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = I18n.Tr("社团号（RG…）、社团链接，或 DLsite 列表页链接"),
+        };
+        var backfill = new CheckBox
+        {
+            Content = I18n.Tr("连现有作品一起下载"), VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        var add = new Button { Content = I18n.Tr("+ 添加监控"), Style = (Style)FindResource("AccentButton") };
+        add.Click += async (_, _) =>
+        {
+            var text = input.Text.Trim();
+            if (text.Length == 0)
+                return;
+            add.IsEnabled = false;
+            var (ok, message) = await DlsiteWatchService.AddAsync(text, 0, backfill.IsChecked == true, null, null);
+            add.IsEnabled = true;
+            if (!ok)
+            {
+                InAppDialog.Warn(this, message, I18n.Tr("提示"));
+                return;
+            }
+            input.Text = "";
+            InAppDialog.Warn(this, message, I18n.Tr("提示"));
+            Refresh();
+        };
+        input.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+                add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        };
+        row.Children.Add(input);
+        row.Children.Add(backfill);
+        row.Children.Add(add);
+        panel.Children.Add(row);
+        return panel;
+    }
+
     private Button SwitchButton(bool on, Action toggle)
     {
         var b = new Button
@@ -345,7 +393,7 @@ public class WatchPage : UserControl
         if (watches.Count == 0)
         {
             _cardsPanel.Children.Add(EmptyText(
-                I18n.Tr("还没有监控任何社团。到「作品搜索 → DLsite」输入社团号（RG）或社团链接，在社团作品网格上点「+ 监控社团」即可添加。")));
+                I18n.Tr("还没有监控任何项目。在上面输入社团号（RG）、社团链接或 DLsite 列表页链接即可添加。")));
             return;
         }
         foreach (var w in watches)
@@ -359,7 +407,8 @@ public class WatchPage : UserControl
         var result = (w.LastResult.Length > 0 ? w.LastResult : "—") +
                      (pending > 0 ? I18n.Format(I18n.Tr("（待资源 {n} 件）"), ("n", pending)) : "");
         return WatchCard(
-            DlsiteMakerIcon.IconUrl(w.MakerId), w.Display,
+            w.IsUrl ? null : DlsiteMakerIcon.IconUrl(w.MakerId),   // 列表页没有社团头像，传 null 不留那一格
+            w.Display,
             on: w.Enabled, state: w.Enabled ? I18n.Tr("监控中") : I18n.Tr("已暂停"),
             new WatchInfo(w.LastCheck, DlsiteWatchService.NextCheckText(w), w.Downloaded, I18n.Tr("件"),
                 w.IntervalMin, w.TargetLib, result, minutes =>
@@ -379,7 +428,7 @@ public class WatchPage : UserControl
                     DlsiteWatchService.SetEnabled(w.MakerId, !w.Enabled);
                     Refresh();
                 }, false),
-                (I18n.Tr("打开社团"), () => OpenDlsiteMakerRequested?.Invoke(w.MakerId), false),
+                (w.IsUrl ? I18n.Tr("打开列表") : I18n.Tr("打开社团"), () => OpenDlsiteMakerRequested?.Invoke(w.MakerId), false),
                 (I18n.Tr("删除"), () =>
                 {
                     if (!InAppDialog.Confirm(this,

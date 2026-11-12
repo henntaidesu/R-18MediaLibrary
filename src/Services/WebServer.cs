@@ -3452,13 +3452,14 @@ public static class WebServer
             summary = DlsiteWatchService.IdleSummary(),
             watches = DlsiteWatchService.All().Select(w => new
             {
-                id = w.MakerId, name = w.Display,
+                id = w.MakerId, name = w.Display, kind = w.Kind, url = w.IsUrl ? w.MakerId : "",
                 interval = w.IntervalMin, enabled = w.Enabled,
                 lastCheck = w.LastCheck, lastResult = w.LastResult,
                 downloaded = w.Downloaded, lib = w.TargetLib,
                 pending = DlsiteWatchService.PendingCount(w.MakerId),
                 next = DlsiteWatchService.NextCheckText(w),
-                icon = DlsiteMakerIcon.IconUrl(w.MakerId),   // ci-en 公开 CDN，浏览器直接取
+                // ci-en 公开 CDN，浏览器直接取；列表页监控没有社团头像
+                icon = w.IsUrl ? "" : DlsiteMakerIcon.IconUrl(w.MakerId),
             }),
         });
     }
@@ -3466,14 +3467,12 @@ public static class WebServer
     /// <summary>添加社团监控；backfill=true 时连该社团现有的作品一起（各找一次源）下。</summary>
     private static async Task ApiDlsiteWatchAddAsync(NetworkStream stream, Request req)
     {
-        var makerId = ReadStringField(req.Body, "id").Trim().ToUpperInvariant();
-        if (!MakerIdRe.IsMatch(makerId))
-        {
-            WriteJson(stream, 400, new { error = "bad request" });
-            return;
-        }
+        // input：社团号 / 社团链接 / DLsite 列表页链接（格式由服务层判定）；id 为旧字段名，兼容保留
+        var input = ReadStringField(req.Body, "input");
+        if (input.Length == 0)
+            input = ReadStringField(req.Body, "id");
         var (ok, message) = await DlsiteWatchService.AddAsync(
-            makerId,
+            input,
             ReadIntField(req.Body, "interval"),
             ReadBoolField(req.Body, "backfill"),
             ReadStringField(req.Body, "lib"),
@@ -3484,8 +3483,9 @@ public static class WebServer
     /// <summary>改间隔 / 暂停恢复 / 移除（remove=true 时其余字段忽略）。</summary>
     private static void ApiDlsiteWatchUpdate(NetworkStream stream, Request req)
     {
-        var makerId = ReadStringField(req.Body, "id").Trim().ToUpperInvariant();
-        if (!MakerIdRe.IsMatch(makerId))
+        // 键是列表里原样回来的社团号或列表页地址，不能再转大写（地址大小写敏感）
+        var makerId = ReadStringField(req.Body, "id").Trim();
+        if (makerId.Length == 0)
         {
             WriteJson(stream, 400, new { error = "bad request" });
             return;
@@ -3506,10 +3506,10 @@ public static class WebServer
     /// <summary>立即检查（id 为空 = 全部）；检查在后台跑，前端轮询 /api/dlsite/watches 看进度。</summary>
     private static void ApiDlsiteWatchCheck(NetworkStream stream, Request req)
     {
-        var makerId = ReadStringField(req.Body, "id").Trim().ToUpperInvariant();
+        var makerId = ReadStringField(req.Body, "id").Trim();   // 同 Update：键区分大小写，不转换
         if (makerId.Length == 0)
             _ = DlsiteWatchService.CheckAllAsync();
-        else if (MakerIdRe.IsMatch(makerId))
+        else if (DlsiteWatchService.Get(makerId) != null)
             _ = DlsiteWatchService.CheckNowAsync(makerId);
         WriteJson(stream, 200, new { ok = true });
     }

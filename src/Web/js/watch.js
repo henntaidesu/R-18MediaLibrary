@@ -339,12 +339,35 @@ async function dlWatchRefresh(body) {
     fbIntervalSelect(d.interval, v => apiPost('/api/dlsite/watch/config', { interval: v })), helpButton('12.3'));
   body.appendChild(bar);
 
+  // 添加监控：社团号 / 社团链接 / DLsite 列表页链接（搜索、排行、分类等）。连现有作品一起下是可选的
+  const addBar = el('div', 'toolbar');
+  const addInput = el('input', 'grow');
+  addInput.placeholder = '社团号（RG…）、社团链接，或 DLsite 列表页链接';
+  const addBackfill = el('input'); addBackfill.type = 'checkbox';
+  const addLabel = el('label', 'ro', ''); addLabel.append(addBackfill, ' 连现有作品一起下载');
+  const addBtn = el('button', 'icon-btn primary', '+ 添加监控');
+  addBtn.onclick = async () => {
+    const input = addInput.value.trim();
+    if (!input) return;
+    addBtn.disabled = true;
+    let r;
+    try { r = await apiPost('/api/dlsite/watch/add', { input, backfill: addBackfill.checked }); }
+    finally { addBtn.disabled = false; }
+    if (!r.ok) { await uiAlert(r.message || '添加失败'); return; }
+    addInput.value = '';
+    await uiAlert(r.message);
+    dlWatchRefresh(body);
+  };
+  addInput.onkeydown = e => { if (e.key === 'Enter') addBtn.click(); };
+  addBar.append(addInput, addLabel, addBtn);
+  body.appendChild(addBar);
+
   const status = el('div', 'note'); status.id = 'dlWatchStatus';
   status.textContent = d.busy ? '⏳ ' + (d.status || '正在检查…') : (d.summary || '');
   body.appendChild(status);
 
   if (!d.watches.length) {
-    body.appendChild(el('div', 'empty', '还没有监控任何社团。到「作品搜索 → DLsite」输入社团号（RG）或社团链接，在社团作品网格上点「+ 监控社团」即可添加。'));
+    body.appendChild(el('div', 'empty', '还没有监控任何项目。在上面输入社团号（RG）、社团链接或 DLsite 列表页链接即可添加。'));
     return;
   }
   const grid = el('div', 'wgrid');
@@ -358,8 +381,9 @@ function dlWatchCard(w, body) {
   now.onclick = async () => { await apiPost('/api/dlsite/watch/check', { id: w.id }); pollDlWatch(body); };
   const toggle = el('button', 'mini', w.enabled ? '暂停' : '启用');
   toggle.onclick = async () => { await apiPost('/api/dlsite/watch/update', { id: w.id, enabled: !w.enabled }); dlWatchRefresh(body); };
-  const open = el('button', 'mini', '打开社团');
-  open.onclick = () => dlGotoMaker(w.id);   // 跨分区跳到 作品搜索 → DLsite 的社团作品网格
+  // 社团：跨分区跳到 作品搜索 → DLsite 的社团作品网格；列表页：同一入口，搜索框里是列表页地址
+  const open = el('button', 'mini', w.kind === 'url' ? '打开列表' : '打开社团');
+  open.onclick = () => dlGotoMaker(w.id);
   const del = el('button', 'mini danger', '删除');
   del.onclick = async () => {
     if (!await uiConfirm(`不再监控「${w.name}」？
@@ -370,7 +394,7 @@ function dlWatchCard(w, body) {
   // 还在等论坛出资源的新作品数接在结果后面（卡片只有这一行放得下）
   const ww = { ...w, lastResult: (w.lastResult || '—') + (w.pending ? `（待资源 ${w.pending} 件）` : '') };
   return watchCard({
-    icon: w.icon || '', avatar: true,
+    icon: w.icon || '', avatar: w.kind !== 'url',   // 列表页没有社团头像，不留那一格
     name: w.name, on: w.enabled, state: w.enabled ? '监控中' : '已暂停',
     w: ww, unit: '件', actions: [now, toggle, open, del],
     onInterval: async v => { await apiPost('/api/dlsite/watch/update', { id: w.id, interval: v }); dlWatchRefresh(body); },
