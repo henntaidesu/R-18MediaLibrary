@@ -111,8 +111,9 @@
   .mcard-actions button.primary:not(:disabled) { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
   .mcard-actions button:disabled { opacity: .45; cursor: not-allowed; }
   /* 列宽下限 400：auto-fill 下卡片宽度是按列数跳变的，抬高下限即减少列数、把卡片拉长。
-     高度不受影响（分组卡高度由内容与 min-height 决定，不跟宽度联动） */
-  .grid.groups { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+     高度不受影响（分组卡高度由内容与 min-height 决定，不跟宽度联动）。
+     下限取 min(400px, 100%)：手机宽度不足 400px 时单列退化为容器宽，不再整列溢出右边缘 */
+  .grid.groups { grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr)); }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
           overflow: hidden; cursor: pointer; display: flex; flex-direction: column; transition: border-color .12s; }
   .card:hover { border-color: var(--accent-dim); }
