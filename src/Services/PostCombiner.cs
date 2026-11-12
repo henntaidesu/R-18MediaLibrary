@@ -75,8 +75,11 @@ public static class PostCombiner
         return new PostAssembly(chosen, rgParts, required.Count, chosen.Count == required.Count);
     }
 
-    /// <summary>网盘优先级：rapidgator=0（最优），katfile=1，其它=2。</summary>
-    private static int HostRank(string host)
+    /// <summary>链接所属网盘的优先级（见 <see cref="HostRank"/>）。</summary>
+    public static int UrlRank(string url) => HostRank(HostOf(url));
+
+    /// <summary>网盘优先级：rapidgator=0（最优），katfile=1，其它=2。数值越小消耗的 debrid-link 流量越少，越优先。</summary>
+    public static int HostRank(string host)
     {
         host = host.ToLowerInvariant();
         if (host.Contains("rapidgator") || host == "rg.to")

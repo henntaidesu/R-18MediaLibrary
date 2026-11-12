@@ -484,7 +484,7 @@ public static class DlsiteWatchService
         if (posts.Count == 0)
             return (Outcome.NoSource, true);
 
-        WebServer.StartAutoDownload(id, w.TargetLib, w.TargetFolder);
+        await WebServer.StartAutoDownloadAsync(id, w.TargetLib, w.TargetFolder);
         return (Outcome.Queued, true);
     }
 

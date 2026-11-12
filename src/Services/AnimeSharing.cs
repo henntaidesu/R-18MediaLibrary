@@ -125,9 +125,12 @@ public static class AnimeSharing
             if (hrefList.Count > 1)
             {
                 var notMp3 = hrefList.Where(h => !h.Contains("mp3")).ToList();
-                return (notMp3.Count > 0 ? notMp3 : hrefList, title);
+                if (notMp3.Count > 0)
+                    hrefList = notMp3;
             }
-            return (hrefList, title);
+            // 消耗量低的网盘优先（rapidgator → katfile → 其它）；同档保持帖子里的原始顺序（OrderBy 稳定）。
+            // 之后各处按出现顺序取「第一个可用的网盘」，排序一次即全部生效
+            return (hrefList.OrderBy(PostCombiner.UrlRank).ToList(), title);
         }
         catch (Exception e)
         {

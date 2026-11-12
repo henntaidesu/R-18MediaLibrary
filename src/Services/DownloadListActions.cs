@@ -54,9 +54,10 @@ public static class DownloadListActions
             "WHERE (w.\"state\" = '已品悦' OR (w.\"state\" = '已下载' AND @noUnzip = 1 " +
             "AND IFNULL(w.\"source\", '') IN ('', 'anime-sharing'))) " +
             "GROUP BY d.\"work_id\" " +
-            "HAVING SUM(CASE WHEN d.\"status\" = '1' OR (d.\"status\" = '2' AND IFNULL(d.\"error\", '') = @sk) " +
+            "HAVING SUM(CASE WHEN d.\"status\" = '1' OR (d.\"status\" = '2' AND IFNULL(d.\"error\", '') IN (@sk, @hu)) " +
             "THEN 0 ELSE 1 END) = 0",
-            ("@sk", DownloadEngine.SkippedError), ("@noUnzip", AppConfig.AutoUnzip ? 0 : 1));
+            ("@sk", DownloadEngine.SkippedError), ("@hu", DownloadEngine.HostUnsupportedError),
+            ("@noUnzip", AppConfig.AutoUnzip ? 0 : 1));
         foreach (var row in rows ?? [])
         {
             var wid = row[0] as string ?? "";
@@ -65,8 +66,8 @@ public static class DownloadListActions
             // 只删已终结的行：查询与删除之间若刚好又入队了新文件，新行留着
             Db.Execute(
                 "DELETE FROM \"download_list\" WHERE \"work_id\" = @w AND " +
-                "(\"status\" = '1' OR (\"status\" = '2' AND IFNULL(\"error\", '') = @sk))",
-                ("@w", wid), ("@sk", DownloadEngine.SkippedError));
+                "(\"status\" = '1' OR (\"status\" = '2' AND IFNULL(\"error\", '') IN (@sk, @hu)))",
+                ("@w", wid), ("@sk", DownloadEngine.SkippedError), ("@hu", DownloadEngine.HostUnsupportedError));
         }
     }
 

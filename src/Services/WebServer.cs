@@ -381,8 +381,8 @@ public static class WebServer
                 case "/api/posturls": await ApiPostUrlsAsync(stream, req); break;
                 case "/api/checkhost": await ApiCheckHostAsync(stream, req); break;
                 case "/api/downtargets": ApiDownTargets(stream); break;
-                case "/api/enqueue": ApiEnqueue(stream, req); break;
-                case "/api/autodownload": ApiAutoDownload(stream, req); break;
+                case "/api/enqueue": await ApiEnqueueAsync(stream, req); break;
+                case "/api/autodownload": await ApiAutoDownloadAsync(stream, req); break;
                 case "/api/combine": await ApiCombineAsync(stream, req); break;
                 // 下载 / 已下载
                 case "/api/downloads": ApiDownloads(stream, req); break;
@@ -1742,7 +1742,7 @@ public static class WebServer
         WriteJson(stream, 200, new { libs });
     }
 
-    private static void ApiEnqueue(NetworkStream stream, Request req)
+    private static async Task ApiEnqueueAsync(NetworkStream stream, Request req)
     {
         string id = "", lib = "", folder = "";
         var urls = new List<string>();
@@ -1767,12 +1767,13 @@ public static class WebServer
             WriteJson(stream, 400, new { error = "bad request" });
             return;
         }
+        var meta = await FetchWorkForEnqueueAsync(id);
         foreach (var downUrl in urls)
             Db.Execute(
                 "INSERT OR REPLACE INTO \"download_list\" (\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\") " +
                 "VALUES (@uuid, @w, @url, '0', '0', '1')",
                 ("@uuid", Guid.NewGuid().ToString()), ("@w", id), ("@url", downUrl));
-        RecordWork(id, SearchCache.GetValueOrDefault(id));
+        RecordWork(id, meta);
         if (folder.Length > 0)
             DownloadEngine.SetWorkTargetPath(id, folder, lib.Length > 0 ? lib : null);
         DownloadEngine.Start();
@@ -1781,7 +1782,7 @@ public static class WebServer
 
     /// <summary>自动下载：立即以「搜索可用下载连接」('5') 占位入队，后台异步挑选最优源。
     /// 命中则占位行转正常下载分卷；全无可用则占位行转「无可用下载连接」('6')。</summary>
-    private static void ApiAutoDownload(NetworkStream stream, Request req)
+    private static async Task ApiAutoDownloadAsync(NetworkStream stream, Request req)
     {
         string id = "", lib = "", folder = "";
         try
@@ -1801,16 +1802,17 @@ public static class WebServer
             WriteJson(stream, 400, new { error = "番号格式错误（RJ/BJ/VJ + 数字）" });
             return;
         }
-        StartAutoDownload(id, lib, folder);
+        await StartAutoDownloadAsync(id, lib, folder);
         WriteJson(stream, 200, new { ok = true });
     }
 
     /// <summary>
     /// 自动下载的入队本体（Web「自动下载」与 <see cref="DlsiteWatchService"/> 共用）：
-    /// 立即以「搜索可用下载连接」占位入队，后台串行挑选 AS 论坛的最优源。
+    /// 先取齐作品元数据再写 works 行与占位分卷，随后后台串行挑选 AS 论坛的最优源。
     /// </summary>
-    internal static void StartAutoDownload(string id, string lib, string folder)
+    internal static async Task StartAutoDownloadAsync(string id, string lib, string folder)
     {
+        var meta = await FetchWorkForEnqueueAsync(id);
         // 占位分卷：状态 '5'，url 用每行唯一的占位哨兵（download_list 以 url 为主键，若留空则同时
         // 只能存在一条占位行——用户在某作品仍在搜索连接时再加别的作品会因主键冲突而被静默丢弃）。
         // DownloadEngine 只领取 '0' 行，故占位哨兵不会被误当作直链下载；FileNameOf 会把哨兵显示为空名。
@@ -1819,10 +1821,9 @@ public static class WebServer
             "INSERT INTO \"download_list\" (\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\") " +
             "VALUES (@uuid, @w, @url, '5', '0', '1')",
             ("@uuid", placeholder), ("@w", id), ("@url", PlaceholderUrl(placeholder)));
-        RecordWork(id, SearchCache.GetValueOrDefault(id));
+        RecordWork(id, meta);
         if (folder.Length > 0)
             DownloadEngine.SetWorkTargetPath(id, folder, lib.Length > 0 ? lib : null);
-        _ = EnsureWorkMetaAsync(id);   // 后台补齐作品名（自动下载未经搜索，works.work_name 可能为空）
         // 串行排队解析：同一时间只搜索一个作品的下载连接；排队期间占位行('5')已在库，故仍显示在下载列表
         _ = Task.Run(async () =>
         {
@@ -1940,6 +1941,19 @@ public static class WebServer
     {
         var r = Db.Select("SELECT 1 FROM \"download_list\" WHERE \"UUID\" = @u AND \"status\" = '5'", ("@u", placeholder));
         return r is { Count: > 0 };
+    }
+
+    /// <summary>入队前取齐作品元数据（作品名、社团真名）：优先搜索缓存，没有就现取 DL API 并回填缓存。
+    /// 入队与写 works 行同步完成，下载列表一出现就是正确的社团与作品名，不再先显示番号、之后才回填。
+    /// 取不到返回 null，works 行写空值，由 <see cref="EnsureWorkMetaAsync"/> 在轮询时兜底补齐。</summary>
+    internal static async Task<DlWork?> FetchWorkForEnqueueAsync(string id)
+    {
+        if (SearchCache.GetValueOrDefault(id) is { } cached)
+            return cached;
+        var work = await DlsiteApi.GetWorkDataAsync(id);
+        if (work is { WorkName.Length: > 0 })
+            SearchCache[id] = work;
+        return work;
     }
 
     /// <summary>补齐 works 行的作品名等元数据（仅在为空时写入，避免覆盖已刮削的数据、不触碰目标库/状态）。
@@ -2392,10 +2406,9 @@ public static class WebServer
                 "INSERT OR REPLACE INTO \"download_list\" (\"UUID\", \"work_id\", \"url\", \"status\", \"long\", \"delete\") " +
                 "VALUES (@uuid, @w, @url, '0', '0', '1')",
                 ("@uuid", Guid.NewGuid().ToString()), ("@w", id), ("@url", downUrl));
-        RecordWork(id, SearchCache.GetValueOrDefault(id));
+        RecordWork(id, await FetchWorkForEnqueueAsync(id));
         if (folder.Length > 0)
             DownloadEngine.SetWorkTargetPath(id, folder, lib.Length > 0 ? lib : null);
-        _ = EnsureWorkMetaAsync(id);
         if (asm.RapidgatorParts < asm.TotalParts)
             Logger.Info($"{id} 手动组合下载：rapidgator {asm.RapidgatorParts}/{asm.TotalParts} 分卷有效，其余分卷用其它网盘同名分卷补齐");
         DownloadEngine.Start();

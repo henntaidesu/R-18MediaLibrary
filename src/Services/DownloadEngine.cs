@@ -1101,6 +1101,16 @@ public static class DownloadEngine
                         ? url.TrimEnd('/').Split('/')[^1].Split('?')[0]
                         : Path.GetFileName(subPath);
                 }
+                else if (!IsDebridHost(url))
+                {
+                    // debrid-link 不支持的网盘：解析不了，直接跳过（不占免费间隔、不白请求一次）。
+                    // 与「源站无此文件」一样记为终结，作品其余分卷照常下载入库
+                    Logger.Warning($"{workId} debrid-link 不支持该网盘，已跳过: {url}");
+                    SetParseFailed(key, HostUnsupportedError);
+                    MarkWorkDownloaded(workId);
+                    FinalizeBySource(workId, source);
+                    continue;
+                }
                 else if (freeHost != null)
                 {
                     // debrid-link 不可用（没配 Key / Key 失效 / 会员到期）：走网盘自己的免费下载
@@ -1357,7 +1367,7 @@ public static class DownloadEngine
                         WHERE d."work_id" = w."work_id" AND d."status" = '1')
             AND NOT EXISTS (SELECT 1 FROM "download_list" d
                             WHERE d."work_id" = w."work_id" AND d."status" != '1'
-                            AND NOT (d."status" = '2' AND IFNULL(d."error", '') = 'skipped'))
+                            AND NOT (d."status" = '2' AND IFNULL(d."error", '') IN ('skipped', 'hostUnsupported')))
             """);
         if (stuck != null)
             foreach (var row in stuck)
@@ -1392,7 +1402,17 @@ public static class DownloadEngine
     internal const string SkippedError = "skipped";
 
     /// <summary>该失败原因是否为"源站无此文件"的跳过标记（区别于可重试的解析失败）。</summary>
-    internal static bool IsSkipped(string? error) => error == SkippedError;
+    internal static bool IsSkipped(string? error) => error == SkippedError || error == HostUnsupportedError;
+
+    /// <summary>
+    /// 分卷"网盘不支持"标记：链接的网盘不在 debrid-link 支持列表里，跳过（终结，不重试）。
+    /// 与 <see cref="SkippedError"/> 同样计入「已终结」，不会卡住作品入库。
+    /// </summary>
+    internal const string HostUnsupportedError = "hostUnsupported";
+
+    /// <summary>链接的网盘是否在 debrid-link 支持列表内（列表取不到时用兜底列表）。</summary>
+    private static bool IsDebridHost(string url) =>
+        DebridLinkClient.IsSupported(url, DebridLinkClient.SupportedDomainsAsync().GetAwaiter().GetResult());
 
     /// <summary>
     /// 分卷"站点没返回图片"标记：响应是 HTML 错误页而非图片，最常见的是 E-Hentai 的原图接口
@@ -1421,8 +1441,8 @@ public static class DownloadEngine
     {
         var pending = Db.Scalar(
             "SELECT COUNT(*) FROM \"download_list\" WHERE \"work_id\" = @w " +
-            "AND \"status\" != '1' AND NOT (\"status\" = '2' AND IFNULL(\"error\", '') = @sk)",
-            ("@w", workId), ("@sk", SkippedError));
+            "AND \"status\" != '1' AND NOT (\"status\" = '2' AND IFNULL(\"error\", '') IN (@sk, @hu))",
+            ("@w", workId), ("@sk", SkippedError), ("@hu", HostUnsupportedError));
         return pending != null && Convert.ToInt64(pending) == 0;
     }
 
